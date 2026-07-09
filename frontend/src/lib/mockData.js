@@ -214,3 +214,200 @@ export const MOCK_DEBATE = [
   { model: "model-d", text: "Then let's synthesize: definition, three design axes, CAP as the forcing function, modern softeners. Anything else is over-explaining." },
   { model: "model-a", text: "Consensus reached. That structure covers 90% of what a curious developer needs to know without drowning in academic detail." },
 ];
+
+
+// -----------------------------------------------------------------------------
+// Advanced transparency data — used by the new "Why this conclusion?" section.
+// -----------------------------------------------------------------------------
+
+export const CONSENSUS_TIERS = {
+  full: {
+    id: "full",
+    label: "Full Consensus",
+    accent: "#10B981",
+    percent: 100,
+    why: "Every model reached these facts independently — they are the load-bearing structure of the conclusion.",
+    items: [
+      {
+        text: "Data is partitioned (sharded) across multiple nodes to enable horizontal scale.",
+        why: "All four models opened with sharding as the foundational mechanism.",
+      },
+      {
+        text: "Replication provides fault tolerance and higher availability.",
+        why: "Referenced identically by ChatGPT, Claude, Gemini and Grok.",
+      },
+      {
+        text: "The CAP theorem forces a deliberate consistency-vs-availability tradeoff under partition.",
+        why: "Named as the forcing function in every response.",
+      },
+    ],
+  },
+  partial: {
+    id: "partial",
+    label: "Partial Consensus",
+    accent: "#00E5FF",
+    percent: 75,
+    why: "Supported by most but not all models — these are strong signals we still verified.",
+    items: [
+      {
+        text: "Consensus protocols (Raft / Paxos) are the standard way to keep replicas coordinated.",
+        agreedBy: ["model-a", "model-b", "model-c"],
+        disagreedBy: ["model-d"],
+        confidence: 78,
+        why: "Grok compressed consensus into a single axis without naming a protocol; it agreed on the concept.",
+      },
+      {
+        text: "Modern systems soften the CAP tradeoff via tunable consistency and hybrid logical clocks.",
+        agreedBy: ["model-a", "model-c"],
+        disagreedBy: ["model-b", "model-d"],
+        confidence: 62,
+        why: "Only ChatGPT and Gemini explicitly named modern softeners; the others stopped at classical CAP.",
+      },
+    ],
+  },
+  disagreements: {
+    id: "disagreements",
+    label: "Disagreements",
+    accent: "#F59E0B",
+    why: "Every position is preserved verbatim — you decide which framing fits your problem.",
+    items: [
+      {
+        topic: "Which replication style is the practical default?",
+        positions: [
+          { modelId: "model-b", stance: "Leaderless (Dynamo-style) is the modern default for elastic scale." },
+          { modelId: "model-c", stance: "Single-leader replication remains the more common production baseline." },
+        ],
+      },
+      {
+        topic: "How should the design space be framed?",
+        positions: [
+          { modelId: "model-d", stance: "Three axes: sharding, replication, consensus." },
+          { modelId: "model-c", stance: "Three axes: partitioning, replication, conflict resolution." },
+        ],
+      },
+    ],
+  },
+  unique: {
+    id: "unique",
+    label: "Unique Insights",
+    accent: "#A78BFA",
+    why: "Ideas raised by only one model — treat as exploratory but potentially high-leverage.",
+    items: [
+      {
+        modelId: "model-a",
+        text: "Modern hybrid systems (Aurora Limitless, Spanner TrueTime) partially escape the classical CAP tradeoff via wall-clock coordination.",
+        label: "exploratory",
+        value: "Worth investigating for global OLTP workloads where classical CAP feels overly binary.",
+      },
+      {
+        modelId: "model-d",
+        text: "The split-brain / phantom-writes framing is more predictive of production incidents than the CAP theorem is.",
+        label: "low-confidence",
+        value: "Reframes the tradeoff in operational language — potentially more useful for on-call teams than architecture reviews.",
+      },
+    ],
+  },
+};
+
+export const EVIDENCE_METER = {
+  total: 88,
+  note: "The Evidence Meter blends five signals into a single 0–100 defensibility score.",
+  components: [
+    { key: "agreement",    label: "Model agreement",      value: 87, weight: 30 },
+    { key: "logical",      label: "Logical consistency",  value: 92, weight: 25 },
+    { key: "reasoning",    label: "Reasoning quality",    value: 89, weight: 25 },
+    { key: "citation",     label: "Citation availability",value: 62, weight: 10, note: "Live citation lookup coming soon." },
+    { key: "confidence",   label: "Confidence score",     value: 94, weight: 10 },
+  ],
+};
+
+export const EVOLUTION_STEPS = [
+  { id: "question",    title: "Question",               body: "You asked a single, specific question." },
+  { id: "individual",  title: "Individual AI Responses",body: "Four models answered independently, in parallel." },
+  { id: "consensus",   title: "Consensus Formation",    body: "Agreements, disagreements and uncertainty extracted side-by-side." },
+  { id: "challenge",   title: "Challenge Round",        body: "Every model attacked the current conclusion for flaws." },
+  { id: "verdict",     title: "Final Verdict",          body: "The strongest defensible answer, with its evidence in view." },
+];
+
+export const WHY_CHOSE_ANSWER = [
+  {
+    title: "Strongest shared evidence",
+    body: "The three-axis design frame (partitioning, replication, consensus) and the CAP theorem appeared in every response — this is the load-bearing spine of the conclusion.",
+  },
+  {
+    title: "Conflicts resolved during comparison",
+    body: "Where models disagreed on defaults (leaderless vs single-leader, sharding vs partitioning), Referee named both framings rather than picking a winner.",
+  },
+  {
+    title: "Remaining uncertainty",
+    body: "Real-world CAP tradeoffs are workload-dependent, and modern hybrid systems (TrueTime, Aurora Limitless) blur the classical framing. These caveats are exposed, not hidden.",
+  },
+];
+
+// Per-model expanded details shown when a model card is expanded.
+export const MODEL_DETAILS = {
+  "model-a": {
+    confidence: 91,
+    mainArguments: [
+      "Distributed = split data across many machines, coordinated as one system.",
+      "CAP theorem is the forcing function under partition.",
+      "Concrete examples ground the tradeoff: CockroachDB / Spanner vs Cassandra.",
+    ],
+    strengths: [
+      "Clear textbook framing with named production systems.",
+      "Explicit tradeoff language ('strict consistency' vs 'full availability').",
+    ],
+    weaknesses: [
+      "Skips the modern softeners (tunable consistency, HLCs).",
+      "Doesn't compress the design space into memorable axes.",
+    ],
+  },
+  "model-b": {
+    confidence: 88,
+    mainArguments: [
+      "Coordinated team of servers metaphor for accessibility.",
+      "Three concrete benefits: fault tolerance, elastic scale, geo-locality.",
+      "Names three replication styles including leaderless (Dynamo).",
+    ],
+    strengths: [
+      "Most user-friendly opening — leads with benefits, not theory.",
+      "Introduces hybrid logical clocks as a real primitive.",
+    ],
+    weaknesses: [
+      "Positions leaderless as the default — arguable in production.",
+      "CAP theorem gets less airtime than it deserves.",
+    ],
+  },
+  "model-c": {
+    confidence: 93,
+    mainArguments: [
+      "Distributed DBs differ from replicated single-node DBs — any node can serve reads/writes.",
+      "Three axes: partitioning, replication, conflict resolution.",
+      "Every distributed DB makes a deliberate CAP choice.",
+    ],
+    strengths: [
+      "Cleanest three-axis framing in the pack.",
+      "Explicit distinction from replicated single-node DBs.",
+    ],
+    weaknesses: [
+      "Uses 'conflict resolution' instead of 'consensus' — slightly non-standard.",
+      "Less concrete on production systems.",
+    ],
+  },
+  "model-d": {
+    confidence: 84,
+    mainArguments: [
+      "Compressed definition: multi-machine DB that clients see as one.",
+      "Three axes: sharding, replication, consensus.",
+      "Naming the failure modes: split brain, phantom writes, lost data.",
+    ],
+    strengths: [
+      "Most memorable framing — production-oriented failure language.",
+      "Shortest defensible answer.",
+    ],
+    weaknesses: [
+      "Doesn't name a single production system for grounding.",
+      "Skips the CAP softeners entirely.",
+    ],
+  },
+};
