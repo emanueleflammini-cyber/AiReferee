@@ -1,10 +1,9 @@
-"""Mock providers — used when the corresponding API key isn't configured yet.
+"""Mock providers — used when the real provider isn't configured OR fails.
 
 Every real provider (Anthropic/Claude, Google/Gemini, xAI/Grok, Mistral,
-DeepSeek) has a mock counterpart with the same `id`. This lets AI Referee
-run a full 4-model comparison as soon as OPENAI_API_KEY is set — the
-other three slots return realistic placeholder text tagged `is_mock=True`
-until you add their keys.
+DeepSeek) has a mock counterpart with the same `id`. Mocks are also used
+as the fallback text when a real call raises — the frontend shows a
+FALLBACK badge in that case.
 """
 from __future__ import annotations
 
@@ -16,6 +15,11 @@ from .base import Provider, ProviderResult
 
 
 DEFAULT_MOCK_TEMPLATES: dict[str, str] = {
+    "openai": (
+        "Placeholder answer for: \"{q}\"\n\n"
+        "A defensible response starts by naming the assumptions, then walks through the reasoning "
+        "step by step. Referee surfaces the caveats explicitly instead of smoothing them over."
+    ),
     "claude": (
         "Here's how I'd frame the question:\n\n"
         "{q}\n\n"
@@ -64,20 +68,40 @@ class MockProvider(Provider):
         self.provider_name = provider_name
         self._template_key = template_key
         self._env_var = env_var
-        # A mock provider is "available" only in the sense that it always
-        # returns something — but we still expose whether the real key is
-        # configured so the caller can prefer a real provider when possible.
         self.real_key_configured = bool(os.environ.get(env_var, "").strip())
         self.available = True
 
-    async def generate(self, prompt: str, system: str = "") -> ProviderResult:
-        await asyncio.sleep(random.uniform(0.6, 1.6))  # simulate network latency
+    def _render(self, prompt: str) -> str:
         template = DEFAULT_MOCK_TEMPLATES.get(self._template_key, "Placeholder answer for: {q}")
-        text = template.format(q=prompt.strip())
+        return template.format(q=prompt.strip())
+
+    async def generate(self, prompt: str, system: str = "") -> ProviderResult:
+        await asyncio.sleep(random.uniform(0.6, 1.6))
+        text = self._render(prompt)
+        approx_in = max(1, len(prompt) // 4)
+        approx_out = max(1, len(text) // 4)
         return ProviderResult(
             text=text,
             latency_ms=int(random.uniform(700, 1400)),
-            tokens=len(text) // 4,
+            input_tokens=approx_in,
+            output_tokens=approx_out,
+            total_tokens=approx_in + approx_out,
+            model_used="mock",
+            is_mock=True,
+        )
+
+    async def fallback_text(self, prompt: str) -> ProviderResult:
+        """Instant mock text — used when a real provider raises."""
+        text = self._render(prompt)
+        approx_in = max(1, len(prompt) // 4)
+        approx_out = max(1, len(text) // 4)
+        return ProviderResult(
+            text=text,
+            latency_ms=0,  # will be overwritten by timed_generate
+            input_tokens=approx_in,
+            output_tokens=approx_out,
+            total_tokens=approx_in + approx_out,
+            model_used="mock-fallback",
             is_mock=True,
         )
 

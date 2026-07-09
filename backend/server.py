@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from providers import selected_providers, provider_status  # noqa: E402
+from providers import selected_providers, provider_status, fallback_for  # noqa: E402
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -318,7 +318,11 @@ class ModelResponse(BaseModel):
     provider: str
     text: str
     latency_ms: int
-    tokens: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+    model_used: str = ""
     is_mock: bool
     error: Optional[str] = None
 
@@ -328,6 +332,8 @@ class CompareResponse(BaseModel):
     prompt: str
     responses: List[ModelResponse]
     live_count: int
+    total_cost_usd: float = 0.0
+    total_latency_ms: int = 0
 
 
 @api_router.post("/queries/{query_id}/compare", response_model=CompareResponse)
@@ -349,35 +355,73 @@ async def compare_query(query_id: str):
     )
 
     providers = selected_providers()
-    tasks = [p.timed_generate(prompt, system) for p in providers]
+    tasks = [
+        p.timed_generate(prompt, system, fallback_text_fn=fallback_for(p).fallback_text)
+        for p in providers
+    ]
     results = await asyncio.gather(*tasks, return_exceptions=False)
 
     responses: List[ModelResponse] = []
     live_count = 0
+    total_cost = 0.0
+    total_latency = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+
     for p, r in zip(providers, results):
         if not r.is_mock:
             live_count += 1
+        total_cost += r.cost_usd
+        total_latency += r.latency_ms
         responses.append(ModelResponse(
             id=p.id,
             label=p.label,
-            codename=p.codename,
+            codename=r.model_used or p.codename,
             provider=p.provider_name,
             text=r.text,
             latency_ms=r.latency_ms,
-            tokens=r.tokens,
+            input_tokens=r.input_tokens,
+            output_tokens=r.output_tokens,
+            total_tokens=r.total_tokens,
+            cost_usd=r.cost_usd,
+            model_used=r.model_used,
             is_mock=r.is_mock,
             error=r.error,
         ))
 
-    # Persist the live model output onto the cached conclusion (if we have one for this query)
-    # so future reuse can serve the *real* answer, not a mock.
+        # Log EVERY provider invocation to Mongo — Task #7
+        try:
+            await db.compare_logs.insert_one({
+                "id": str(uuid.uuid4()),
+                "query_id": query_id,
+                "prompt": prompt,
+                "prompt_length": len(prompt),
+                "response_length": len(r.text or ""),
+                "provider_id": p.id,
+                "provider_name": p.provider_name,
+                "provider_label": p.label,
+                "model_requested": p.codename,
+                "model_used": r.model_used,
+                "input_tokens": r.input_tokens,
+                "output_tokens": r.output_tokens,
+                "total_tokens": r.total_tokens,
+                "latency_ms": r.latency_ms,
+                "cost_usd": r.cost_usd,
+                "is_mock": r.is_mock,
+                "error": r.error,
+                "created_at": now_iso,
+            })
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger(__name__).warning("Failed to persist compare log: %s", e)
+
+    # Persist real responses on the cached conclusion so Smart Reuse serves the real answer next time.
     try:
         await db.conclusions.update_one(
             {"id": query_id},
             {"$set": {
                 "responses": [r.model_dump() for r in responses],
                 "live_count": live_count,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "total_cost_usd": round(total_cost, 6),
+                "generated_at": now_iso,
             }},
         )
     except Exception as e:  # noqa: BLE001
@@ -388,7 +432,19 @@ async def compare_query(query_id: str):
         prompt=prompt,
         responses=responses,
         live_count=live_count,
+        total_cost_usd=round(total_cost, 6),
+        total_latency_ms=total_latency,
     )
+
+
+@api_router.get("/compare_logs")
+async def list_compare_logs(query_id: Optional[str] = None, limit: int = 50):
+    limit = max(1, min(limit, 200))
+    q: dict = {}
+    if query_id:
+        q["query_id"] = query_id
+    items = await db.compare_logs.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"logs": items, "count": len(items)}
 
 
 app.include_router(api_router)

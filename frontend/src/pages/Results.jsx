@@ -72,6 +72,7 @@ export default function Results() {
   const [analysisStep, setAnalysisStep] = useState(mode === "reused" ? ANALYSIS_STEPS.length : 0);
   const [liveResponses, setLiveResponses] = useState(null); // [{id, label, text, is_mock, ...}]
   const [liveCount, setLiveCount] = useState(0);
+  const [totalCost, setTotalCost] = useState(0);
 
   // Kick off the real 4-model comparison on mount (unless we're reusing a cached one)
   useEffect(() => {
@@ -81,6 +82,7 @@ export default function Results() {
       if (cancelled) return;
       setLiveResponses(r.data?.responses || []);
       setLiveCount(r.data?.live_count || 0);
+      setTotalCost(r.data?.total_cost_usd || 0);
     }).catch((e) => console.warn("Compare failed", e));
     return () => { cancelled = true; };
   }, [queryId, mode]);
@@ -246,6 +248,7 @@ export default function Results() {
             challengeOutcome={challengeOutcome}
             liveResponses={liveResponses}
             liveCount={liveCount}
+            totalCost={totalCost}
             onChallenge={() => {
               if (challengePhase === "idle") {
                 setChallengeStep(0);
@@ -261,7 +264,7 @@ export default function Results() {
   );
 }
 
-function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, liveResponses, liveCount }) {
+function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, liveResponses, liveCount, totalCost }) {
   const modelById = useMemo(() => Object.fromEntries(MODELS.map((m) => [m.id, m])), []);
   const liveById = useMemo(() => {
     if (!liveResponses) return {};
@@ -289,10 +292,21 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
             <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
             {liveCount} LIVE model{liveCount === 1 ? "" : "s"}
           </span>
-          {liveResponses.some((r) => r.is_mock) && (
+          {liveResponses.some((r) => r.is_mock && !r.error) && (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-[#A78BFA]/40 bg-[#A78BFA]/[0.08] px-2.5 py-0.5 text-[#A78BFA]">
               <span className="w-1.5 h-1.5 rounded-full bg-[#A78BFA]" />
-              {liveResponses.filter((r) => r.is_mock).length} MOCKED
+              {liveResponses.filter((r) => r.is_mock && !r.error).length} MOCKED
+            </span>
+          )}
+          {liveResponses.some((r) => r.is_mock && r.error) && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.08] px-2.5 py-0.5 text-[#F43F5E]" data-testid="fallback-summary">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#F43F5E]" />
+              {liveResponses.filter((r) => r.is_mock && r.error).length} FALLBACK
+            </span>
+          )}
+          {typeof totalCost === "number" && totalCost > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-0.5 text-white/70 font-mono" data-testid="total-cost">
+              ~${totalCost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}
             </span>
           )}
           <span className="text-white/40">Add more provider keys in <code className="font-mono text-white/60">backend/.env</code> to light up more slots.</span>
@@ -311,17 +325,20 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
           const live = liveById[m.id];
           const responseText = live?.text || MOCK_RESPONSES[m.id];
           const isMock = live ? live.is_mock : true;
-          const codenameOverride = live?.codename || m.codename;
           return (
             <ExpandableModelCard
               key={m.id}
               model={m}
-              codename={codenameOverride}
+              codename={live?.codename || m.codename}
               response={responseText}
               details={MODEL_DETAILS[m.id]}
               contribution={MOCK_CONTRIBUTIONS.find((c) => c.modelId === m.id)?.pct || 0}
               latencyMs={live?.latency_ms || m.latencyMs}
-              tokens={live?.tokens || m.tokens}
+              tokens={live?.total_tokens || m.tokens}
+              inputTokens={live?.input_tokens}
+              outputTokens={live?.output_tokens}
+              costUsd={live?.cost_usd}
+              modelUsed={live?.model_used}
               isMock={isMock}
               error={live?.error}
             />
@@ -614,10 +631,33 @@ function ReuseBadgeBanner({ mode, match, topic, reason }) {
   );
 }
 
-function ExpandableModelCard({ model: m, response, details, contribution, codename, latencyMs, tokens, isMock, error }) {
+function ExpandableModelCard({ model: m, response, details, contribution, codename, latencyMs, tokens, isMock, error, inputTokens, outputTokens, costUsd, modelUsed }) {
   const [open, setOpen] = useState(false);
-  const displayCodename = codename || m.codename;
+  const displayCodename = modelUsed || codename || m.codename;
   const showLive = isMock === false;
+  const isFallback = isMock === true && !!error;
+
+  let badge;
+  if (showLive) {
+    badge = (
+      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#10B981]/40 bg-[#10B981]/[0.1] text-[#10B981] px-1.5 py-0.5" data-testid={`card-${m.id}-live`}>LIVE</span>
+    );
+  } else if (isFallback) {
+    badge = (
+      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.1] text-[#F43F5E] px-1.5 py-0.5" title={error} data-testid={`card-${m.id}-fallback`}>FALLBACK</span>
+    );
+  } else {
+    badge = (
+      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#A78BFA]/40 bg-[#A78BFA]/[0.1] text-[#A78BFA] px-1.5 py-0.5" data-testid={`card-${m.id}-mocked`}>MOCKED</span>
+    );
+  }
+
+  const formatCost = (c) => {
+    if (!c || c === 0) return "$0";
+    if (c < 0.0001) return "<$0.0001";
+    return `$${c.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
+  };
+
   return (
     <motion.article
       variants={item}
@@ -634,13 +674,9 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <div className="text-[14.5px] font-medium text-white">{m.label}</div>
-              {showLive ? (
-                <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#10B981]/40 bg-[#10B981]/[0.1] text-[#10B981] px-1.5 py-0.5" data-testid={`card-${m.id}-live`}>LIVE</span>
-              ) : (
-                <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#A78BFA]/40 bg-[#A78BFA]/[0.1] text-[#A78BFA] px-1.5 py-0.5" data-testid={`card-${m.id}-mocked`}>MOCKED</span>
-              )}
+              {badge}
             </div>
-            <div className="text-[11.5px] text-white/45">{displayCodename} · {m.provider}</div>
+            <div className="text-[11.5px] text-white/45" data-testid={`card-${m.id}-model`}>{displayCodename} · {m.provider}</div>
           </div>
         </div>
         <div className="flex items-center gap-3 text-[11px] font-mono text-white/40 flex-shrink-0">
@@ -650,10 +686,21 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
         </div>
       </header>
       <div className="px-6 pl-9 text-[14.5px] leading-[1.65] text-white/75 whitespace-pre-line" data-testid={`response-${m.id}`}>
-        {error ? <span className="text-[#F43F5E] text-[13px]">Provider error — {error}. Showing fallback.</span> : response}
+        {response}
       </div>
-      <div className="px-6 pl-9 mt-3 text-[11px] font-mono text-white/35">
-        {latencyMs ?? m.latencyMs}ms · {tokens ?? m.tokens} tok
+      {isFallback && error && (
+        <div className="px-6 pl-9 mt-3 text-[11.5px] text-[#F43F5E]/80" data-testid={`card-${m.id}-error`}>
+          Provider error · {error}. Using fallback text.
+        </div>
+      )}
+      <div className="px-6 pl-9 mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-mono text-white/40" data-testid={`card-${m.id}-stats`}>
+        <span>{latencyMs ?? m.latencyMs}ms</span>
+        <span>·</span>
+        <span>in {inputTokens ?? 0}</span>
+        <span>·</span>
+        <span>out {outputTokens ?? 0}</span>
+        <span>·</span>
+        <span title="Estimated cost — see /app/backend/providers/base.py for rates">~{formatCost(costUsd || 0)}</span>
       </div>
       <button
         onClick={() => setOpen((v) => !v)}
