@@ -42,6 +42,7 @@ class QueryCreate(BaseModel):
     detail: int = 50         # 0=Quick, 100=Deep
     audience: str = "professional"  # beginner | professional | expert
     format: str = "paragraph"       # paragraph | bullets | table | steps
+    strategy: str = "balanced"      # max_accuracy | balanced | creative | critical | fast
 
 
 class QueryRecord(BaseModel):
@@ -52,6 +53,7 @@ class QueryRecord(BaseModel):
     detail: int
     audience: str
     format: str
+    strategy: str = "balanced"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

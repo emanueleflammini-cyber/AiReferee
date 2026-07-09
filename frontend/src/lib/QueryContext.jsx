@@ -9,6 +9,7 @@ export function QueryProvider({ children }) {
     detail: 50,
     audience: "professional",
     format: "paragraph",
+    strategy: "balanced",
   });
 
   return (

@@ -1,54 +1,68 @@
 # AI Referee — PRD
 
 ## Original Problem Statement
-Build a modern SaaS web application called **AI Referee** — NOT a chatbot. It compares answers from multiple AI models and generates one optimized "Super Answer" based on consensus. Premium UI inspired by Apple, OpenAI and Linear. White, dark navy and electric blue palette. Minimal, elegant, responsive, mobile-first.
+Build **AI Referee** — the first **AI Consensus Platform**. Not another chatbot. Instead of trusting a single AI, Referee sends a question to multiple models, analyses where they agree/disagree, and generates one transparent Trusted Conclusion. Never claims absolute truth — supports better-informed decisions via transparent consensus.
 
-Homepage: `AI Referee` title, subtitle "One Question. Multiple AIs. One Super Answer.", "Ask anything..." textarea, filters (Response Goal slider Accuracy↔Creativity, Detail Level slider Quick↔Deep, Audience pills Beginner/Professional/Expert, Output Format pills Paragraph/Bullet List/Table/Step-by-step), and "Compare AIs" button.
-
-Results page: 4 model cards (A/B/C/D) with placeholder responses, Consensus Score, Trust Score, Agreement Points, Disagreement Points, premium Super Answer card, "See Full Debate" button.
-
-Debate page: chat-style back-and-forth between models.
-
-**Do not implement AI integrations yet.**
-
-## User Choices
-- Backend saves queries to MongoDB (for later real-AI wiring)
-- Modern geometric fonts (Geist)
-- Rich micro-interactions with framer-motion
-- Chat-style group debate
-- Premium wordmark: minimalist Shield + Neural Network icon in white / dark navy / electric blue
+## User Positioning
+- Hero: "One Question. Multiple AI Minds. One Trusted Conclusion."
+- Pitch: "The first AI Consensus Platform that combines the best reasoning from multiple AI models into one transparent answer."
+- Aesthetic: Apple / Linear / OpenAI / Perplexity. White / dark navy / electric blue. Glassmorphism, soft blue glow, smooth motion.
 
 ## Architecture
 - **Frontend**: React 19, React Router 7, TailwindCSS, shadcn/ui, framer-motion, sonner, lucide-react.
-- **Backend**: FastAPI + Motor (MongoDB), routes prefixed with `/api`.
-- **State**: `QueryProvider` React Context carries the user's prompt + filters across `/`, `/results`, `/debate`.
-- **Data**: Static placeholder responses in `/app/frontend/src/lib/mockData.js` (Nova-1, Ember-3, Prism-2, Kairo-X).
+- **Backend**: FastAPI + Motor (MongoDB), `/api` prefix.
+- **State**: `QueryProvider` context (prompt, goal, detail, audience, format, strategy).
 
 ## Implemented (2026-02)
-- Home page (`/`) — Logo, hero, "Ask anything" textarea with autosize, two custom-styled sliders (Response Goal, Detail Level), Audience + Format pill groups, "Compare AIs" CTA with cmd/ctrl+enter shortcut, empty-prompt toast validation, feature trust strip.
-- Results page (`/results`) — Question header, Consensus + Trust score pills, 2x2 grid of 4 Model cards with color-coded accent bars and latency/token stats, Agreement/Disagreement lists, premium **Super Answer** card with cyan top-glow, "See Full Debate" primary CTA.
-- Debate page (`/debate`) — Chat-style thread with per-model color-tinted bubbles + circular avatars, model legend chips, verdict banner that returns to `/results`.
-- Backend endpoints: `GET /api/`, `POST /api/queries`, `GET /api/queries?limit=N`, `GET /api/queries/{id}`, `POST /api/status`, `GET /api/status`.
-- Design system: dark navy `#060A14` base, surface `#0B1120`, electric blue `#00E5FF`, primary blue `#0066FF`, per-model accents (`#00E5FF`, `#10B981`, `#F59E0B`, `#F43F5E`). Geist / Geist Mono fonts. Grain + grid + radial glow backgrounds. Sonner dark toasts.
+### Homepage `/`
+- Hero: title, subtitle "One Question. / Multiple AI Minds. / One Trusted Conclusion.", pitch line.
+- Ask textarea with autosize + ⌘/Ctrl+Enter shortcut.
+- Filters: Response Goal + Detail Level sliders (with dynamic hint labels), Audience & Format pills.
+- **Conclusion Strategy** section with 5 selectable cards: Maximum Accuracy, Balanced, Creative Thinking, Critical Analysis, Fast Response.
+- **Generate Conclusion** primary CTA (renamed from Compare AIs).
+- **How It Works** — 7-step visual workflow: Question → Multiple AI Models → Consensus Analysis → Evidence Review → Trusted Conclusion → Challenge Conclusion → Updated Conclusion. Numbered 01-07 with chevron connectors.
+- **Supported Models** — 6 branded chips: ChatGPT, Gemini, Claude, Grok, Mistral, DeepSeek + "More models coming soon."
+- Trust strip footer tiles.
 
-## Testing (iteration 1)
-- Backend: 100% (6/6 API checks).
-- Frontend: 97% — all critical flows pass (Home → Results → Debate, empty prompt validation, filter toggles, mobile viewport).
-- 2 LOW-priority items are Playwright-only quirks (card-model-a visibility flag, keyboard slider nav) — content renders correctly for real users.
+### Results `/`
+- Phased loading experience:
+  1. `models` phase — each of 4 models (ChatGPT, Claude, Gemini, Grok) staggers from **Thinking…** → **Complete**.
+  2. `analysis` phase — 7 Consensus Analysis messages tick off ("Comparing answers…" through "Preparing final conclusion…").
+  3. `reveal` phase.
+- Three top meters: Confidence, Consensus Level, Trust.
+- 4 model cards with brand-color initials, latency & token stats.
+- Three lists: Key Agreements, Key Disagreements, Remaining Uncertainty.
+- **Trusted Conclusion** premium card (renamed from Super Answer) with animated Confidence + Consensus Level bars, main body, and a **Why this Conclusion?** transparency block.
+- **Challenge Conclusion** button that plays a 6-step challenge animation, then reveals a strengthened outcome: **82% → 94%** with findings list. Confidence updates live in the meter and CTA footer.
+- **Model Contribution** horizontal bar chart (34/28/23/15%) with animated fills.
+- Transparency note verbatim.
+- See Full Debate CTA to `/debate`.
+
+### Debate `/debate`
+- Chat-style thread across the 4 models with brand-colored bubbles + avatars, legend chips, verdict banner.
+
+### Backend
+- `POST /api/queries` accepts `{prompt, goal, detail, audience, format, strategy}` — strategy defaults to `balanced`.
+- `GET /api/queries?limit=N`, `GET /api/queries/{id}`.
+- `POST /api/status`, `GET /api/status` for infra checks.
+
+## Testing
+- Iteration 1: backend 100%, frontend 97% (harness-only quirks).
+- Iteration 2: backend 100% (strategy field verified). Frontend verified visually + Playwright selector checks for `challenge-outcome`, `transparency-note`, `contribution-card` all True; every new section (strategy, workflow, supported models, phased loading, trusted-conclusion, model contribution) captured in screenshots.
 
 ## Prioritized Backlog
 
-### P0 — Next
-- Wire real AI providers (GPT-5.4, Claude Sonnet 4.6, Gemini 3.1 Pro, one more) behind `/api/queries/{id}/compare` — stream responses, compute real consensus.
-- Persist full results (per-model text, scores, super answer, debate transcript) per query and hydrate `/results/{id}` and `/debate/{id}`.
-- Auth (Emergent Google OAuth or JWT) + per-user query history.
+### P0 — Real intelligence
+- Wire actual models (GPT-5.4, Claude Sonnet 4.6, Gemini 3.1 Pro, Grok 3.0) behind `POST /api/queries/{id}/compare` — parallel calls, real consensus + confidence, real challenge round.
+- Persist full results (per-model text, scores, contributions, challenge history, super answer) and hydrate `/results/{id}` and `/debate/{id}` with real data.
+- Auth (Emergent Google OAuth) + per-user query history.
 
 ### P1
-- Consensus dial visualization (radial chart) and per-model confidence bars.
-- Share links for `/results/{id}` with OG image preview.
-- Prompt library / recent queries in nav.
+- Shareable `/results/{id}` links with auto-generated OG image previews (huge for social growth).
+- Prompt library / saved presets (strategy + filter bundles).
+- Real streaming for the "Thinking…" phase — swap the fake timers for token stream indicators.
 
 ### P2
-- Team workspaces + saved presets (goal/detail/audience/format bundles).
-- Export Super Answer as PDF/Markdown.
-- Billing (Stripe) — free tier + Pro tier for premium models.
+- Team workspaces + collaborative challenges (comment on findings).
+- Export Trusted Conclusion as PDF / Markdown / Notion block.
+- Stripe billing — free (2 models) vs Pro (all 6, higher rate limits, challenge unlimited).
