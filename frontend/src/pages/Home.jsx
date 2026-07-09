@@ -26,7 +26,6 @@ import { useQueryState } from "@/lib/QueryContext";
 import { STRATEGIES, SUPPORTED_MODELS, WORKFLOW_STEPS } from "@/lib/mockData";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-
 const AUDIENCES = [
   { id: "beginner", label: "Beginner" },
   { id: "professional", label: "Professional" },
@@ -50,7 +49,7 @@ const STRATEGY_ICONS = {
 
 export default function Home() {
   const navigate = useNavigate();
-  const { query, setQuery } = useQueryState();
+  const { query, setQuery, settings } = useQueryState();
   const [submitting, setSubmitting] = useState(false);
   const taRef = useRef(null);
 
@@ -70,20 +69,60 @@ export default function Home() {
       return;
     }
     setSubmitting(true);
+    const payload = {
+      prompt: query.prompt,
+      goal: query.goal,
+      detail: query.detail,
+      audience: query.audience,
+      format: query.format,
+      strategy: query.strategy,
+    };
+    // 1) persist the query (best-effort)
+    axios.post(`${API}/queries`, payload).catch((e) => console.warn("Query save failed", e));
+
+    // 2) Smart Reuse — ask the server whether a prior conclusion can be reused
+    let matchRes = null;
     try {
-      await axios.post(`${API}/queries`, {
-        prompt: query.prompt,
-        goal: query.goal,
-        detail: query.detail,
-        audience: query.audience,
-        format: query.format,
-        strategy: query.strategy,
-      });
+      const r = await axios.post(`${API}/queries/match`, { prompt: query.prompt });
+      matchRes = r.data;
     } catch (e) {
-      console.warn("Query save failed", e);
+      console.warn("Match check failed", e);
     }
     setSubmitting(false);
-    navigate("/results");
+
+    const pref = settings?.reusePref || "ask";
+
+    // Never-reuse / always-refresh topics — go straight to a fresh comparison
+    if (!matchRes || matchRes.policy === "never_reuse") {
+      navigate("/results", { state: { mode: "fresh", policy: matchRes?.policy, topic: matchRes?.topic, reason: matchRes?.reason } });
+      return;
+    }
+    if (matchRes.policy === "always_refresh") {
+      navigate("/results", { state: { mode: "fresh", policy: matchRes.policy, topic: matchRes.topic, reason: matchRes.reason } });
+      return;
+    }
+
+    // No cached match — fresh comparison
+    if (!matchRes.match) {
+      navigate("/results", { state: { mode: "fresh", topic: matchRes.topic } });
+      return;
+    }
+
+    // Sensitive-topic override
+    if (pref === "never_sensitive" && (matchRes.topic === "sensitive" || matchRes.topic === "news")) {
+      navigate("/results", { state: { mode: "fresh", topic: matchRes.topic } });
+      return;
+    }
+    if (pref === "prefer_reused") {
+      navigate("/results", { state: { mode: "reused", match: matchRes.match, topic: matchRes.topic }, replace: false });
+      return;
+    }
+    if (pref === "prefer_fresh") {
+      navigate("/results", { state: { mode: "updated", replacedMatch: matchRes.match, topic: matchRes.topic } });
+      return;
+    }
+    // default: ask
+    navigate("/reuse-found", { state: { match: matchRes.match, topic: matchRes.topic } });
   };
 
   const goalLabel =

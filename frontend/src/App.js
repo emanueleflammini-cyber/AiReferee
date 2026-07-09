@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Home from "@/pages/Home";
 import Results from "@/pages/Results";
 import Debate from "@/pages/Debate";
+import ReuseFound from "@/pages/ReuseFound";
+import Settings from "@/pages/Settings";
 import { Toaster } from "sonner";
 import { QueryProvider } from "@/lib/QueryContext";
 
@@ -13,8 +15,10 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Home />} />
+            <Route path="/reuse-found" element={<ReuseFound />} />
             <Route path="/results" element={<Results />} />
             <Route path="/debate" element={<Debate />} />
+            <Route path="/settings" element={<Settings />} />
           </Routes>
         </BrowserRouter>
       </QueryProvider>

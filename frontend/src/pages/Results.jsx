@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft,
@@ -23,6 +23,9 @@ import {
   ScatterChart,
   Lightbulb,
   Gauge,
+  Recycle,
+  Zap,
+  RefreshCcw,
 } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
 import { useQueryState } from "@/lib/QueryContext";
@@ -50,12 +53,20 @@ const item = {
 
 export default function Results() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { query } = useQueryState();
   const prompt = query.prompt || "What is a distributed database and why would I use one?";
 
-  const [phase, setPhase] = useState("models");
-  const [completedModels, setCompletedModels] = useState([]);
-  const [analysisStep, setAnalysisStep] = useState(0);
+  const routeState = location.state || {};
+  const mode = routeState.mode || "fresh"; // fresh | reused | updated
+  const reuseTopic = routeState.topic;
+  const reuseReason = routeState.reason;
+  const reuseMatch = routeState.match || routeState.replacedMatch || null;
+
+  // If we're reusing a cached conclusion, skip loading and go straight to reveal.
+  const [phase, setPhase] = useState(mode === "reused" ? "reveal" : "models");
+  const [completedModels, setCompletedModels] = useState(mode === "reused" ? MODELS.map((m) => m.id) : []);
+  const [analysisStep, setAnalysisStep] = useState(mode === "reused" ? ANALYSIS_STEPS.length : 0);
 
   const [challengePhase, setChallengePhase] = useState("idle");
   const [challengeStep, setChallengeStep] = useState(0);
@@ -83,7 +94,6 @@ export default function Results() {
     const t = setTimeout(() => setAnalysisStep((s) => s + 1), 550);
     return () => clearTimeout(t);
   }, [phase, analysisStep]);
-
   useEffect(() => {
     if (challengePhase !== "running") return;
     if (challengeStep >= CHALLENGE_STEPS.length) {
@@ -119,6 +129,9 @@ export default function Results() {
             “{prompt}”
           </h1>
         </div>
+
+        {/* Smart Reuse badge banner */}
+        <ReuseBadgeBanner mode={mode} match={reuseMatch} topic={reuseTopic} reason={reuseReason} />
 
         <AnimatePresence>
           {phase !== "reveal" && (
@@ -489,6 +502,66 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
 }
 
 /* -------------------- Sub-components -------------------- */
+
+function ReuseBadgeBanner({ mode, match, topic, reason }) {
+  if (!mode || mode === "fresh") {
+    // A subtle badge for fresh comparisons — keeps the transparency contract explicit.
+    return (
+      <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-[#0066FF]/40 bg-[#0066FF]/[0.08] px-3.5 py-1.5 text-[12px] text-[#00E5FF]" data-testid="badge-fresh">
+        <Sparkles className="w-3.5 h-3.5" />
+        Fresh Comparison
+        {reason && <span className="text-white/50 ml-1 hidden sm:inline"> · {reason}</span>}
+      </div>
+    );
+  }
+
+  const isReused = mode === "reused";
+  const accent = isReused ? "#00E5FF" : "#10B981";
+  const label = isReused ? "Reused Consensus" : "Updated Result";
+  const Icon = isReused ? Recycle : RefreshCcw;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4 }}
+      className="mt-6 rounded-2xl border p-4 md:p-5 flex items-start gap-4 flex-wrap"
+      style={{
+        borderColor: `${accent}55`,
+        background: `linear-gradient(180deg, ${accent}12, rgba(11,17,32,0.7) 70%)`,
+      }}
+      data-testid={isReused ? "badge-reused" : "badge-updated"}
+    >
+      <div
+        className="w-10 h-10 rounded-xl border flex-shrink-0 flex items-center justify-center"
+        style={{ backgroundColor: `${accent}20`, borderColor: `${accent}55` }}
+      >
+        <Icon className="w-4 h-4" style={{ color: accent }} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="text-[13.5px] font-medium text-white">{label}</div>
+          {match && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-mono text-white/70">
+              {match.similarity}% match · {match.age_days}d old
+            </span>
+          )}
+          {topic && (
+            <span className="text-[11px] uppercase tracking-[0.2em] text-white/40 font-mono">{topic}</span>
+          )}
+        </div>
+        <div className="mt-1 text-[12.5px] text-white/60 leading-relaxed">
+          {isReused
+            ? "This Trusted Conclusion was served instantly from Referee's consensus cache. No new AI comparison was run."
+            : "You had a matching prior conclusion, but you asked Referee to refresh with a new AI comparison. The cache has been updated."}
+          {match && (
+            <span className="text-white/40"> · Previous question: <span className="italic text-white/60">“{match.prompt}”</span></span>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
 
 function ExpandableModelCard({ model: m, response, details, contribution }) {
   const [open, setOpen] = useState(false);

@@ -3,10 +3,11 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import re
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 import uuid
 from datetime import datetime, timezone
 
@@ -14,17 +15,91 @@ from datetime import datetime, timezone
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# App + router
 app = FastAPI(title="AI Referee API")
 api_router = APIRouter(prefix="/api")
 
 
-# ---------- Models ----------
+# --------------------------------------------------------------------------
+# Smart Reuse — topic classification, normalization, similarity
+# --------------------------------------------------------------------------
+
+NEVER_REUSE_KEYWORDS = {
+    "today", "now", "tonight", "latest", "current", "currently", "yesterday",
+    "price", "prices", "cost", "weather", "stock", "stocks", "news",
+    "trending", "score", "scores", "match", "election", "results",
+}
+ALWAYS_REFRESH_KEYWORDS = {
+    "medical", "medicine", "doctor", "diagnose", "diagnosis", "symptom",
+    "symptoms", "prescription", "dose", "dosage",
+    "legal", "law", "lawyer", "lawsuit", "attorney", "court", "sue",
+    "tax", "taxes", "invest", "investing", "investment", "financial",
+    "finance", "insurance", "loan", "mortgage",
+    "cancer", "disease", "illness", "treatment",
+}
+TECHNICAL_KEYWORDS = {
+    "code", "programming", "database", "databases", "algorithm", "algorithms",
+    "api", "framework", "python", "javascript", "typescript", "react",
+    "node", "docker", "kubernetes", "sql", "http", "https", "compiler",
+    "distributed", "async", "concurrency", "protocol", "encryption",
+    "microservice", "microservices", "cache", "caching", "queue", "kafka",
+}
+
+STOP_WORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "of", "in", "on", "for", "to", "and", "or", "with", "that", "this",
+    "it", "as", "at", "by", "from", "into", "about", "than", "then",
+    "how", "why", "what", "when", "where", "who", "which", "whose",
+    "do", "does", "did", "can", "could", "would", "should", "will",
+    "i", "you", "we", "they", "he", "she", "them", "my", "your", "our",
+    "some", "any", "all", "no", "not", "so", "if", "but",
+}
+
+CACHE_TTL_DAYS = {
+    "news": 0,
+    "sensitive": 0,
+    "technical": 14,
+    "stable": 30,
+}
+
+SIM_THRESHOLD = 0.55
+
+
+def normalize_prompt(p: str) -> str:
+    p = (p or "").lower()
+    p = re.sub(r"[^a-z0-9\s]", " ", p)
+    p = re.sub(r"\s+", " ", p).strip()
+    return p
+
+
+def tokens_of(p: str):
+    return set(normalize_prompt(p).split()) - STOP_WORDS
+
+
+def jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def classify_topic(p: str) -> str:
+    toks = tokens_of(p)
+    if toks & NEVER_REUSE_KEYWORDS:
+        return "news"
+    if toks & ALWAYS_REFRESH_KEYWORDS:
+        return "sensitive"
+    if toks & TECHNICAL_KEYWORDS:
+        return "technical"
+    return "stable"
+
+
+# --------------------------------------------------------------------------
+# Models
+# --------------------------------------------------------------------------
+
 class StatusCheck(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -38,11 +113,11 @@ class StatusCheckCreate(BaseModel):
 
 class QueryCreate(BaseModel):
     prompt: str
-    goal: int = 50           # 0=Accuracy, 100=Creativity
-    detail: int = 50         # 0=Quick, 100=Deep
-    audience: str = "professional"  # beginner | professional | expert
-    format: str = "paragraph"       # paragraph | bullets | table | steps
-    strategy: str = "balanced"      # max_accuracy | balanced | creative | critical | fast
+    goal: int = 50
+    detail: int = 50
+    audience: str = "professional"
+    format: str = "paragraph"
+    strategy: str = "balanced"
 
 
 class QueryRecord(BaseModel):
@@ -57,10 +132,25 @@ class QueryRecord(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-# ---------- Routes ----------
+class MatchRequest(BaseModel):
+    prompt: str
+
+
+class MatchResponse(BaseModel):
+    policy: str          # reusable | never_reuse | always_refresh
+    topic: str           # stable | technical | sensitive | news
+    match: Optional[Dict[str, Any]] = None
+    reason: str
+    ttl_days: int
+
+
+# --------------------------------------------------------------------------
+# Routes
+# --------------------------------------------------------------------------
+
 @api_router.get("/")
 async def root():
-    return {"message": "AI Referee API is running", "version": "0.1.0"}
+    return {"message": "AI Referee API is running", "version": "0.2.0"}
 
 
 @api_router.post("/status", response_model=StatusCheck)
@@ -90,6 +180,21 @@ async def create_query(payload: QueryCreate):
     doc = record.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
     await db.queries.insert_one(doc)
+
+    # Cache a mock conclusion for the Smart Reuse system unless the topic
+    # is never-reuse (news) or always-refresh (sensitive).
+    topic = classify_topic(payload.prompt)
+    if topic in ("technical", "stable"):
+        await db.conclusions.insert_one({
+            "id": record.id,
+            "prompt": payload.prompt,
+            "prompt_tokens": list(tokens_of(payload.prompt)),
+            "topic": topic,
+            "confidence": 82,
+            "consensus": 87,
+            "trust": 92,
+            "created_at": doc['created_at'],
+        })
     return record
 
 
@@ -113,7 +218,83 @@ async def get_query(query_id: str):
     return doc
 
 
-# Mount router
+@api_router.post("/queries/match", response_model=MatchResponse)
+async def match_query(req: MatchRequest):
+    prompt = (req.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is empty")
+
+    topic = classify_topic(prompt)
+    ttl = CACHE_TTL_DAYS.get(topic, 0)
+
+    if topic == "news":
+        return MatchResponse(
+            policy="never_reuse",
+            topic=topic,
+            reason="News, prices, weather and current-event topics are never cached — this will be fetched fresh.",
+            ttl_days=0,
+        )
+    if topic == "sensitive":
+        return MatchResponse(
+            policy="always_refresh",
+            topic=topic,
+            reason="Financial, legal and medical topics always run a fresh comparison for safety.",
+            ttl_days=0,
+        )
+
+    # Look for a semantically-similar prior conclusion
+    toks = tokens_of(prompt)
+    now = datetime.now(timezone.utc)
+    best_doc = None
+    best_score = 0.0
+    async for doc in db.conclusions.find({}, {"_id": 0}).sort("created_at", -1).limit(300):
+        prev_toks = set(doc.get("prompt_tokens", []))
+        score = jaccard(toks, prev_toks)
+        if score > best_score:
+            best_score = score
+            best_doc = doc
+
+    if best_doc is None or best_score < SIM_THRESHOLD:
+        return MatchResponse(
+            policy="reusable",
+            topic=topic,
+            reason="No similar prior conclusion in cache — this will be a fresh comparison.",
+            ttl_days=ttl,
+        )
+
+    created = best_doc.get("created_at")
+    if isinstance(created, str):
+        created = datetime.fromisoformat(created)
+    age = now - created
+    age_days = max(0, age.days)
+    if age_days > ttl:
+        return MatchResponse(
+            policy="reusable",
+            topic=topic,
+            reason=f"A prior conclusion exists but exceeds the {ttl}-day cache window for this topic.",
+            ttl_days=ttl,
+        )
+
+    match = {
+        "id": best_doc["id"],
+        "prompt": best_doc["prompt"],
+        "created_at": created.isoformat(),
+        "age_days": age_days,
+        "similarity": round(best_score * 100),
+        "confidence": best_doc.get("confidence", 82),
+        "consensus": best_doc.get("consensus", 87),
+        "trust": best_doc.get("trust", 92),
+        "topic": topic,
+    }
+    return MatchResponse(
+        policy="reusable",
+        topic=topic,
+        match=match,
+        reason=f"A similar prior conclusion ({match['similarity']}% match, {age_days}d old) is available for reuse.",
+        ttl_days=ttl,
+    )
+
+
 app.include_router(api_router)
 
 app.add_middleware(
