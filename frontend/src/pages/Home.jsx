@@ -77,8 +77,14 @@ export default function Home() {
       format: query.format,
       strategy: query.strategy,
     };
-    // 1) persist the query (best-effort)
-    axios.post(`${API}/queries`, payload).catch((e) => console.warn("Query save failed", e));
+    // 1) persist the query and grab its id
+    let queryId = null;
+    try {
+      const r = await axios.post(`${API}/queries`, payload);
+      queryId = r.data?.id || null;
+    } catch (e) {
+      console.warn("Query save failed", e);
+    }
 
     // 2) Smart Reuse — ask the server whether a prior conclusion can be reused
     let matchRes = null;
@@ -92,37 +98,31 @@ export default function Home() {
 
     const pref = settings?.reusePref || "ask";
 
-    // Never-reuse / always-refresh topics — go straight to a fresh comparison
     if (!matchRes || matchRes.policy === "never_reuse") {
-      navigate("/results", { state: { mode: "fresh", policy: matchRes?.policy, topic: matchRes?.topic, reason: matchRes?.reason } });
+      navigate("/results", { state: { mode: "fresh", queryId, policy: matchRes?.policy, topic: matchRes?.topic, reason: matchRes?.reason } });
       return;
     }
     if (matchRes.policy === "always_refresh") {
-      navigate("/results", { state: { mode: "fresh", policy: matchRes.policy, topic: matchRes.topic, reason: matchRes.reason } });
+      navigate("/results", { state: { mode: "fresh", queryId, policy: matchRes.policy, topic: matchRes.topic, reason: matchRes.reason } });
       return;
     }
-
-    // No cached match — fresh comparison
     if (!matchRes.match) {
-      navigate("/results", { state: { mode: "fresh", topic: matchRes.topic } });
+      navigate("/results", { state: { mode: "fresh", queryId, topic: matchRes.topic } });
       return;
     }
-
-    // Sensitive-topic override
     if (pref === "never_sensitive" && (matchRes.topic === "sensitive" || matchRes.topic === "news")) {
-      navigate("/results", { state: { mode: "fresh", topic: matchRes.topic } });
+      navigate("/results", { state: { mode: "fresh", queryId, topic: matchRes.topic } });
       return;
     }
     if (pref === "prefer_reused") {
-      navigate("/results", { state: { mode: "reused", match: matchRes.match, topic: matchRes.topic }, replace: false });
+      navigate("/results", { state: { mode: "reused", queryId, match: matchRes.match, topic: matchRes.topic } });
       return;
     }
     if (pref === "prefer_fresh") {
-      navigate("/results", { state: { mode: "updated", replacedMatch: matchRes.match, topic: matchRes.topic } });
+      navigate("/results", { state: { mode: "updated", queryId, replacedMatch: matchRes.match, topic: matchRes.topic } });
       return;
     }
-    // default: ask
-    navigate("/reuse-found", { state: { match: matchRes.match, topic: matchRes.topic } });
+    navigate("/reuse-found", { state: { queryId, match: matchRes.match, topic: matchRes.topic } });
   };
 
   const goalLabel =

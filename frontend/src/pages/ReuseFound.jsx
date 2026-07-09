@@ -27,9 +27,9 @@ export default function ReuseFound() {
   const state = loc.state || {};
   const match = state.match;
   const topic = state.topic || "stable";
+  const queryId = state.queryId || null;
 
   if (!match) {
-    // Someone landed here without a match — send them home
     navigate("/", { replace: true });
     return null;
   }
@@ -37,14 +37,14 @@ export default function ReuseFound() {
   const useExisting = () => {
     toast.success("Reused a prior consensus", { description: `${match.similarity}% match · ${match.age_days}d old` });
     navigate("/results", {
-      state: { mode: "reused", match, topic },
+      state: { mode: "reused", queryId, match, topic },
       replace: true,
     });
   };
 
   const refresh = () => {
     navigate("/results", {
-      state: { mode: "updated", replacedMatch: match, topic },
+      state: { mode: "updated", queryId, replacedMatch: match, topic },
       replace: true,
     });
   };

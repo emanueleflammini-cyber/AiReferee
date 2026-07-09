@@ -2,6 +2,7 @@ from fastapi import FastAPI, APIRouter, HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+import asyncio
 import os
 import re
 import logging
@@ -14,6 +15,8 @@ from datetime import datetime, timezone
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+from providers import selected_providers, provider_status  # noqa: E402
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -292,6 +295,99 @@ async def match_query(req: MatchRequest):
         match=match,
         reason=f"A similar prior conclusion ({match['similarity']}% match, {age_days}d old) is available for reuse.",
         ttl_days=ttl,
+    )
+
+
+# --------------------------------------------------------------------------
+# /api/providers — advertise which model slots are LIVE vs mocked
+# --------------------------------------------------------------------------
+
+@api_router.get("/providers")
+async def get_providers():
+    return {"providers": provider_status()}
+
+
+# --------------------------------------------------------------------------
+# /api/queries/{id}/compare — real 4-model comparison
+# --------------------------------------------------------------------------
+
+class ModelResponse(BaseModel):
+    id: str
+    label: str
+    codename: str
+    provider: str
+    text: str
+    latency_ms: int
+    tokens: int
+    is_mock: bool
+    error: Optional[str] = None
+
+
+class CompareResponse(BaseModel):
+    query_id: str
+    prompt: str
+    responses: List[ModelResponse]
+    live_count: int
+
+
+@api_router.post("/queries/{query_id}/compare", response_model=CompareResponse)
+async def compare_query(query_id: str):
+    doc = await db.queries.find_one({"id": query_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Query not found")
+
+    prompt: str = doc["prompt"]
+    strategy: str = doc.get("strategy", "balanced")
+    audience: str = doc.get("audience", "professional")
+    fmt: str = doc.get("format", "paragraph")
+
+    system = (
+        "You are one panellist in a multi-model AI consensus panel called AI Referee. "
+        f"Audience: {audience}. Preferred format: {fmt}. Strategy: {strategy}. "
+        "Answer the user's question directly and precisely — the panel synthesises multiple answers afterwards. "
+        "Keep the answer self-contained; do not reference other panellists."
+    )
+
+    providers = selected_providers()
+    tasks = [p.timed_generate(prompt, system) for p in providers]
+    results = await asyncio.gather(*tasks, return_exceptions=False)
+
+    responses: List[ModelResponse] = []
+    live_count = 0
+    for p, r in zip(providers, results):
+        if not r.is_mock:
+            live_count += 1
+        responses.append(ModelResponse(
+            id=p.id,
+            label=p.label,
+            codename=p.codename,
+            provider=p.provider_name,
+            text=r.text,
+            latency_ms=r.latency_ms,
+            tokens=r.tokens,
+            is_mock=r.is_mock,
+            error=r.error,
+        ))
+
+    # Persist the live model output onto the cached conclusion (if we have one for this query)
+    # so future reuse can serve the *real* answer, not a mock.
+    try:
+        await db.conclusions.update_one(
+            {"id": query_id},
+            {"$set": {
+                "responses": [r.model_dump() for r in responses],
+                "live_count": live_count,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning("Failed to persist compare result: %s", e)
+
+    return CompareResponse(
+        query_id=query_id,
+        prompt=prompt,
+        responses=responses,
+        live_count=live_count,
     )
 
 
