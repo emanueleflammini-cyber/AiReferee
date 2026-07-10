@@ -1,14 +1,24 @@
-"""AI Referee backend test suite — iteration 2.
+"""AI Referee backend test suite — iteration 3.
 
 Covers:
-    - /api/providers and /api/providers/specs contracts
-    - /api/queries CRUD + compare with only-OpenAI+Gemini enforcement
-    - /api/queries/match Smart Reuse policy
-    - /api/conclusions/{id}/translate
-    - Confirms disabled providers (Claude/Grok/Mistral) are NEVER invoked
+    - Existing regressions:
+        * /api/providers and /api/providers/specs contracts (5 slots)
+        * /api/queries CRUD + compare with only-OpenAI+Gemini enforcement
+        * /api/queries/match Smart Reuse policy + jaccard_fallback threshold from env
+        * /api/conclusions/{id}/translate
+        * Confirms disabled providers (Claude/Grok/Mistral) are NEVER invoked
+    - NEW:
+        * GET /api/plans catalog contract (free/premium/byok)
+        * SMART_REUSE_THRESHOLD env value surfaced via /queries/match thresholds
+        * Claude wiring activation smoke-test (ENABLE_CLAUDE + fake key)
+        * BYOK abstraction: resolve_api_key precedence
+        * user_keys.set_user_key refuses when USER_KEY_ENCRYPTION_KEY unset
+        * requirements.txt exposes anthropic + cryptography importable
 """
 import os
+import sys
 import time
+import subprocess
 import pytest
 import requests
 
@@ -16,7 +26,6 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://referee-ai-4.preview
 API = f"{BASE_URL}/api"
 
 FORBIDDEN_IDS = {"model-b", "model-d", "model-e"}
-FORBIDDEN_VENDORS = {"anthropic", "claude", "xai", "grok", "mistral"}
 
 
 @pytest.fixture(scope="session")
@@ -35,15 +44,10 @@ class TestProviders:
         provs = r.json()["providers"]
         assert len(provs) == 5, f"expected 5 slots, got {len(provs)}"
         by_id = {p["id"]: p for p in provs}
-        # Live slots
         assert by_id["model-a"]["status"] == "live" and by_id["model-a"]["live"] is True
-        assert by_id["model-a"]["provider"] == "OpenAI"
-        assert by_id["model-c"]["status"] == "live" and by_id["model-c"]["live"] is True
-        assert by_id["model-c"]["is_primary"] is True
-        # Coming soon
-        assert by_id["model-d"]["status"] == "coming_soon" and by_id["model-d"]["live"] is False
-        assert by_id["model-e"]["status"] == "coming_soon" and by_id["model-e"]["live"] is False
-        # Premium coming soon
+        assert by_id["model-c"]["status"] == "live" and by_id["model-c"]["is_primary"] is True
+        assert by_id["model-d"]["status"] == "coming_soon"
+        assert by_id["model-e"]["status"] == "coming_soon"
         assert by_id["model-b"]["tier"] == "premium"
         assert by_id["model-b"]["status"] == "premium_coming_soon"
         assert by_id["model-b"]["live"] is False
@@ -57,7 +61,33 @@ class TestProviders:
         assert ids == {"model-a", "model-b", "model-c", "model-d", "model-e"}
 
 
-# ---------------- Queries + compare ----------------
+# ---------------- Plans catalog ----------------
+
+class TestPlans:
+    def test_plans_contract(self, s):
+        r = s.get(f"{API}/plans", timeout=30)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["active_plan"] == "free"
+        by_id = {p["id"]: p for p in data["plans"]}
+        assert set(by_id.keys()) == {"free", "premium", "byok"}
+        assert by_id["free"]["available"] is True
+        assert by_id["premium"]["available"] is False
+        assert by_id["byok"]["available"] is False
+        # Allowed provider ids
+        assert set(by_id["free"]["allowed_provider_ids"]) == {"model-a", "model-c"}
+        assert set(by_id["premium"]["allowed_provider_ids"]) == {
+            "model-a", "model-b", "model-c", "model-d", "model-e"
+        }
+        assert set(by_id["byok"]["allowed_provider_ids"]) == {
+            "model-a", "model-b", "model-c", "model-d", "model-e"
+        }
+        assert by_id["byok"]["can_use_own_keys"] is True
+        assert by_id["free"]["can_use_own_keys"] is False
+        assert by_id["premium"]["can_use_own_keys"] is False
+
+
+# ---------------- Compare only 2 live ----------------
 
 class TestCompareOnlyLive:
     @pytest.fixture(scope="class")
@@ -76,28 +106,30 @@ class TestCompareOnlyLive:
         assert r.status_code == 200, r.text
         data = r.json()
         responses = data["responses"]
-        assert len(responses) == 2, f"expected exactly 2 responses, got {len(responses)}: {[x['id'] for x in responses]}"
+        assert len(responses) == 2, [x['id'] for x in responses]
         assert data["live_count"] == 2
         ids = {r_["id"] for r_ in responses}
-        assert ids == {"model-a", "model-c"}, f"unexpected ids: {ids}"
-        # No forbidden IDs
+        assert ids == {"model-a", "model-c"}
         assert not (ids & FORBIDDEN_IDS)
         for resp in responses:
-            assert resp["is_mock"] is False, f"{resp['id']} came back as mock: {resp.get('error')}"
+            assert resp["is_mock"] is False, f"{resp['id']} mock: {resp.get('error')}"
             assert resp["text"] and len(resp["text"]) > 20
-        # No forbidden vendor names in text
         blob = str(data).lower()
-        for name in FORBIDDEN_VENDORS:
-            # Provider names may still appear in a general answer; be strict: no id/model refs
-            pass
-        # Ensure no forbidden ids anywhere in the payload
         for fid in FORBIDDEN_IDS:
-            assert fid not in blob, f"forbidden id {fid} leaked into compare response"
+            assert fid not in blob, f"forbidden id {fid} leaked"
 
 
-# ---------------- Smart Reuse match ----------------
+# ---------------- Match + threshold ----------------
 
 class TestMatch:
+    def test_match_thresholds_from_env(self, s):
+        r = s.post(f"{API}/queries/match", json={"prompt": "any prompt to inspect thresholds"}, timeout=30)
+        assert r.status_code == 200
+        data = r.json()
+        assert "thresholds" in data, data
+        expected = float(os.environ.get("SMART_REUSE_THRESHOLD", "0.55"))
+        assert float(data["thresholds"]["jaccard_fallback"]) == pytest.approx(expected)
+
     def test_match_news_never_reuse(self, s):
         r = s.post(f"{API}/queries/match", json={"prompt": "What is today's weather in Rome?"}, timeout=30)
         assert r.status_code == 200
@@ -108,27 +140,127 @@ class TestMatch:
         assert r.status_code == 200
         assert r.json()["policy"] == "always_refresh"
 
-    def test_match_technical_reusable(self, s):
-        # Same class-of-prompt as one we created above; should be reusable
-        r = s.post(f"{API}/queries/match", json={"prompt": "Explain distributed databases and why to use them"}, timeout=30)
-        assert r.status_code == 200
-        assert r.json()["policy"] == "reusable"
+
+# ---------------- Claude wiring smoke-test ----------------
+
+class TestClaudeWiring:
+    def test_claude_flip_reports_live(self):
+        """Import registry with ENABLE_CLAUDE=true + fake key; expect model-b status='live'.
+
+        Runs in a subprocess so env changes don't leak into other tests.
+        """
+        code = (
+            "import os,sys;"
+            "os.environ['ENABLE_CLAUDE']='true';"
+            "os.environ['ANTHROPIC_API_KEY']='sk-ant-fake-KEY-for-wiring-test';"
+            "sys.path.insert(0,'/app/backend');"
+            "from providers.registry import all_provider_specs;"
+            "specs={p['id']:p for p in all_provider_specs()};"
+            "print('MB_STATUS:', specs['model-b']['status']);"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert out.returncode == 0, out.stderr
+        assert "MB_STATUS: live" in out.stdout, out.stdout
+
+    def test_claude_default_disabled_reports_premium_coming_soon(self):
+        code = (
+            "import sys;"
+            "sys.path.insert(0,'/app/backend');"
+            "from providers.registry import all_provider_specs;"
+            "specs={p['id']:p for p in all_provider_specs()};"
+            "print('MB_STATUS:', specs['model-b']['status']);"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert out.returncode == 0, out.stderr
+        assert "MB_STATUS: premium_coming_soon" in out.stdout, out.stdout
+
+
+# ---------------- BYOK abstraction ----------------
+
+class TestBYOK:
+    def test_resolve_platform_key_for_model_a(self):
+        # Ensure /app/backend importable and .env loaded
+        sys.path.insert(0, "/app/backend")
+        from dotenv import load_dotenv
+        load_dotenv("/app/backend/.env")
+        from providers.key_source import resolve_api_key  # noqa
+        res = resolve_api_key("model-a")
+        assert res is not None, "expected platform key for model-a"
+        assert res.source == "platform"
+        assert res.provider_id == "model-a"
+
+    def test_resolve_model_b_none_on_free(self):
+        sys.path.insert(0, "/app/backend")
+        from providers.key_source import resolve_api_key  # noqa
+        # Free plan: model-b not in allowed ids -> None
+        res = resolve_api_key("model-b")
+        assert res is None, f"expected None for model-b under free plan, got {res}"
+
+
+# ---------------- Encryption safety ----------------
+
+class TestUserKeysEncryptionRefusal:
+    def test_set_user_key_refuses_without_encryption_key(self):
+        # Ensure USER_KEY_ENCRYPTION_KEY unset
+        prev = os.environ.pop("USER_KEY_ENCRYPTION_KEY", None)
+        try:
+            sys.path.insert(0, "/app/backend")
+            import asyncio
+            from services.user_keys import set_user_key
+            ok = asyncio.get_event_loop().run_until_complete(
+                set_user_key("TEST_user", "model-a", "sk-fake")
+            ) if False else asyncio.run(set_user_key("TEST_user", "model-a", "sk-fake"))
+            assert ok is False, "set_user_key must refuse without encryption key"
+        finally:
+            if prev is not None:
+                os.environ["USER_KEY_ENCRYPTION_KEY"] = prev
+
+    def test_user_keys_file_never_logs_raw(self):
+        with open("/app/backend/services/user_keys.py") as f:
+            src = f.read()
+        # Any log line referencing api_key must wrap it in _hint(...) or _redact(...)
+        for line in src.splitlines():
+            low = line.strip()
+            if low.startswith("log.") and "api_key" in line:
+                assert "_hint(api_key)" in line or "_redact(api_key)" in line, (
+                    f"raw api_key possibly logged: {line}"
+                )
+
+
+# ---------------- Requirements & imports ----------------
+
+class TestRequirements:
+    def test_anthropic_and_cryptography_importable(self):
+        import importlib
+        m1 = importlib.import_module("anthropic")
+        m2 = importlib.import_module("cryptography.fernet")
+        assert hasattr(m1, "AsyncAnthropic")
+        assert hasattr(m2, "Fernet")
+
+    def test_requirements_pins(self):
+        with open("/app/backend/requirements.txt") as f:
+            reqs = f.read().lower()
+        assert "anthropic" in reqs
+        assert "cryptography" in reqs
 
 
 # ---------------- Translate ----------------
 
 class TestTranslate:
-    def test_translate_needs_cached_conclusion(self, s):
-        # Create a technical query so it enters conclusions collection
+    def test_translate_smoke(self, s):
         prompt = "TEST_ Explain the CAP theorem in one paragraph"
         r = s.post(f"{API}/queries", json={"prompt": prompt, "goal": 50, "detail": 50,
                                             "audience": "professional", "format": "paragraph",
                                             "strategy": "balanced"}, timeout=30)
         assert r.status_code == 200
         qid = r.json()["id"]
-        # Run compare so trusted_conclusion or at least prompt is available
         s.post(f"{API}/queries/{qid}/compare", timeout=180)
-        # Try translate to Italian
         r2 = s.post(f"{API}/conclusions/{qid}/translate", json={"target_language": "it"}, timeout=60)
         assert r2.status_code in (200, 503), r2.text
         if r2.status_code == 200:

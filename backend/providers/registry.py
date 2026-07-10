@@ -2,22 +2,27 @@
 
 Design goals (Feb 2026):
     * OpenAI + Gemini are the only providers that ever get called from the
-      compare endpoint. They contribute equally to the Trusted Conclusion.
-    * Claude, Grok and Mistral are configured in the registry so the UI can
-      advertise them, but they must never be invoked while their ENABLE_X
-      flag is false. Their `status` field tells the frontend how to label
-      them ("live" / "coming_soon" / "premium_coming_soon").
-    * Adding or activating a provider only requires flipping an env flag
-      (ENABLE_OPENAI, ENABLE_GEMINI, ENABLE_CLAUDE, ENABLE_GROK,
-      ENABLE_MISTRAL) and — for real vendors — supplying the API key.
+      compare endpoint on the FREE plan. They contribute equally to the
+      Trusted Conclusion.
+    * Claude is fully implemented but gated behind ENABLE_CLAUDE and the
+      Premium plan. Activating Claude at platform level requires only:
+        1. `ENABLE_CLAUDE=true` in backend/.env
+        2. A valid `ANTHROPIC_API_KEY`
+      No code change required.
+    * Grok and Mistral are advertised as Coming Soon slots — the compare
+      engine never invokes them until their builders are wired.
+    * BYOK: `selected_providers(user_id=..., plan=Plan.BYOK)` transparently
+      overrides the platform API key with the user's encrypted key.
+
+Adding or activating a provider only requires flipping an env flag
+(ENABLE_OPENAI, ENABLE_GEMINI, ENABLE_CLAUDE, ENABLE_GROK, ENABLE_MISTRAL)
+and — for real vendors — supplying the API key.
 
 Exports:
-    selected_providers()        -> live Provider instances the compare
-                                    endpoint should iterate over.
-    all_provider_specs()        -> metadata for EVERY registered slot
-                                    (live + coming_soon + premium_coming_soon).
-    provider_status()           -> the payload for /api/providers.
-    fallback_for(provider)      -> async fallback callable for LIVE providers.
+    selected_providers(user_id=None, plan=None) -> live Provider instances.
+    all_provider_specs()                        -> metadata for EVERY slot.
+    provider_status()                           -> the payload for /api/providers.
+    fallback_for(provider)                      -> async fallback callable for LIVE providers.
 """
 from __future__ import annotations
 
@@ -29,6 +34,9 @@ from typing import Awaitable, Callable, Optional
 from .base import Provider, ProviderResult
 from .openai_provider import OpenAIProvider, SYSTEM_FALLBACK
 from .gemini_provider import GeminiProvider
+from .anthropic_provider import AnthropicProvider
+from .plans import Plan, entitlements_for
+from .key_source import resolve_api_key
 
 log = logging.getLogger(__name__)
 
@@ -46,18 +54,23 @@ class ProviderSpec:
     codename: str           # user-facing model version
     provider_name: str      # vendor (OpenAI, Google DeepMind, ...)
     enable_env: str         # env flag that turns the slot on
-    key_env: str            # env var that holds the API key (may be empty)
+    key_env: str            # env var that holds the platform API key
     tier: str               # "free" | "premium"
-    builder: Optional[Callable[[], Provider]]  # factory when the slot goes live
-    accent: str = ""        # brand color hint for the frontend
+    # Factory: takes an optional api_key override (BYOK) and returns a Provider.
+    builder: Optional[Callable[[Optional[str]], Provider]]
+    accent: str = ""
 
 
-def _build_openai() -> Provider:
-    return OpenAIProvider()
+def _build_openai(api_key: Optional[str] = None) -> Provider:
+    return OpenAIProvider(api_key=api_key)
 
 
-def _build_gemini() -> Provider:
-    return GeminiProvider()
+def _build_gemini(api_key: Optional[str] = None) -> Provider:
+    return GeminiProvider(api_key=api_key)
+
+
+def _build_claude(api_key: Optional[str] = None) -> Provider:
+    return AnthropicProvider(api_key=api_key)
 
 
 PROVIDER_REGISTRY: list[ProviderSpec] = [
@@ -86,12 +99,12 @@ PROVIDER_REGISTRY: list[ProviderSpec] = [
         enable_env="ENABLE_MISTRAL", key_env="MISTRAL_API_KEY",
         tier="free", builder=None, accent="#FF7A00",
     ),
-    # --- Premium (Claude) — coming soon ---
+    # --- Premium (Claude) — fully wired, disabled by default ---
     ProviderSpec(
         id="model-b", label="Claude", codename="Sonnet 4.6",
         provider_name="Anthropic",
         enable_env="ENABLE_CLAUDE", key_env="ANTHROPIC_API_KEY",
-        tier="premium", builder=None, accent="#D97757",
+        tier="premium", builder=_build_claude, accent="#D97757",
     ),
 ]
 
@@ -108,8 +121,10 @@ def _slot_status(spec: ProviderSpec) -> str:
     """Return "live" | "coming_soon" | "premium_coming_soon".
 
     A slot is only LIVE when its ENABLE_X flag is true, it has a real
-    builder (non-mock), and an API key is present. Otherwise it is a
-    Coming Soon slot — never invoked by the compare engine.
+    builder (non-mock), and a platform API key is present. Otherwise it
+    is a Coming Soon slot — never invoked by the compare engine.
+
+    Note: BYOK bypasses this platform-level check on a per-request basis.
     """
     if spec.tier == "premium" and not _env_true(spec.enable_env):
         return "premium_coming_soon"
@@ -139,21 +154,53 @@ def _primary_slot_id() -> str:
 # Public API
 # --------------------------------------------------------------------------
 
-def selected_providers() -> list[Provider]:
+def selected_providers(
+    user_id: Optional[str] = None,
+    plan: Optional[Plan | str] = None,
+) -> list[Provider]:
     """Provider instances that the compare endpoint may call.
 
-    Disabled slots (coming_soon / premium_coming_soon) are omitted — the
-    backend never calls them.
+    Default behaviour (no plan/user_id): current FREE-plan compatibility —
+    returns only slots whose platform-level status is "live".
+
+    When called with a plan (e.g. Plan.PREMIUM or Plan.BYOK):
+      * Only slots the plan is entitled to are considered.
+      * For BYOK, the user's stored key overrides the platform key.
+      * A slot that has neither a user key nor a platform key is skipped.
     """
+    ents = entitlements_for(plan) if (plan is not None or user_id is not None) else None
     live: list[Provider] = []
     for spec in PROVIDER_REGISTRY:
-        if _slot_status(spec) != "live":
+        if spec.builder is None:
+            continue  # slot not wired yet (Grok / Mistral)
+
+        # Default path — preserves current behaviour for the compare endpoint.
+        if ents is None:
+            if _slot_status(spec) != "live":
+                continue
+            try:
+                live.append(spec.builder(None))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Failed to build live provider %s: %s", spec.id, exc)
             continue
-        assert spec.builder is not None  # narrow for mypy — status "live" guarantees builder
+
+        # Plan-aware path.
+        if spec.id not in ents.allowed_provider_ids:
+            continue
+        # For premium slots we still respect ENABLE_X — activation must be
+        # explicit at the platform level even if the plan allows the slot.
+        # For BYOK, we allow user-key-only slots (platform key optional).
+        if not ents.can_use_own_keys and _slot_status(spec) != "live":
+            continue
+
+        resolved = resolve_api_key(spec.id, user_id=user_id, plan=ents.plan)
+        if resolved is None:
+            continue
         try:
-            live.append(spec.builder())
+            live.append(spec.builder(resolved.api_key))
         except Exception as exc:  # noqa: BLE001
-            log.warning("Failed to build live provider %s: %s", spec.id, exc)
+            log.warning("Failed to build provider %s: %s", spec.id, exc)
+
     return live
 
 
@@ -196,7 +243,6 @@ def _openai_rescue_fn() -> FallbackFn:
             res.is_mock = True
             res.error = "Primary provider failed — served by OpenAI rescue path"
             return res.with_computed_cost()
-        # If OpenAI itself isn't available, propagate an explicit error result.
         return ProviderResult(
             text="",
             is_mock=True,

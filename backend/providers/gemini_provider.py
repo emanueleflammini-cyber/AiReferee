@@ -34,11 +34,12 @@ class GeminiProvider(Provider):
     codename = DEFAULT_MODEL
     provider_name = "Google DeepMind"
 
-    def __init__(self, model: str = DEFAULT_MODEL) -> None:
+    def __init__(self, model: str = DEFAULT_MODEL, api_key: str | None = None) -> None:
         super().__init__()
         self.model = model
         self.codename = model
-        self.api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        # BYOK: prefer explicit override, otherwise the platform key.
+        self.api_key = (api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
         self.available = bool(self.api_key)
 
     async def generate(self, prompt: str, system: str = "") -> ProviderResult:

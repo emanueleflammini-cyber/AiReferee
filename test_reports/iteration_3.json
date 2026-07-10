@@ -1,0 +1,25 @@
+{
+  "summary": "Regression + new-feature test after P1 Claude wiring & business-plan architecture. 16/16 pytest tests pass. /api/providers still returns exactly 5 slots (model-a live, model-c live+primary, model-d/e coming_soon, model-b premium_coming_soon). NEW /api/plans returns active_plan='free' with 3 plans: free(available=true, ids={model-a, model-c}), premium(available=false, 5 ids), byok(available=false, 5 ids, can_use_own_keys=true). Compare on /api/queries/{id}/compare still calls exactly OpenAI+Gemini (2 responses, is_mock=false, no forbidden IDs leaked). Zero calls to api.anthropic.com / api.x.ai / api.mistral.ai in supervisor logs. /api/queries/match thresholds.jaccard_fallback == 0.55 sourced from SMART_REUSE_THRESHOLD env. Claude wiring smoke-test: subprocess with ENABLE_CLAUDE=true + fake ANTHROPIC_API_KEY reports model-b status='live' with no code change; default env correctly reports premium_coming_soon. BYOK smoke: resolve_api_key('model-a') returns source='platform'; resolve_api_key('model-b') returns None under FREE. Encryption safety: user_keys.set_user_key returns False when USER_KEY_ENCRYPTION_KEY unset; no raw api_key logged (only via _hint()). anthropic & cryptography.fernet importable. Frontend regression: Home page renders model chips (ChatGPT/Gemini LIVE, Grok/Mistral COMING SOON), lang-toggle switch to Italian updates copy ('Come funziona', 'Prezzi'), Settings /settings renders 4 Smart Reuse preference cards.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "providers/registry.py: _slot_status() correctly gates model-b to premium_coming_soon while ENABLE_CLAUDE=false; flipping the flag + key promotes it to live with no code change (verified via subprocess smoke-test).",
+    "providers/key_source.py: never-log-key discipline is upheld — only _redact(user_key) is emitted; on FREE plan model-b returns None because it is not in allowed_provider_ids.",
+    "services/user_keys.py: set_user_key correctly refuses without USER_KEY_ENCRYPTION_KEY; the only log line that references api_key formats it through _hint(api_key). Consider using a distinct parameter name (e.g. _hint(k)) to make static scanners happy.",
+    "server.py: SIM_THRESHOLD = float(os.environ.get('SMART_REUSE_THRESHOLD','0.55')) — no hardcoded value in compare engine; surfaced via /queries/match thresholds.jaccard_fallback.",
+    "server.py GET /api/plans: correctly marks only FREE as available and includes can_use_own_keys, allowed_provider_ids, daily_compare_limit and priority for each plan.",
+    "Minor (carry-over from iter 2): ASSUMED_SAVED_API_CALLS=4 in server.py still overstates savings on the 2-live architecture."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "N/A (no auth)",
+  "seed_data_creation": "Created 2 TEST_ prefixed queries for compare + translate; safe to leave in test_database.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py now has 16 tests covering plans, Claude wiring subprocess smoke-test, BYOK resolve_api_key precedence, and encryption refusal. If USER_KEY_ENCRYPTION_KEY becomes a real env var, update TestUserKeysEncryptionRefusal accordingly. Public base: https://referee-ai-4.preview.emergentagent.com."
+}

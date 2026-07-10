@@ -17,6 +17,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 from providers import selected_providers, provider_status, all_provider_specs, fallback_for  # noqa: E402
+from providers.plans import PLAN_ENTITLEMENTS, Plan  # noqa: E402
 from providers.embeddings import get_or_create_embedding, cosine, EMBED_MODEL  # noqa: E402
 from providers.language import detect_language, normalize_prompt as lang_normalize, SUPPORTED as SUPPORTED_LANGS  # noqa: E402
 from providers.translator import Translator, LANG_NAMES  # noqa: E402
@@ -77,7 +78,9 @@ CACHE_TTL_DAYS = {
 SIM_NEAR_EXACT   = float(os.environ.get("REUSE_SIM_NEAR_EXACT", "0.95"))
 SIM_STRONG_MATCH = float(os.environ.get("REUSE_SIM_STRONG",     "0.88"))
 # Fallback Jaccard threshold used when no embeddings are available.
-SIM_THRESHOLD = 0.55
+# Kept as a single knob (SMART_REUSE_THRESHOLD) so pricing/tuning can be adjusted
+# without touching the comparison engine.
+SIM_THRESHOLD = float(os.environ.get("SMART_REUSE_THRESHOLD", "0.55"))
 
 # Assumed savings per avoided comparison (approximate real cost of 4 model calls today).
 ASSUMED_SAVED_COST_USD = float(os.environ.get("REUSE_SAVED_COST", "0.00030"))
@@ -460,6 +463,27 @@ async def get_providers():
 async def get_provider_specs():
     """Full slot list — including Coming Soon / Premium — for the frontend."""
     return {"providers": all_provider_specs()}
+
+
+@api_router.get("/plans")
+async def get_plans():
+    """Return the plan catalog. UI can advertise plans without knowing the entitlement rules.
+
+    Only FREE is active today. PREMIUM and BYOK are advertised as `available: false`
+    so the UI can render "Coming Soon" chips without hardcoding any plan logic.
+    """
+    active_plan = Plan.FREE.value
+    plans_payload = []
+    for plan_enum, ents in PLAN_ENTITLEMENTS.items():
+        plans_payload.append({
+            "id": plan_enum.value,
+            "available": plan_enum == Plan.FREE,
+            "allowed_provider_ids": sorted(ents.allowed_provider_ids),
+            "daily_compare_limit": ents.daily_compare_limit,
+            "can_use_own_keys": ents.can_use_own_keys,
+            "priority": ents.priority,
+        })
+    return {"active_plan": active_plan, "plans": plans_payload}
 
 
 # --------------------------------------------------------------------------
