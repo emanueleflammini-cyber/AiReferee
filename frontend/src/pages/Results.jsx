@@ -70,6 +70,7 @@ export default function Results() {
   const reuseReason = routeState.reason;
   const reuseMatch = routeState.match || routeState.replacedMatch || null;
   const queryId = routeState.queryId || null;
+  const answerLanguage = routeState.answerLanguage || "en";
 
   const [phase, setPhase] = useState(mode === "reused" ? "reveal" : "models");
   const [completedModels, setCompletedModels] = useState(mode === "reused" ? LIVE_MODELS.map((m) => m.id) : []);
@@ -77,19 +78,47 @@ export default function Results() {
   const [liveResponses, setLiveResponses] = useState(null); // [{id, label, text, is_mock, ...}]
   const [liveCount, setLiveCount] = useState(0);
   const [totalCost, setTotalCost] = useState(0);
+  const [trustedConclusion, setTrustedConclusion] = useState("");
+  const [conclusionLoading, setConclusionLoading] = useState(mode !== "reused");
 
-  // Kick off the real 4-model comparison on mount (unless we're reusing a cached one)
+  // Kick off the real comparison on mount (unless we're reusing a cached one)
   useEffect(() => {
     if (!queryId || mode === "reused") return;
     let cancelled = false;
+    setConclusionLoading(true);
     axios.post(`${API}/queries/${queryId}/compare`).then((r) => {
       if (cancelled) return;
       setLiveResponses(r.data?.responses || []);
       setLiveCount(r.data?.live_count || 0);
       setTotalCost(r.data?.total_cost_usd || 0);
-    }).catch((e) => console.warn("Compare failed", e));
+      setTrustedConclusion(r.data?.trusted_conclusion || "");
+      setConclusionLoading(false);
+    }).catch((e) => {
+      console.warn("Compare failed", e);
+      setConclusionLoading(false);
+    });
     return () => { cancelled = true; };
   }, [queryId, mode]);
+
+  // For reused mode, fetch the cached Trusted Conclusion in the current answer language.
+  useEffect(() => {
+    if (mode !== "reused") return;
+    const targetId = reuseMatch?.id || queryId;
+    if (!targetId) return;
+    let cancelled = false;
+    setConclusionLoading(true);
+    axios.get(`${API}/conclusions/${targetId}`, { params: { lang: answerLanguage } })
+      .then((r) => {
+        if (cancelled) return;
+        setTrustedConclusion(r.data?.trusted_conclusion || "");
+        setConclusionLoading(false);
+      })
+      .catch((e) => {
+        console.warn("Fetch reused conclusion failed", e);
+        setConclusionLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [mode, reuseMatch, queryId, answerLanguage]);
 
   const [challengePhase, setChallengePhase] = useState("idle");
   const [challengeStep, setChallengeStep] = useState(0);
@@ -253,6 +282,9 @@ export default function Results() {
             liveResponses={liveResponses}
             liveCount={liveCount}
             totalCost={totalCost}
+            trustedConclusion={trustedConclusion}
+            conclusionLoading={conclusionLoading}
+            answerLanguage={answerLanguage}
             onChallenge={() => {
               if (challengePhase === "idle") {
                 setChallengeStep(0);
@@ -268,7 +300,7 @@ export default function Results() {
   );
 }
 
-function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, liveResponses, liveCount, totalCost }) {
+function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, liveResponses, liveCount, totalCost, trustedConclusion, conclusionLoading, answerLanguage }) {
   const modelById = useMemo(() => Object.fromEntries(MODELS.map((m) => [m.id, m])), []);
   const { t } = useI18n();
   const liveById = useMemo(() => {
@@ -370,18 +402,27 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
               <Sparkles className="w-4 h-4 text-[#00E5FF]" />
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80">Referee verdict</div>
-              <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-white">Trusted Conclusion</h2>
+              <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80">{t("results.refereeVerdict")}</div>
+              <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-white">{t("results.trustedConclusion")}</h2>
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-            <AnimatedMeter label="Confidence Score" value={currentConfidence} accent="#00E5FF" testId="meter-confidence" />
-            <AnimatedMeter label="Consensus Level" value={MOCK_SCORES.consensus} accent="#10B981" testId="meter-consensus" />
+            <AnimatedMeter label={t("results.confidenceScore")} value={currentConfidence} accent="#00E5FF" testId="meter-confidence" />
+            <AnimatedMeter label={t("results.consensusLevel")} value={MOCK_SCORES.consensus} accent="#10B981" testId="meter-consensus" />
           </div>
 
-          <div className="text-[15.5px] md:text-[16.5px] leading-[1.75] text-white/85 whitespace-pre-line" data-testid="trusted-conclusion-body">
-            {MOCK_SUPER_ANSWER}
+          <div className="text-[15.5px] md:text-[16.5px] leading-[1.75] text-white/85 whitespace-pre-line" data-testid="trusted-conclusion-body" data-answer-language={answerLanguage}>
+            {conclusionLoading ? (
+              <span className="inline-flex items-center gap-2 text-white/50 text-[14px]" data-testid="trusted-conclusion-loading">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF] animate-pulse" />
+                {t("results.synthesizing")}
+              </span>
+            ) : (trustedConclusion || (
+              <span className="text-white/50 text-[14px] italic" data-testid="trusted-conclusion-empty">
+                {t("results.noConclusion")}
+              </span>
+            ))}
           </div>
 
           <AnimatePresence>
@@ -456,12 +497,12 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
           <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-6 border-t border-white/[0.08]">
             <div className="flex flex-wrap items-center gap-3 text-[12px] text-white/50">
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF]" /> Synthesized from {LIVE_MODELS.length} live model{LIVE_MODELS.length === 1 ? "" : "s"}
+                <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF]" /> {t("results.synthesizedFromLive", { n: LIVE_MODELS.length })}
               </span>
               <span>·</span>
-              <span>Confidence {currentConfidence}%</span>
+              <span>{t("results.confidence")} {currentConfidence}%</span>
               <span>·</span>
-              <span>Consensus {MOCK_SCORES.consensus}%</span>
+              <span>{t("results.consensus")} {MOCK_SCORES.consensus}%</span>
             </div>
             <button
               onClick={onChallenge}
@@ -470,7 +511,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
               className="group inline-flex items-center gap-2 rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/[0.08] text-[#F59E0B] hover:bg-[#F59E0B]/[0.14] px-5 py-2.5 text-[13px] font-medium transition-colors disabled:opacity-70"
             >
               <Swords className="w-4 h-4" />
-              {challengePhase === "idle" ? "Challenge Conclusion" : challengePhase === "running" ? "Challenging..." : "Challenge again"}
+              {challengePhase === "idle" ? t("results.challengeConclusion") : challengePhase === "running" ? t("results.challenging") : t("results.challengeAgain")}
             </button>
           </div>
         </div>
@@ -479,9 +520,9 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
       {/* Why this conclusion? — 4 tier cards */}
       <SectionHeader
         className="mt-16"
-        eyebrow="Transparency"
-        title="Why this conclusion?"
-        body="Every claim is sorted by how much support it earned from the models. Nothing is hidden."
+        eyebrow={t("results.transparencyEyebrow")}
+        title={t("results.whyConclusion")}
+        body={t("results.whyBody")}
       />
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="why-conclusion-grid">
         <FullConsensusCard tier={CONSENSUS_TIERS.full} />
@@ -499,9 +540,9 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
       {/* Why did AI Referee choose this answer? */}
       <SectionHeader
         className="mt-16"
-        eyebrow="Referee's rationale"
-        title="Why did AI Referee choose this answer?"
-        body="Three concise explanations for why this conclusion beats every alternative Referee considered."
+        eyebrow={t("results.rationaleEyebrow")}
+        title={t("results.whyChoseAnswer")}
+        body={t("results.rationaleBody")}
       />
       <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="why-referee-chose">
         {WHY_CHOSE_ANSWER.map((w, i) => (
@@ -533,9 +574,9 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
         data-testid="contribution-card"
       >
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80 mb-2">
-          <BarChart3 className="w-3.5 h-3.5" /> Model Contribution
+          <BarChart3 className="w-3.5 h-3.5" /> {t("results.modelContribution")}
         </div>
-        <h3 className="text-xl font-semibold tracking-tight text-white">How each model shaped the conclusion</h3>
+        <h3 className="text-xl font-semibold tracking-tight text-white">{t("results.contributionTitle")}</h3>
         <div className="mt-6 space-y-4">
           {MOCK_CONTRIBUTIONS.map((c) => {
             const m = modelById[c.modelId];
@@ -852,12 +893,13 @@ function TierCard({ accent, label, badge, whyLabel, why, testId, children }) {
 }
 
 function FullConsensusCard({ tier }) {
+  const { t } = useI18n();
   return (
     <TierCard
       accent={tier.accent}
-      label={tier.label}
+      label={t("results.tier.full")}
       badge={<Check className="w-4 h-4" style={{ color: tier.accent }} />}
-      whyLabel={`${tier.percent}% agreement`}
+      whyLabel={t("results.tier.fullWhy", { pct: tier.percent })}
       why={tier.why}
       testId="tier-full-consensus"
     >
@@ -872,12 +914,13 @@ function FullConsensusCard({ tier }) {
 }
 
 function PartialConsensusCard({ tier, modelById }) {
+  const { t } = useI18n();
   return (
     <TierCard
       accent={tier.accent}
-      label={tier.label}
+      label={t("results.tier.partial")}
       badge={<Star className="w-4 h-4" style={{ color: tier.accent }} />}
-      whyLabel="Majority support"
+      whyLabel={t("results.tier.partialWhy")}
       why={tier.why}
       testId="tier-partial-consensus"
     >
@@ -903,12 +946,13 @@ function PartialConsensusCard({ tier, modelById }) {
 }
 
 function DisagreementsCard({ tier, modelById }) {
+  const { t } = useI18n();
   return (
     <TierCard
       accent={tier.accent}
-      label={tier.label}
+      label={t("results.tier.disagreements")}
       badge={<MinusCircle className="w-4 h-4" style={{ color: tier.accent }} />}
-      whyLabel="Objective framing"
+      whyLabel={t("results.tier.disagreementsWhy")}
       why={tier.why}
       testId="tier-disagreements"
     >
@@ -938,12 +982,13 @@ function DisagreementsCard({ tier, modelById }) {
 }
 
 function UniqueInsightsCard({ tier, modelById }) {
+  const { t } = useI18n();
   return (
     <TierCard
       accent={tier.accent}
-      label={tier.label}
+      label={t("results.tier.unique")}
       badge={<Lightbulb className="w-4 h-4" style={{ color: tier.accent }} />}
-      whyLabel="Exploratory"
+      whyLabel={t("results.tier.uniqueWhy")}
       why={tier.why}
       testId="tier-unique-insights"
     >

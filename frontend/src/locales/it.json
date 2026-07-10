@@ -12,6 +12,15 @@
     "format": "Formato", "paragraph": "Paragrafo", "bullets": "Elenco puntato", "table": "Tabella", "steps": "Passo dopo passo",
     "strategy": "Strategia di conclusione", "maxAccuracy": "Massima precisione", "balanced": "Bilanciata",
     "creative": "Pensiero creativo", "critical": "Analisi critica", "fast": "Risposta rapida",
+    "leaningAccuracy": "Verso l'accuratezza", "leaningCreativity": "Verso la creatività",
+    "quickTake": "Risposta veloce", "deepDive": "Analisi approfondita",
+    "strategyHint": {
+      "max_accuracy": "Dai priorità a fatti verificati e cita il consenso più che le novità.",
+      "balanced": "Peso uguale ad accuratezza, sfumatura e chiarezza.",
+      "creative": "Premia inquadrature inattese e collegamenti laterali.",
+      "critical": "Fai emergere contro-argomenti e casi limite in modo esplicito.",
+      "fast": "Risposta più breve difendibile con l'argomento principale."
+    },
     "generate": "Genera conclusione", "summoning": "Convoco i modelli...",
     "shortcut": "Premi ⌘/Ctrl + Invio per inviare",
     "emptyError": "Prima chiedi qualcosa — l'arbitro non può giudicare il silenzio.",
@@ -21,6 +30,15 @@
     "modelsEyebrow": "Modelli supportati",
     "modelsTitle": "Le migliori IA del mondo, nella stessa stanza",
     "modelsBody": "Referee invia la tua domanda a ciascuno in parallelo — e ti mostra solo ciò su cui concordano.",
+    "workflow": {
+      "question":   { "title": "Domanda",              "body": "Chiedi qualsiasi cosa." },
+      "models":     { "title": "Più modelli AI",       "body": "Due modelli leader rispondono in modo indipendente." },
+      "consensus":  { "title": "Analisi del consenso", "body": "Confrontiamo il loro ragionamento in parallelo." },
+      "evidence":   { "title": "Verifica delle prove", "body": "Ogni affermazione viene controllata per coerenza logica." },
+      "trust":      { "title": "Punteggi di affidabilità", "body": "Ogni affermazione riceve un valore di affidabilità difendibile." },
+      "conclusion": { "title": "Conclusione affidabile", "body": "Un unico verdetto sintetico e trasparente." },
+      "reuse":      { "title": "Riuso intelligente",   "body": "Le domande equivalenti trovano la cache." }
+    },
     "moreModels": "Altri modelli in arrivo.",
     "featureA": "Più menti, un verdetto", "featureAbody": "GPT e Gemini ragionano sulla tua domanda in parallelo. Claude, Grok e Mistral sono nella roadmap.",
     "featureB": "Consenso + affidabilità", "featureBbody": "Ogni conclusione include un livello di consenso e un punteggio di affidabilità difendibile.",
@@ -77,6 +95,22 @@
     "showBreakdown": "Mostra argomenti, punti di forza e debolezza", "hideBreakdown": "Nascondi dettagli",
     "mainArguments": "Argomenti principali", "strengths": "Punti di forza", "weaknesses": "Punti deboli",
     "synthFrom": "Sintetizzata da 4 modelli",
+    "synthesizing": "Sto sintetizzando la Conclusione Affidabile…",
+    "noConclusion": "La Conclusione Affidabile non è disponibile per questa risposta riutilizzata. Aggiorna con un nuovo confronto per generarla.",
+    "synthesizedFromLive": "Sintetizzata da {n} modelli attivi",
+    "transparencyEyebrow": "Trasparenza",
+    "rationaleEyebrow": "Motivazione dell'arbitro",
+    "rationaleBody": "Tre spiegazioni sintetiche del perché questa conclusione batte ogni alternativa considerata da Referee.",
+    "tier": {
+      "full": "Consenso Pieno",
+      "fullWhy": "{pct}% di accordo",
+      "partial": "Consenso Parziale",
+      "partialWhy": "Sostegno della maggioranza",
+      "disagreements": "Disaccordi",
+      "disagreementsWhy": "Presentazione neutrale",
+      "unique": "Intuizioni Uniche",
+      "uniqueWhy": "Esplorativo"
+    },
     "addKeys": "Aggiungi altre chiavi provider in"
   },
   "badge": {

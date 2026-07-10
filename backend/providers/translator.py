@@ -18,7 +18,7 @@ TRANSLATE_MODEL = "gpt-5.4-mini"
 
 LANG_NAMES = {
     "en": "English", "it": "Italian", "es": "Spanish",
-    "fr": "French", "de": "German",
+    "fr": "French", "de": "German", "pt": "Portuguese",
 }
 
 

@@ -16,6 +16,15 @@
     "format": "Format", "paragraph": "Paragraph", "bullets": "Bullet List", "table": "Table", "steps": "Step-by-step",
     "strategy": "Conclusion Strategy", "maxAccuracy": "Maximum Accuracy", "balanced": "Balanced",
     "creative": "Creative Thinking", "critical": "Critical Analysis", "fast": "Fast Response",
+    "leaningAccuracy": "Leaning Accuracy", "leaningCreativity": "Leaning Creativity",
+    "quickTake": "Quick take", "deepDive": "Deep dive",
+    "strategyHint": {
+      "max_accuracy": "Prioritise verified facts and cite consensus above novelty.",
+      "balanced": "Even weight on accuracy, nuance and clarity.",
+      "creative": "Reward unexpected framings and lateral connections.",
+      "critical": "Actively surface counter-arguments and edge cases.",
+      "fast": "Shortest defensible answer with the top argument."
+    },
     "generate": "Generate Conclusion", "summoning": "Summoning models...",
     "shortcut": "Press ⌘/Ctrl + Enter to submit",
     "emptyError": "Ask something first — the referee can't judge silence.",
@@ -25,6 +34,15 @@
     "modelsEyebrow": "Supported models",
     "modelsTitle": "The world's best AIs, in the same room",
     "modelsBody": "Referee sends your question to each in parallel — and only shows you what they agree on.",
+    "workflow": {
+      "question":   { "title": "Question",             "body": "You ask anything." },
+      "models":     { "title": "Multiple AI Models",   "body": "Two leading models answer independently." },
+      "consensus":  { "title": "Consensus Analysis",   "body": "We compare their reasoning side-by-side." },
+      "evidence":   { "title": "Evidence Review",      "body": "Claims are checked for logical consistency." },
+      "trust":      { "title": "Trust Scores",         "body": "Each claim earns a defensible confidence value." },
+      "conclusion": { "title": "Trusted Conclusion",   "body": "One synthesised, transparent verdict." },
+      "reuse":      { "title": "Smart Reuse",          "body": "Equivalent questions hit the cache." }
+    },
     "moreModels": "More models coming soon.",
     "featureA": "Multiple minds, one verdict", "featureAbody": "GPT and Gemini reason on your question in parallel. Claude, Grok and Mistral are on the roadmap.",
     "featureB": "Consensus + confidence", "featureBbody": "Every conclusion ships with a consensus level and a defensible confidence score.",
@@ -82,6 +100,22 @@
     "showBreakdown": "Show arguments, strengths & weaknesses", "hideBreakdown": "Hide breakdown",
     "mainArguments": "Main arguments", "strengths": "Strengths", "weaknesses": "Weaknesses",
     "synthFrom": "Synthesized from 4 models",
+    "synthesizing": "Synthesising Trusted Conclusion…",
+    "noConclusion": "The Trusted Conclusion is not available for this reused answer. Refresh with a new comparison to generate it.",
+    "synthesizedFromLive": "Synthesized from {n} live models",
+    "transparencyEyebrow": "Transparency",
+    "rationaleEyebrow": "Referee's rationale",
+    "rationaleBody": "Three concise explanations for why this conclusion beats every alternative Referee considered.",
+    "tier": {
+      "full": "Full Consensus",
+      "fullWhy": "{pct}% agreement",
+      "partial": "Partial Consensus",
+      "partialWhy": "Majority support",
+      "disagreements": "Disagreements",
+      "disagreementsWhy": "Objective framing",
+      "unique": "Unique Insights",
+      "uniqueWhy": "Exploratory"
+    },
     "addKeys": "Add more provider keys in"
   },
   "badge": {

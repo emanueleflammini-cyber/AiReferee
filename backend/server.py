@@ -21,6 +21,7 @@ from providers.plans import PLAN_ENTITLEMENTS, Plan  # noqa: E402
 from providers.embeddings import get_or_create_embedding, cosine, EMBED_MODEL  # noqa: E402
 from providers.language import detect_language, normalize_prompt as lang_normalize, SUPPORTED as SUPPORTED_LANGS  # noqa: E402
 from providers.translator import Translator, LANG_NAMES  # noqa: E402
+from providers.synthesizer import Synthesizer  # noqa: E402
 from auth import IdentityContext, get_identity, require_admin, enforce_daily_compare_limit  # noqa: E402
 
 mongo_url = os.environ['MONGO_URL']
@@ -136,6 +137,9 @@ class QueryCreate(BaseModel):
     audience: str = "professional"
     format: str = "paragraph"
     strategy: str = "balanced"
+    # Language the user wants to see the Trusted Conclusion in. ISO-639-1 code.
+    # Defaults to English so anonymous / legacy clients keep working unchanged.
+    answer_language: Optional[str] = "en"
 
 
 class QueryRecord(BaseModel):
@@ -147,6 +151,7 @@ class QueryRecord(BaseModel):
     audience: str
     format: str
     strategy: str = "balanced"
+    answer_language: str = "en"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -203,31 +208,6 @@ async def create_query(payload: QueryCreate):
     doc = record.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
     await db.queries.insert_one(doc)
-
-    topic = classify_topic(payload.prompt)
-    if topic in ("technical", "stable"):
-        # Detect the language locally (no API cost).
-        lang = detect_language(payload.prompt)
-        # Generate (or reuse) a multilingual embedding — very cheap.
-        vec, embed_meta = await get_or_create_embedding(db, payload.prompt)
-
-        await db.conclusions.insert_one({
-            "id": record.id,
-            "prompt": payload.prompt,
-            "prompt_norm": normalize_prompt(payload.prompt),
-            "prompt_tokens": list(tokens_of(payload.prompt)),
-            "topic": topic,
-            "language": lang,
-            "trust_score": 92,
-            "consensus": 87,
-            "confidence": 82,
-            "is_public": True,
-            "is_time_sensitive": topic == "news",
-            "category": "stable" if topic == "stable" else "technical",
-            "embedding": list(vec) if vec is not None else None,
-            "embedding_model": embed_meta.get("model"),
-            "created_at": doc['created_at'],
-        })
     return record
 
 
@@ -401,21 +381,56 @@ class TranslateResponse(BaseModel):
 @api_router.post("/conclusions/{conclusion_id}/translate", response_model=TranslateResponse)
 async def translate_conclusion(conclusion_id: str, req: TranslateRequest):
     target = (req.target_language or "en").lower()
+    return await _translate_or_fetch(conclusion_id, target)
+
+
+@api_router.get("/conclusions/{conclusion_id}")
+async def get_conclusion(conclusion_id: str, lang: str = "en"):
+    """Return a cached Trusted Conclusion in `lang`.
+
+    Used by the Smart Reuse / reused-mode path on the frontend so the reused
+    answer is displayed in the user's selected interface language, not the
+    language of the original comparison.
+    """
+    target = (lang or "en").lower()
+    resp = await _translate_or_fetch(conclusion_id, target)
+    return {
+        "id": conclusion_id,
+        "language": resp.target_language,
+        "source_language": resp.source_language,
+        "trusted_conclusion": resp.text,
+        "cache_hit": resp.cache_hit,
+        "model_used": resp.model_used,
+    }
+
+
+async def _translate_or_fetch(conclusion_id: str, target: str) -> "TranslateResponse":
     doc = await db.conclusions.find_one({"id": conclusion_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Conclusion not found")
     source_lang = doc.get("language", "en")
     source_version = doc.get("version", 1)
 
-    # 1) Same-language: no translation needed.
-    if source_lang == target:
+    # 1) Fast paths — the conclusion is already stored in the target language.
+    body = doc.get("trusted_conclusion") or ""
+    translations = doc.get("translations") or {}
+    # 1a) Prefer a language-keyed translation cache on the conclusion itself.
+    if target in translations and translations[target].get("text"):
         return TranslateResponse(
             conclusion_id=conclusion_id, source_language=source_lang, target_language=target,
-            text=doc.get("trusted_conclusion") or doc.get("prompt", ""),
-            cache_hit=True, input_tokens=0, output_tokens=0, latency_ms=0, cost_usd=0.0, model_used="none",
+            text=translations[target]["text"], cache_hit=True,
+            input_tokens=0, output_tokens=0, latency_ms=0, cost_usd=0.0,
+            model_used=translations[target].get("model", ""),
+        )
+    # 1b) Same-language body — no translation cost.
+    if source_lang == target and body:
+        return TranslateResponse(
+            conclusion_id=conclusion_id, source_language=source_lang, target_language=target,
+            text=body, cache_hit=True,
+            input_tokens=0, output_tokens=0, latency_ms=0, cost_usd=0.0, model_used="none",
         )
 
-    # 2) Translation cache lookup — key = (conclusion_id, target, source_version)
+    # 2) Legacy translation cache (kept for backwards compatibility).
     cache_key = {"conclusion_id": conclusion_id, "target_language": target, "source_version": source_version}
     cached = await db.translation_cache.find_one(cache_key, {"_id": 0})
     if cached:
@@ -426,13 +441,56 @@ async def translate_conclusion(conclusion_id: str, req: TranslateRequest):
         )
 
     # 3) Real translation call — ONLY the final conclusion body.
-    body = doc.get("trusted_conclusion") or doc.get("prompt", "")
+    if not body:
+        # Legacy row (created before synthesis was wired). If we have the raw
+        # model responses on the conclusion, synthesise the Trusted Conclusion
+        # on demand in the target language and persist it for next time.
+        responses = doc.get("responses") or []
+        answers = [
+            {"id": r.get("id"), "label": r.get("label"), "provider": r.get("provider"), "text": r.get("text")}
+            for r in responses if (r.get("text") or "").strip()
+        ]
+        if answers:
+            try:
+                synth = Synthesizer()
+                if synth.available:
+                    s = await synth.synthesize(
+                        doc.get("prompt", ""), answers, target,
+                        doc.get("audience", "professional"), doc.get("format", "paragraph"),
+                    )
+                    text_out = s["text"]
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    await db.conclusions.update_one(
+                        {"id": conclusion_id},
+                        {"$set": {
+                            "trusted_conclusion": text_out if source_lang == target else "",
+                            "trusted_conclusion_language": target,
+                            f"translations.{target}": {
+                                "text": text_out, "model": s["model_used"], "generated_at": now_iso,
+                            },
+                        }},
+                    )
+                    return TranslateResponse(
+                        conclusion_id=conclusion_id, source_language=source_lang, target_language=target,
+                        text=text_out, cache_hit=False,
+                        input_tokens=s["input_tokens"], output_tokens=s["output_tokens"],
+                        latency_ms=s["latency_ms"], cost_usd=float(s.get("cost_usd") or 0.0), model_used=s["model_used"],
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logging.getLogger(__name__).warning("On-demand synthesis failed for %s: %s", conclusion_id, exc)
+        # Truly nothing to translate — return empty conclusion so the frontend
+        # can render a graceful "conclusion not available yet" state.
+        return TranslateResponse(
+            conclusion_id=conclusion_id, source_language=source_lang, target_language=target,
+            text="", cache_hit=False,
+            input_tokens=0, output_tokens=0, latency_ms=0, cost_usd=0.0, model_used="none",
+        )
     tr = Translator()
     if not tr.available:
         raise HTTPException(status_code=503, detail="No translator configured (OPENAI_API_KEY missing).")
     out = await tr.translate(body, target_lang=target, source_lang=source_lang)
 
-    # 4) Save to cache
+    # 4) Save to both caches so future reads are instant.
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.translation_cache.insert_one({
         **cache_key,
@@ -443,6 +501,12 @@ async def translate_conclusion(conclusion_id: str, req: TranslateRequest):
         "model_used": out["model_used"],
         "created_at": now_iso,
     })
+    await db.conclusions.update_one(
+        {"id": conclusion_id},
+        {"$set": {f"translations.{target}": {
+            "text": out["text"], "model": out["model_used"], "generated_at": now_iso,
+        }}},
+    )
     return TranslateResponse(
         conclusion_id=conclusion_id, source_language=source_lang, target_language=target,
         text=out["text"], cache_hit=False,
@@ -575,6 +639,12 @@ class CompareResponse(BaseModel):
     live_count: int
     total_cost_usd: float = 0.0
     total_latency_ms: int = 0
+    # NEW — synthesised Trusted Conclusion, always in `answer_language`.
+    trusted_conclusion: str = ""
+    answer_language: str = "en"
+    synthesis_model: str = ""
+    synthesis_latency_ms: int = 0
+    synthesis_cost_usd: float = 0.0
 
 
 @api_router.post("/queries/{query_id}/compare", response_model=CompareResponse)
@@ -669,15 +739,91 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
             logging.getLogger(__name__).warning("Failed to persist compare log: %s", e)
 
     # Persist real responses on the cached conclusion so Smart Reuse serves the real answer next time.
+    # --- Synthesise the Trusted Conclusion in the caller's language -----------
+    # `answer_language` is stored on the query record (set by the frontend based on
+    # the user's interface language). We fall back to detecting the language of the
+    # prompt so callers that don't send an explicit language still get a localised
+    # answer.
+    target_lang = (doc.get("answer_language") or detect_language(prompt) or "en").lower()
+    if target_lang not in SUPPORTED_LANGS:
+        target_lang = "en"
+
+    synth_text = ""
+    synth_model_used = ""
+    synth_latency_ms = 0
+    synth_cost_usd = 0.0
+    try:
+        synth = Synthesizer()
+        if synth.available:
+            answers_for_synth = [
+                {"id": r.id, "label": r.label, "provider": r.provider, "text": r.text}
+                for r in responses if not r.error and (r.text or "").strip()
+            ]
+            if answers_for_synth:
+                s = await synth.synthesize(prompt, answers_for_synth, target_lang, audience, fmt)
+                synth_text = s["text"]
+                synth_model_used = s["model_used"]
+                synth_latency_ms = s["latency_ms"]
+                synth_cost_usd = float(s.get("cost_usd") or 0.0)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning("Trusted Conclusion synthesis failed: %s", e)
+
+    # Persist the synthesised conclusion so Smart Reuse can serve it later.
+    # This is now an UPSERT — the conclusions row is created ONLY after a real
+    # comparison has produced a Trusted Conclusion. Storing at create_query
+    # time caused the very same row to self-match on the next /queries/match.
+    q_topic = classify_topic(prompt)
+    q_lang = detect_language(prompt)
+    q_vec = None
+    q_embed_model = None
+    if q_topic in ("technical", "stable"):
+        vec, embed_meta = await get_or_create_embedding(db, prompt)
+        q_vec = list(vec) if vec is not None else None
+        q_embed_model = embed_meta.get("model")
     try:
         await db.conclusions.update_one(
             {"id": query_id},
-            {"$set": {
-                "responses": [r.model_dump() for r in responses],
-                "live_count": live_count,
-                "total_cost_usd": round(total_cost, 6),
-                "generated_at": now_iso,
-            }},
+            {
+                "$set": {
+                    "responses": [r.model_dump() for r in responses],
+                    "live_count": live_count,
+                    "total_cost_usd": round(total_cost, 6),
+                    "generated_at": now_iso,
+                    # Multilingual fields:
+                    "trusted_conclusion": synth_text,
+                    "trusted_conclusion_language": target_lang,
+                    "synthesis_model": synth_model_used,
+                    # Multilingual reuse cache: keyed by language so subsequent
+                    # readers in the same language pay no translation cost.
+                    f"translations.{target_lang}": {
+                        "text": synth_text,
+                        "model": synth_model_used,
+                        "generated_at": now_iso,
+                    },
+                },
+                "$setOnInsert": {
+                    "id": query_id,
+                    "prompt": prompt,
+                    "prompt_norm": normalize_prompt(prompt),
+                    "prompt_tokens": list(tokens_of(prompt)),
+                    "topic": q_topic,
+                    "language": q_lang,
+                    "trust_score": 92,
+                    "consensus": 87,
+                    "confidence": 82,
+                    # Cacheable topics only. `is_public` gates whether Smart Reuse
+                    # searches this row on subsequent matches.
+                    "is_public": q_topic in ("technical", "stable"),
+                    "is_time_sensitive": q_topic == "news",
+                    "category": "stable" if q_topic == "stable" else ("technical" if q_topic == "technical" else q_topic),
+                    "embedding": q_vec,
+                    "embedding_model": q_embed_model,
+                    "audience": audience,
+                    "format": fmt,
+                    "created_at": now_iso,
+                },
+            },
+            upsert=True,
         )
     except Exception as e:  # noqa: BLE001
         logging.getLogger(__name__).warning("Failed to persist compare result: %s", e)
@@ -687,8 +833,13 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         prompt=prompt,
         responses=responses,
         live_count=live_count,
-        total_cost_usd=round(total_cost, 6),
-        total_latency_ms=total_latency,
+        total_cost_usd=round(total_cost + synth_cost_usd, 6),
+        total_latency_ms=total_latency + synth_latency_ms,
+        trusted_conclusion=synth_text,
+        answer_language=target_lang,
+        synthesis_model=synth_model_used,
+        synthesis_latency_ms=synth_latency_ms,
+        synthesis_cost_usd=round(synth_cost_usd, 6),
     )
 
 

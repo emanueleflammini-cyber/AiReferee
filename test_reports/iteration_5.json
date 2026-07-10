@@ -1,0 +1,39 @@
+{
+  "summary": "Backend + frontend testing for the multilingual Trusted Conclusion pipeline. 11/11 backend tests pass (providers/plans/me regression, answer_language accepted on POST /api/queries, Trusted Conclusion synthesised in target language for IT/EN/FR, GET /api/conclusions/{id}?lang=es translates on demand with cache_hit=true on repeat and correct output for a 3rd different lang, thresholds.jaccard_fallback == 0.70, no self-match after POST /api/queries, only OpenAI+Gemini panellists, exactly 2 responses). Frontend: Home page fully localised in Italian, language switcher persists via localStorage (referee_interface_lang=it) across reloads, submitted Italian question routed through smart-reuse to Reused Results page where trusted-conclusion-body has data-answer-language=\"it\" and body renders in Italian. Localised labels present: 'Conclusione Affidabile', 'Sfida la conclusione', 'Perché questa conclusione', 'Consenso Riutilizzato', 'Affidabilità', 'Livello di consenso', 'Attendibilità'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Results (reused mode)", "issues": [
+        "Reuse-explanation banner text 'This Trusted Conclusion was served instantly from Referee's consensus cache. No new AI comparison was run. · Previous question:' remains in English even when interface language is IT.",
+        "Per-model expand toggle 'Show arguments, strengths & weaknesses' remains in English on the individual panel cards while the rest of the page is Italian."
+      ]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_multilingual.py",
+    "/app/test_reports/pytest/iteration5_results.xml"
+  ],
+  "action_items": [
+    "Localise the reused-mode explanation banner on Results (currently hardcoded English string starting with 'This Trusted Conclusion was served instantly from ...').",
+    "Localise the per-model card 'Show arguments, strengths & weaknesses' toggle label."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 875 lines — nearing the 700-line split threshold; consider factoring queries/compare/conclusions routers into separate modules.",
+    "_translate_or_fetch is well-structured with clear cache tiers (translations sub-doc > legacy translation_cache > synth) — good.",
+    "SUPPORTED set correctly includes {en,it,es,fr,de,pt}; SYNTH_MODEL and TRANSLATE_MODEL both pinned to gpt-5.4-mini as spec requires.",
+    "compare_query correctly UPSERTs the conclusions row only after synthesis, using $setOnInsert to avoid overwriting create metadata."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_multilingual.py"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "~95% (all core multilingual flows pass; 2 minor untranslated strings on reused Results page)"},
+  "seed_data_creation": "Test-only public IT/EN/FR/ES conclusions were created via the compare endpoint using unique prompt suffixes to avoid cache pollution.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend synthesis + on-demand translation caching verified end-to-end. Frontend IT locale coverage on Home and Results (fresh + reused) verified. Two remaining hardcoded English strings on Results page reused-mode banner and per-model expand toggle — main agent can add these keys to locales and update the components. Anonymous compare still returns exactly 2 responses (OpenAI + Google DeepMind labels), no Anthropic/xAI/Mistral leakage. SMART_REUSE_THRESHOLD verified at 0.70."
+}

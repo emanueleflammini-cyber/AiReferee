@@ -10,7 +10,7 @@ try:
 except ImportError:  # pragma: no cover
     _AVAILABLE = False
 
-SUPPORTED = {"en", "it", "es", "fr", "de"}
+SUPPORTED = {"en", "it", "es", "fr", "de", "pt"}
 DEFAULT_LANG = "en"
 
 

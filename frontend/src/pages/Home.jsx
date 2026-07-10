@@ -28,16 +28,16 @@ import { STRATEGIES, SUPPORTED_MODELS, WORKFLOW_STEPS, MODEL_STATUS } from "@/li
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const AUDIENCES = [
-  { id: "beginner", label: "Beginner" },
-  { id: "professional", label: "Professional" },
-  { id: "expert", label: "Expert" },
+  { id: "beginner", key: "home.beginner" },
+  { id: "professional", key: "home.professional" },
+  { id: "expert", key: "home.expert" },
 ];
 
 const FORMATS = [
-  { id: "paragraph", label: "Paragraph" },
-  { id: "bullets", label: "Bullet List" },
-  { id: "table", label: "Table" },
-  { id: "steps", label: "Step-by-step" },
+  { id: "paragraph", key: "home.paragraph" },
+  { id: "bullets", key: "home.bullets" },
+  { id: "table", key: "home.table" },
+  { id: "steps", key: "home.steps" },
 ];
 
 const STRATEGY_ICONS = {
@@ -71,6 +71,7 @@ export default function Home() {
       return;
     }
     setSubmitting(true);
+    const answerLanguage = settings?.answerLanguage || lang;
     const payload = {
       prompt: query.prompt,
       goal: query.goal,
@@ -78,6 +79,7 @@ export default function Home() {
       audience: query.audience,
       format: query.format,
       strategy: query.strategy,
+      answer_language: answerLanguage,
     };
     let queryId = null;
     try {
@@ -87,7 +89,6 @@ export default function Home() {
       console.warn("Query save failed", e);
     }
 
-    const answerLanguage = settings?.answerLanguage || lang;
     let matchRes = null;
     try {
       const r = await axios.post(`${API}/queries/match`, {
@@ -137,11 +138,11 @@ export default function Home() {
   };
 
   const goalLabel =
-    query.goal < 33 ? "Leaning Accuracy" :
-    query.goal > 66 ? "Leaning Creativity" : "Balanced";
+    query.goal < 33 ? t("home.leaningAccuracy") :
+    query.goal > 66 ? t("home.leaningCreativity") : t("home.balanced");
   const detailLabel =
-    query.detail < 33 ? "Quick take" :
-    query.detail > 66 ? "Deep dive" : "Balanced";
+    query.detail < 33 ? t("home.quickTake") :
+    query.detail > 66 ? t("home.deepDive") : t("home.balanced");
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#060A14] text-white" data-testid="home-page">
@@ -211,9 +212,9 @@ export default function Home() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <SliderField
                   icon={Gauge}
-                  label="Response Goal"
-                  leftLabel="Accuracy"
-                  rightLabel="Creativity"
+                  label={t("home.responseGoal")}
+                  leftLabel={t("home.accuracy")}
+                  rightLabel={t("home.creativity")}
                   value={query.goal}
                   onChange={(v) => setQuery({ ...query, goal: v })}
                   hint={goalLabel}
@@ -221,9 +222,9 @@ export default function Home() {
                 />
                 <SliderField
                   icon={Layers}
-                  label="Detail Level"
-                  leftLabel="Quick"
-                  rightLabel="Deep"
+                  label={t("home.detailLevel")}
+                  leftLabel={t("home.quick")}
+                  rightLabel={t("home.deep")}
                   value={query.detail}
                   onChange={(v) => setQuery({ ...query, detail: v })}
                   hint={detailLabel}
@@ -233,7 +234,7 @@ export default function Home() {
 
               <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] items-center gap-4">
                 <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
-                  <Users className="w-3.5 h-3.5" /> Audience
+                  <Users className="w-3.5 h-3.5" /> {t("home.audience")}
                 </div>
                 <div className="flex flex-wrap gap-2" data-testid="audience-group">
                   {AUDIENCES.map((a) => {
@@ -250,7 +251,7 @@ export default function Home() {
                             : "bg-white/[0.03] border-white/10 text-white/70 hover:text-white hover:bg-white/[0.06]")
                         }
                       >
-                        {a.label}
+                        {t(a.key)}
                       </button>
                     );
                   })}
@@ -259,7 +260,7 @@ export default function Home() {
 
               <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] items-center gap-4">
                 <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
-                  <LayoutList className="w-3.5 h-3.5" /> Format
+                  <LayoutList className="w-3.5 h-3.5" /> {t("home.format")}
                 </div>
                 <div className="flex flex-wrap gap-2" data-testid="format-group">
                   {FORMATS.map((f) => {
@@ -276,7 +277,7 @@ export default function Home() {
                             : "bg-white/[0.03] border-white/10 text-white/70 hover:text-white hover:bg-white/[0.06]")
                         }
                       >
-                        {f.label}
+                        {t(f.key)}
                       </button>
                     );
                   })}
@@ -288,12 +289,14 @@ export default function Home() {
           {/* Conclusion Strategy */}
           <div className="mt-8" data-testid="strategy-section">
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-white/45 mb-3">
-              <Sparkles className="w-3.5 h-3.5 text-[#00E5FF]" /> Conclusion Strategy
+              <Sparkles className="w-3.5 h-3.5 text-[#00E5FF]" /> {t("home.strategy")}
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5" data-testid="strategy-group">
               {STRATEGIES.map((s) => {
                 const active = query.strategy === s.id;
                 const Icon = STRATEGY_ICONS[s.id] || Sparkles;
+                const strategyLabelKey = { max_accuracy: "home.maxAccuracy", balanced: "home.balanced", creative: "home.creative", critical: "home.critical", fast: "home.fast" }[s.id];
+                const strategyHintKey = `home.strategyHint.${s.id}`;
                 return (
                   <button
                     key={s.id}
@@ -308,9 +311,9 @@ export default function Home() {
                   >
                     <div className="flex items-center gap-2 mb-1.5">
                       <Icon className={"w-3.5 h-3.5 " + (active ? "text-[#00E5FF]" : "text-white/60")} />
-                      <span className={"text-[13px] font-medium " + (active ? "text-white" : "text-white/85")}>{s.label}</span>
+                      <span className={"text-[13px] font-medium " + (active ? "text-white" : "text-white/85")}>{strategyLabelKey ? t(strategyLabelKey) : s.label}</span>
                     </div>
-                    <div className="text-[11.5px] leading-snug text-white/45">{s.hint}</div>
+                    <div className="text-[11.5px] leading-snug text-white/45">{t(strategyHintKey) === strategyHintKey ? s.hint : t(strategyHintKey)}</div>
                   </button>
                 );
               })}
@@ -342,16 +345,20 @@ export default function Home() {
           />
           <div className="mt-10 overflow-x-auto pb-3 -mx-5 px-5">
             <div className="flex items-stretch gap-3 md:grid md:grid-cols-7 md:gap-3 min-w-max md:min-w-0">
-              {WORKFLOW_STEPS.map((s, i) => (
-                <div key={s.id} className="flex items-stretch gap-3 md:contents">
-                  <WorkflowStep index={i + 1} title={s.title} body={s.body} isLast={i === WORKFLOW_STEPS.length - 1} />
-                  {i < WORKFLOW_STEPS.length - 1 && (
-                    <div className="hidden md:flex items-center justify-center text-white/25">
-                      <ChevronRight className="w-4 h-4" />
-                    </div>
-                  )}
-                </div>
-              ))}
+              {WORKFLOW_STEPS.map((s, i) => {
+                const titleT = t(`home.workflow.${s.id}.title`);
+                const bodyT = t(`home.workflow.${s.id}.body`);
+                return (
+                  <div key={s.id} className="flex items-stretch gap-3 md:contents">
+                    <WorkflowStep index={i + 1} title={titleT === `home.workflow.${s.id}.title` ? s.title : titleT} body={bodyT === `home.workflow.${s.id}.body` ? s.body : bodyT} isLast={i === WORKFLOW_STEPS.length - 1} />
+                    {i < WORKFLOW_STEPS.length - 1 && (
+                      <div className="hidden md:flex items-center justify-center text-white/25">
+                        <ChevronRight className="w-4 h-4" />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </section>
