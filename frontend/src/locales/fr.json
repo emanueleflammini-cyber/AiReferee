@@ -25,7 +25,39 @@
     "featureA": "Plusieurs esprits, un verdict", "featureAbody": "GPT et Gemini raisonnent votre question en parallèle. Claude, Grok et Mistral sont sur la feuille de route.",
     "featureB": "Consensus + confiance", "featureBbody": "Chaque conclusion arrive avec un niveau de consensus et un score de confiance défendable.",
     "featureC": "Contestez, n'acceptez pas", "featureCbody": "Un clic demande à chaque modèle de tenter de réfuter la conclusion — et de la mettre à jour.",
-    "footer": "La Plateforme de Consensus IA"
+    "footer": "La Plateforme de Consensus IA",
+    "workflow": {
+      "question":   { "title": "Question",                "body": "Vous posez n'importe quelle question." },
+      "models":     { "title": "Plusieurs modèles IA",    "body": "Deux modèles de premier plan répondent indépendamment." },
+      "consensus":  { "title": "Analyse du consensus",    "body": "Nous comparons leur raisonnement côte à côte." },
+      "evidence":   { "title": "Examen des preuves",      "body": "Chaque affirmation est vérifiée pour sa cohérence logique." },
+      "conclusion": { "title": "Conclusion fiable",       "body": "Une réponse unique, transparente et explicable." },
+      "challenge":  { "title": "Conclusion contestée",    "body": "Mettez la conclusion à l'épreuve face à chaque modèle disponible." },
+      "updated":    { "title": "Conclusion mise à jour",  "body": "La conclusion évolue quand les preuves changent ou que de nouvelles informations émergent." }
+    },
+    "pricingEyebrow": "Formules",
+    "pricingTitle": "Formules simples, compromis transparents",
+    "pricingBody": "Commencez gratuitement avec OpenAI + Gemini. Passez à Premium pour ajouter Claude, un traitement prioritaire et des limites plus élevées — ou apportez vos propres clés.",
+    "plans": {
+      "free": { "name": "Free", "price": "€0",
+        "tagline": "Tout ce qu'il faut pour comparer OpenAI + Gemini avec Réutilisation Intelligente et pleine transparence.",
+        "f1": "Conclusion Fiable via GPT + Gemini",
+        "f2": "Réutilisation Intelligente — réponses en cache dans votre langue",
+        "f3": "20 comparaisons par jour",
+        "f4": "Transparence totale : accords, désaccords, preuves" },
+      "premium": { "name": "Premium", "price": "Bientôt",
+        "tagline": "Consensus à trois modèles avec Claude, confiance renforcée, traitement prioritaire et 200 comparaisons par jour.",
+        "f1": "Ajoute Claude → consensus à trois modèles (GPT + Gemini + Claude)",
+        "f2": "Score de confiance renforcé + file prioritaire",
+        "f3": "200 comparaisons par jour",
+        "f4": "Accès anticipé à Grok, Mistral et futurs fournisseurs" },
+      "byok": { "name": "Apportez vos clés", "price": "Bientôt",
+        "tagline": "Achat unique pour brancher vos propres clés OpenAI, Gemini, Claude, Grok ou Mistral. Les requêtes ne touchent jamais aux crédits d'AI Referee.",
+        "f1": "Utilisez vos propres clés OpenAI / Gemini / Claude",
+        "f2": "Zéro coût API côté plateforme — vous payez directement votre fournisseur",
+        "f3": "Clés chiffrées au repos, jamais exposées au frontend",
+        "f4": "Comparaisons virtuellement illimitées (selon vos quotas fournisseur)" }
+    }
   },
   "reuse": {
     "found": "Réutilisation intelligente trouvée", "match": "correspondance", "age": "Âge", "days": "j",

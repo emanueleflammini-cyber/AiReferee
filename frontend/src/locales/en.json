@@ -39,15 +39,47 @@
       "models":     { "title": "Multiple AI Models",   "body": "Two leading models answer independently." },
       "consensus":  { "title": "Consensus Analysis",   "body": "We compare their reasoning side-by-side." },
       "evidence":   { "title": "Evidence Review",      "body": "Claims are checked for logical consistency." },
-      "trust":      { "title": "Trust Scores",         "body": "Each claim earns a defensible confidence value." },
-      "conclusion": { "title": "Trusted Conclusion",   "body": "One synthesised, transparent verdict." },
-      "reuse":      { "title": "Smart Reuse",          "body": "Equivalent questions hit the cache." }
+      "conclusion": { "title": "Trusted Conclusion",   "body": "One transparent, explainable answer." },
+      "challenge":  { "title": "Challenge Conclusion", "body": "Optionally stress-test it against every model." },
+      "updated":    { "title": "Updated Conclusion",   "body": "The conclusion evolves as evidence changes." }
     },
     "moreModels": "More models coming soon.",
     "featureA": "Multiple minds, one verdict", "featureAbody": "GPT and Gemini reason on your question in parallel. Claude, Grok and Mistral are on the roadmap.",
     "featureB": "Consensus + confidence", "featureBbody": "Every conclusion ships with a consensus level and a defensible confidence score.",
     "featureC": "Challenge, don't accept", "featureCbody": "One click asks every model to try to refute the conclusion — and update it.",
-    "footer": "The AI Consensus Platform"
+    "footer": "The AI Consensus Platform",
+    "pricingEyebrow": "Plans",
+    "pricingTitle": "Simple plans, transparent trade-offs",
+    "pricingBody": "Start free with OpenAI + Gemini. Upgrade to add Claude, priority processing and higher limits — or bring your own keys.",
+    "plans": {
+      "free": {
+        "name": "Free",
+        "price": "$0",
+        "tagline": "Everything you need to compare OpenAI + Gemini with Smart Reuse and full transparency.",
+        "f1": "Trusted Conclusion from GPT + Gemini",
+        "f2": "Smart Reuse — cached answers in your language",
+        "f3": "20 comparisons per day",
+        "f4": "Full transparency: agreements, disagreements, evidence"
+      },
+      "premium": {
+        "name": "Premium",
+        "price": "Coming soon",
+        "tagline": "Three-model consensus with Claude, higher confidence, priority processing and 200 daily comparisons.",
+        "f1": "Adds Claude → three-model consensus (GPT + Gemini + Claude)",
+        "f2": "Higher confidence scoring + priority queue",
+        "f3": "200 comparisons per day",
+        "f4": "Early access to Grok, Mistral and future providers"
+      },
+      "byok": {
+        "name": "Bring Your Own Keys",
+        "price": "Coming soon",
+        "tagline": "One-time purchase that lets you plug your own OpenAI, Gemini, Claude, Grok or Mistral keys. Requests never touch AI Referee credits.",
+        "f1": "Use your own OpenAI / Gemini / Claude keys",
+        "f2": "Zero platform-side API cost — you pay your provider directly",
+        "f3": "Keys encrypted at rest, never exposed to the frontend",
+        "f4": "Effectively unlimited comparisons (subject to your provider quotas)"
+      }
+    }
   },
   "reuse": {
     "found": "Smart Reuse Found", "match": "match", "age": "Age", "days": "d",

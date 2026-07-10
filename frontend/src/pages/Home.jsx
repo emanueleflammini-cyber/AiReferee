@@ -337,7 +337,7 @@ export default function Home() {
         </motion.div>
 
         {/* How it works */}
-        <section id="how" className="mt-28" data-testid="how-it-works">
+        <section id="how" className="mt-28 scroll-mt-24" data-testid="how-it-works">
           <SectionHeader
             eyebrow={t("home.howEyebrow")}
             title={t("home.howTitle")}
@@ -364,7 +364,7 @@ export default function Home() {
         </section>
 
         {/* Supported Models */}
-        <section id="models" className="mt-28" data-testid="supported-models-section">
+        <section id="models" className="mt-28 scroll-mt-24" data-testid="supported-models-section">
           <SectionHeader
             eyebrow={t("home.modelsEyebrow")}
             title={t("home.modelsTitle")}
@@ -436,10 +436,65 @@ export default function Home() {
         </section>
 
         {/* Trust strip */}
-        <section id="pricing" className="mt-28 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <section className="mt-28 grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="trust-strip">
           <FeatureTile icon={Brain} title={t("home.featureA")}  body={t("home.featureAbody")} />
           <FeatureTile icon={ShieldCheck} title={t("home.featureB")} body={t("home.featureBbody")} />
           <FeatureTile icon={Zap} title={t("home.featureC")} body={t("home.featureCbody")} />
+        </section>
+
+        {/* Pricing / Plans — Free (active), Premium (coming soon), BYOK (coming soon) */}
+        <section id="pricing" className="mt-28 scroll-mt-24" data-testid="pricing-section">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80">{t("home.pricingEyebrow")}</div>
+          <h2 className="mt-2 text-3xl md:text-4xl font-semibold tracking-tight text-white">{t("home.pricingTitle")}</h2>
+          <p className="mt-2 text-white/60 text-[15px] max-w-2xl">{t("home.pricingBody")}</p>
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="pricing-grid">
+            <PricingCard
+              testId="plan-free"
+              accent="#10B981"
+              status="live"
+              statusLabel={t("providers.live")}
+              name={t("home.plans.free.name")}
+              price={t("home.plans.free.price")}
+              tagline={t("home.plans.free.tagline")}
+              features={[
+                t("home.plans.free.f1"),
+                t("home.plans.free.f2"),
+                t("home.plans.free.f3"),
+                t("home.plans.free.f4"),
+              ]}
+            />
+            <PricingCard
+              testId="plan-premium"
+              accent="#FBBF24"
+              status="premium_coming_soon"
+              statusLabel={t("providers.premiumSoon")}
+              highlighted
+              name={t("home.plans.premium.name")}
+              price={t("home.plans.premium.price")}
+              tagline={t("home.plans.premium.tagline")}
+              features={[
+                t("home.plans.premium.f1"),
+                t("home.plans.premium.f2"),
+                t("home.plans.premium.f3"),
+                t("home.plans.premium.f4"),
+              ]}
+            />
+            <PricingCard
+              testId="plan-byok"
+              accent="#7C3AED"
+              status="coming_soon"
+              statusLabel={t("providers.comingSoon")}
+              name={t("home.plans.byok.name")}
+              price={t("home.plans.byok.price")}
+              tagline={t("home.plans.byok.tagline")}
+              features={[
+                t("home.plans.byok.f1"),
+                t("home.plans.byok.f2"),
+                t("home.plans.byok.f3"),
+                t("home.plans.byok.f4"),
+              ]}
+            />
+          </div>
         </section>
       </main>
 
@@ -491,6 +546,53 @@ function FeatureTile({ icon: Icon, title, body }) {
       </div>
       <div className="font-medium text-white">{title}</div>
       <p className="mt-1.5 text-[13px] text-white/55 leading-relaxed">{body}</p>
+    </div>
+  );
+}
+
+function PricingCard({ name, price, tagline, features, statusLabel, status, accent, highlighted, testId }) {
+  const isLive = status === "live";
+  const isPremium = status === "premium_coming_soon";
+  const cardBorder = highlighted ? "border-[#FBBF24]/50" : "border-white/[0.08]";
+  const cardBg = highlighted ? "bg-[#FBBF24]/[0.04]" : "bg-white/[0.02]";
+  const badgeCls = isLive
+    ? "text-[#10B981] bg-[#10B981]/10 border-[#10B981]/30"
+    : isPremium
+      ? "text-[#FBBF24] bg-[#FBBF24]/10 border-[#FBBF24]/30"
+      : "text-white/50 bg-white/[0.04] border-white/10";
+  return (
+    <div
+      data-testid={testId}
+      data-plan-status={status}
+      className={`relative rounded-2xl border ${cardBorder} ${cardBg} p-6 flex flex-col ${highlighted ? "md:-translate-y-1" : ""} transition-colors`}
+    >
+      {highlighted && (
+        <div className="absolute -top-3 right-6 rounded-full border border-[#FBBF24]/50 bg-[#FBBF24]/[0.14] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-[#FBBF24]" data-testid={`${testId}-badge`}>
+          ★
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <span
+          data-testid={`${testId}-status`}
+          className={"inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] uppercase " + badgeCls}
+        >
+          {isLive && <span className="w-1.5 h-1.5 rounded-full bg-[#10B981] animate-pulse-ring" />}
+          {statusLabel}
+        </span>
+      </div>
+      <div className="mt-5 text-[22px] font-semibold text-white tracking-tight">{name}</div>
+      <div className="mt-2 flex items-baseline gap-2">
+        <div className="text-[28px] font-semibold" style={{ color: accent }}>{price}</div>
+      </div>
+      <p className="mt-3 text-[13px] text-white/55 leading-relaxed">{tagline}</p>
+      <ul className="mt-5 space-y-2.5 text-[13px] text-white/70 flex-1">
+        {features.map((f, i) => (
+          <li key={i} className="flex items-start gap-2">
+            <span className="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: accent }} />
+            <span>{f}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
