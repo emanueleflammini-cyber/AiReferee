@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -21,6 +21,7 @@ from providers.plans import PLAN_ENTITLEMENTS, Plan  # noqa: E402
 from providers.embeddings import get_or_create_embedding, cosine, EMBED_MODEL  # noqa: E402
 from providers.language import detect_language, normalize_prompt as lang_normalize, SUPPORTED as SUPPORTED_LANGS  # noqa: E402
 from providers.translator import Translator, LANG_NAMES  # noqa: E402
+from auth import IdentityContext, get_identity, require_admin, enforce_daily_compare_limit  # noqa: E402
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -487,6 +488,64 @@ async def get_plans():
 
 
 # --------------------------------------------------------------------------
+# Identity endpoints — used by the frontend to discover the caller's plan
+# and by admins to change a user's plan without a UI.
+# --------------------------------------------------------------------------
+
+@api_router.get("/me")
+async def get_me(identity: IdentityContext = Depends(get_identity)):
+    """Return the caller's plan + entitlements.
+
+    Anonymous callers get the FREE plan. When real auth ships, this endpoint
+    will start returning email / profile data too; the current fields will
+    remain stable so the frontend never breaks.
+    """
+    ents = identity.entitlements
+    return {
+        "user_id": identity.user_id,
+        "is_anonymous": identity.is_anonymous,
+        "plan": identity.plan.value,
+        "entitlements": {
+            "allowed_provider_ids": sorted(ents.allowed_provider_ids),
+            "daily_compare_limit": ents.daily_compare_limit,
+            "can_use_own_keys": ents.can_use_own_keys,
+            "priority": ents.priority,
+        },
+    }
+
+
+class PlanChangeRequest(BaseModel):
+    plan: str
+
+
+@api_router.post("/admin/users/{user_id}/plan", dependencies=[Depends(require_admin)])
+async def admin_set_plan(user_id: str, req: PlanChangeRequest):
+    """Admin-only: promote a user to premium/byok or demote back to free.
+
+    Guarded by the `X-Admin-Token` header (matched against `ADMIN_TOKEN` env).
+    No frontend UI hooks into this yet — it exists so operators can test
+    Premium and BYOK end-to-end before billing ships.
+    """
+    try:
+        new_plan = Plan(req.plan)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown plan '{req.plan}'. Use one of: free, premium, byok.")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    res = await db["users"].update_one(
+        {"id": user_id},
+        {"$set": {"plan": new_plan.value, "updated_at": now_iso},
+         "$setOnInsert": {"id": user_id, "created_at": now_iso}},
+        upsert=True,
+    )
+    return {
+        "user_id": user_id,
+        "plan": new_plan.value,
+        "matched": res.matched_count,
+        "upserted": bool(res.upserted_id),
+    }
+
+
+# --------------------------------------------------------------------------
 # /api/queries/{id}/compare — real 4-model comparison
 # --------------------------------------------------------------------------
 
@@ -516,7 +575,7 @@ class CompareResponse(BaseModel):
 
 
 @api_router.post("/queries/{query_id}/compare", response_model=CompareResponse)
-async def compare_query(query_id: str):
+async def compare_query(query_id: str, identity: IdentityContext = Depends(get_identity)):
     doc = await db.queries.find_one({"id": query_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Query not found")
@@ -533,7 +592,16 @@ async def compare_query(query_id: str):
         "Keep the answer self-contained; do not reference other panellists."
     )
 
-    providers = selected_providers()
+    # Enforce per-user daily limit (anonymous callers are exempt).
+    await enforce_daily_compare_limit(identity)
+
+    # Anonymous callers keep the current MVP behaviour (only-live-providers).
+    # Identified callers get plan-aware selection (Premium unlocks Claude, BYOK
+    # can substitute user keys). Both paths NEVER call disabled providers.
+    if identity.is_anonymous:
+        providers = selected_providers()
+    else:
+        providers = selected_providers(user_id=identity.user_id, plan=identity.plan)
     if not providers:
         raise HTTPException(
             status_code=503,

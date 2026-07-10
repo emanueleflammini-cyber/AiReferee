@@ -1,0 +1,27 @@
+{
+  "summary": "Identity/auth wiring verified end-to-end. 14/14 pytest tests pass in /app/backend/tests/test_identity_auth.py. GET /api/me anonymous returns {user_id:null, is_anonymous:true, plan:'free', allowed_provider_ids=['model-a','model-c'], daily_compare_limit:20}. With X-User-Id header, auto-creates row in `users` collection and updates last_seen_at on subsequent calls. Admin surface: missing/wrong X-Admin-Token → 401, correct token → 200 upserts plan; /api/me for promoted user returns plan='premium' with 5 allowed_provider_ids and daily_compare_limit=200; unknown plan 'gold' → 400. Fail-closed (blank ADMIN_TOKEN → 503) verified via source inspection of auth.py:92-94 (ADMIN_TOKEN currently set in .env, so 401 path tested live). Compare endpoint identity-aware: anonymous returns exactly 2 (model-a, model-c), is_mock=false; free user with X-User-Id returns 2 responses AND increments usage_events count=1 for that user/day/kind='compare'; premium user still gets 2 responses because ENABLE_CLAUDE=false (Claude entitled but not activated), no model-b in response, no anthropic call. Rate limit: seeded usage_events count=20 for TEST_rl_* user + day → 21st compare returns 429 with detail mentioning plan='free' and limit=20. /api/providers still 5 slots. /api/plans: free available=true, premium/byok available=false. /api/queries/match thresholds.jaccard_fallback=0.55 unchanged. Grep of /var/log/supervisor/backend.*.log: 0 hits for api.anthropic.com / api.x.ai / api.mistral.ai; only api.openai.com appears (Gemini SDK doesn't log URL). services/user_keys.set_user_key returns False when USER_KEY_ENCRYPTION_KEY unset (BYOK still disabled).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_identity_auth.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iteration4_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "auth.py enforce_daily_compare_limit does two round-trips (find_one_and_update + find_one) to reconcile pre/post-update count semantics. The second find_one is only needed because Motor's default return_document semantics were treated ambiguously — set return_document=pymongo.ReturnDocument.AFTER and drop the second query to halve latency on the hot path.",
+    "auth.py require_admin: fail-closed correctly returns 503 when ADMIN_TOKEN is unset (verified by code inspection; live env has it set so tested wrong/missing → 401).",
+    "server.py compare_query: enforce_daily_compare_limit is called BEFORE provider selection but AFTER the DB query lookup — order is fine, but note that the counter is incremented even if provider selection later returns empty (which would 503). Consider decrementing on 503, or moving the increment after provider validation. Low priority since 503 is an operator misconfig case.",
+    "auth.py get_identity: `from server import db` inside the function is a documented workaround for circular import. This works but couples auth->server. Consider passing db via app.state or a get_db() dependency to make auth.py independently importable in tests.",
+    "server.py /api/admin/users/{user_id}/plan does not validate user_id format (any string accepted, upserts on any). This is intentional per the docs but consider a min_length/regex constraint to avoid empty-string user rows."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_identity_auth.py (new)"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "not tested (per request)"},
+  "test_credentials": "X-Admin-Token: test-admin-token-DO-NOT-USE-IN-PROD (from /app/backend/.env ADMIN_TOKEN)",
+  "seed_data_creation": "All test data is prefixed TEST_ and cleaned up in finally blocks (users + usage_events rows deleted). No residual state in test_database.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Identity layer is stable. New endpoints: GET /api/me, POST /api/admin/users/{id}/plan. New headers: X-User-Id (any UUID-like), X-Admin-Token. New collections: users (id, plan, created_at, last_seen_at), usage_events (user_id, day YYYY-MM-DD, kind='compare', count). Rate limit resets daily UTC. Compare endpoint signature now takes IdentityContext dependency but is backward-compatible for anonymous callers (unchanged 2-response behaviour). BYOK still gated: services/user_keys.set_user_key returns False without USER_KEY_ENCRYPTION_KEY. Base URL: https://referee-ai-4.preview.emergentagent.com."
+}
