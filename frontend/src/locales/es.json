@@ -1,0 +1,42 @@
+{
+  "language": { "en": "Inglés", "it": "Italiano", "es": "Español", "fr": "Francés", "de": "Alemán", "select": "Idioma", "interface": "Idioma de la interfaz", "answer": "Idioma de las respuestas", "autoDetect": "Detectar automáticamente el idioma de la pregunta" },
+  "nav": { "howItWorks": "Cómo funciona", "models": "Modelos", "pricing": "Precios", "signIn": "Entrar", "settings": "Ajustes", "newQuestion": "Nueva pregunta", "back": "Atrás" },
+  "home": {
+    "badge": "La primera Plataforma de Consenso IA",
+    "subtitle_a": "Una pregunta.", "subtitle_b": "Múltiples mentes IA.", "subtitle_c": "Una conclusión fiable.",
+    "pitch": "La primera Plataforma de Consenso IA que combina el mejor razonamiento de varios modelos IA en una respuesta transparente.",
+    "askPlaceholder": "Pregunta lo que quieras...",
+    "responseGoal": "Objetivo de la respuesta", "accuracy": "Precisión", "creativity": "Creatividad",
+    "detailLevel": "Nivel de detalle", "quick": "Rápido", "deep": "Profundo",
+    "audience": "Audiencia", "beginner": "Principiante", "professional": "Profesional", "expert": "Experto",
+    "format": "Formato", "paragraph": "Párrafo", "bullets": "Lista", "table": "Tabla", "steps": "Paso a paso",
+    "strategy": "Estrategia de conclusión", "maxAccuracy": "Máxima precisión", "balanced": "Equilibrada",
+    "creative": "Pensamiento creativo", "critical": "Análisis crítico", "fast": "Respuesta rápida",
+    "generate": "Generar conclusión", "summoning": "Invocando modelos...",
+    "shortcut": "Pulsa ⌘/Ctrl + Enter para enviar",
+    "emptyError": "Pregunta algo primero — el árbitro no puede juzgar el silencio."
+  },
+  "reuse": {
+    "found": "Reutilización inteligente encontrada", "match": "coincidencia", "age": "Edad", "days": "d",
+    "trust": "Fiabilidad", "consensus": "Consenso", "confidence": "Confianza",
+    "originalLang": "Idioma original", "answerLang": "Idioma de respuesta",
+    "apiCallsAvoided": "Llamadas IA evitadas", "costSaved": "Coste ahorrado",
+    "timeSaved": "Tiempo ahorrado", "seconds": "s",
+    "title": "Ya has preguntado algo similar antes.",
+    "subtitle": "Referee encontró una Conclusión Fiable previa que se solapa con tu pregunta. Reutilízala para una respuesta instantánea o ejecuta una nueva comparación multi-modelo.",
+    "useExisting": "Usar Conclusión Fiable existente", "refresh": "Actualizar con nueva comparación IA",
+    "globalMatch": "Coincidencia global · Traducido de {source} a {target}",
+    "caveat": "Las conclusiones reutilizadas citan las respuestas originales del modelo. Actualizar ejecuta una comparación multi-modelo completa y sobrescribe la caché."
+  },
+  "settings": {
+    "title": "Preferencias", "eyebrow": "Ajustes",
+    "reusePrefs": "Preferencias de Reutilización Inteligente",
+    "reuseHint": "Referee guarda en caché Conclusiones Fiables previas y ofrece reutilizarlas cuando haces una pregunta similar.",
+    "prefAsk": "Preguntar siempre antes de reutilizar",
+    "prefFresh": "Preferir resultados nuevos",
+    "prefReused": "Preferir resultados reutilizados más rápidos",
+    "prefSensitive": "Nunca reutilizar temas sensibles",
+    "policy": "Política de caché",
+    "language": "Idioma y Reutilización Multilingüe"
+  }
+}

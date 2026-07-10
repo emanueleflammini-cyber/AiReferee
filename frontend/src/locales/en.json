@@ -1,0 +1,46 @@
+{
+  "language": {
+    "en": "English", "it": "Italian", "es": "Spanish", "fr": "French", "de": "German",
+    "select": "Language", "interface": "Interface language", "answer": "Answer language",
+    "autoDetect": "Auto-detect question language"
+  },
+  "nav": { "howItWorks": "How it works", "models": "Models", "pricing": "Pricing", "signIn": "Sign in", "settings": "Settings", "newQuestion": "New question", "back": "Back" },
+  "home": {
+    "badge": "The first AI Consensus Platform",
+    "subtitle_a": "One Question.", "subtitle_b": "Multiple AI Minds.", "subtitle_c": "One Trusted Conclusion.",
+    "pitch": "The first AI Consensus Platform that combines the best reasoning from multiple AI models into one transparent answer.",
+    "askPlaceholder": "Ask anything...",
+    "responseGoal": "Response Goal", "accuracy": "Accuracy", "creativity": "Creativity",
+    "detailLevel": "Detail Level", "quick": "Quick", "deep": "Deep",
+    "audience": "Audience", "beginner": "Beginner", "professional": "Professional", "expert": "Expert",
+    "format": "Format", "paragraph": "Paragraph", "bullets": "Bullet List", "table": "Table", "steps": "Step-by-step",
+    "strategy": "Conclusion Strategy", "maxAccuracy": "Maximum Accuracy", "balanced": "Balanced",
+    "creative": "Creative Thinking", "critical": "Critical Analysis", "fast": "Fast Response",
+    "generate": "Generate Conclusion", "summoning": "Summoning models...",
+    "shortcut": "Press ⌘/Ctrl + Enter to submit",
+    "emptyError": "Ask something first — the referee can't judge silence."
+  },
+  "reuse": {
+    "found": "Smart Reuse Found", "match": "match", "age": "Age", "days": "d",
+    "trust": "Trust", "consensus": "Consensus", "confidence": "Confidence",
+    "originalLang": "Original language", "answerLang": "Answer language",
+    "apiCallsAvoided": "API calls avoided", "costSaved": "Cost saved",
+    "timeSaved": "Time saved", "seconds": "s",
+    "title": "You've asked something similar before.",
+    "subtitle": "Referee found a prior Trusted Conclusion that overlaps with your question. Reuse it for an instant answer, or run a fresh multi-model comparison to update it.",
+    "useExisting": "Use existing Trusted Conclusion", "refresh": "Refresh with new AI comparison",
+    "globalMatch": "Global Match · Translated from {source} to {target}",
+    "caveat": "Reused conclusions cite the original model responses. Refreshing charges a full multi-model comparison and overwrites the cache."
+  },
+  "settings": {
+    "title": "Preferences", "eyebrow": "Settings",
+    "reusePrefs": "Smart Reuse Preferences",
+    "reuseHint": "Referee caches prior Trusted Conclusions and offers to reuse them when you ask a similar question.",
+    "prefAsk": "Always ask before reusing",
+    "prefFresh": "Prefer fresh results",
+    "prefReused": "Prefer faster reused results",
+    "prefSensitive": "Never reuse sensitive topics",
+    "policy": "Cache policy",
+    "language": "Language & Multilingual Reuse"
+  }
+}

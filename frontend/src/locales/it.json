@@ -1,0 +1,42 @@
+{
+  "language": { "en": "Inglese", "it": "Italiano", "es": "Spagnolo", "fr": "Francese", "de": "Tedesco", "select": "Lingua", "interface": "Lingua dell'interfaccia", "answer": "Lingua delle risposte", "autoDetect": "Rileva automaticamente la lingua della domanda" },
+  "nav": { "howItWorks": "Come funziona", "models": "Modelli", "pricing": "Prezzi", "signIn": "Accedi", "settings": "Impostazioni", "newQuestion": "Nuova domanda", "back": "Indietro" },
+  "home": {
+    "badge": "La prima Piattaforma di Consenso AI",
+    "subtitle_a": "Una Domanda.", "subtitle_b": "Più Menti AI.", "subtitle_c": "Una Conclusione Affidabile.",
+    "pitch": "La prima Piattaforma di Consenso AI che unisce il miglior ragionamento di più modelli AI in un'unica risposta trasparente.",
+    "askPlaceholder": "Chiedi qualsiasi cosa...",
+    "responseGoal": "Obiettivo della risposta", "accuracy": "Precisione", "creativity": "Creatività",
+    "detailLevel": "Livello di dettaglio", "quick": "Sintetico", "deep": "Approfondito",
+    "audience": "Pubblico", "beginner": "Principiante", "professional": "Professionista", "expert": "Esperto",
+    "format": "Formato", "paragraph": "Paragrafo", "bullets": "Elenco puntato", "table": "Tabella", "steps": "Passo dopo passo",
+    "strategy": "Strategia di conclusione", "maxAccuracy": "Massima precisione", "balanced": "Bilanciata",
+    "creative": "Pensiero creativo", "critical": "Analisi critica", "fast": "Risposta rapida",
+    "generate": "Genera conclusione", "summoning": "Convoco i modelli...",
+    "shortcut": "Premi ⌘/Ctrl + Invio per inviare",
+    "emptyError": "Prima chiedi qualcosa — l'arbitro non può giudicare il silenzio."
+  },
+  "reuse": {
+    "found": "Riuso Intelligente Trovato", "match": "corrispondenza", "age": "Età", "days": "g",
+    "trust": "Fiducia", "consensus": "Consenso", "confidence": "Sicurezza",
+    "originalLang": "Lingua originale", "answerLang": "Lingua della risposta",
+    "apiCallsAvoided": "Chiamate AI evitate", "costSaved": "Costo risparmiato",
+    "timeSaved": "Tempo risparmiato", "seconds": "s",
+    "title": "Hai già chiesto qualcosa di simile.",
+    "subtitle": "Referee ha trovato una Conclusione Affidabile precedente che si sovrappone alla tua domanda. Riutilizzala per una risposta immediata o esegui un nuovo confronto multi-modello per aggiornarla.",
+    "useExisting": "Usa Conclusione Affidabile esistente", "refresh": "Aggiorna con nuovo confronto AI",
+    "globalMatch": "Corrispondenza globale · Tradotto da {source} a {target}",
+    "caveat": "Le conclusioni riutilizzate citano le risposte dei modelli originali. L'aggiornamento avvia un confronto multi-modello completo e sovrascrive la cache."
+  },
+  "settings": {
+    "title": "Preferenze", "eyebrow": "Impostazioni",
+    "reusePrefs": "Preferenze di Riuso Intelligente",
+    "reuseHint": "Referee mette in cache le Conclusioni Affidabili precedenti e propone di riutilizzarle quando fai una domanda simile.",
+    "prefAsk": "Chiedi sempre prima di riutilizzare",
+    "prefFresh": "Preferisci risultati aggiornati",
+    "prefReused": "Preferisci risultati riutilizzati più veloci",
+    "prefSensitive": "Non riutilizzare mai argomenti sensibili",
+    "policy": "Politica di cache",
+    "language": "Lingua e Riuso Multilingue"
+  }
+}

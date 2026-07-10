@@ -7,11 +7,13 @@ import ReuseFound from "@/pages/ReuseFound";
 import Settings from "@/pages/Settings";
 import { Toaster } from "sonner";
 import { QueryProvider } from "@/lib/QueryContext";
+import { I18nProvider } from "@/lib/i18n";
 
 function App() {
   return (
     <div className="App">
-      <QueryProvider>
+      <I18nProvider>
+        <QueryProvider>
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Home />} />
@@ -21,7 +23,8 @@ function App() {
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </BrowserRouter>
-      </QueryProvider>
+        </QueryProvider>
+      </I18nProvider>
       <Toaster
         position="bottom-right"
         theme="dark"

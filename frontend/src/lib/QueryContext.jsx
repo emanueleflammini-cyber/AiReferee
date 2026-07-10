@@ -4,6 +4,8 @@ const QueryContext = createContext(null);
 
 const DEFAULT_SETTINGS = {
   reusePref: "ask", // ask | prefer_fresh | prefer_reused | never_sensitive
+  answerLanguage: null,     // null = follow interface_language
+  autoDetectQuestion: true, // detect question language automatically
 };
 
 function loadSettings() {
@@ -29,13 +31,10 @@ export function QueryProvider({ children }) {
   const [settings, setSettingsState] = useState(loadSettings);
 
   useEffect(() => {
-    try {
-      localStorage.setItem("referee_settings", JSON.stringify(settings));
-    } catch {}
+    try { localStorage.setItem("referee_settings", JSON.stringify(settings)); } catch {}
   }, [settings]);
 
-  const setSettings = (patch) =>
-    setSettingsState((prev) => ({ ...prev, ...patch }));
+  const setSettings = (patch) => setSettingsState((prev) => ({ ...prev, ...patch }));
 
   return (
     <QueryContext.Provider value={{ query, setQuery, settings, setSettings }}>

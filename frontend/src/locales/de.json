@@ -1,0 +1,42 @@
+{
+  "language": { "en": "Englisch", "it": "Italienisch", "es": "Spanisch", "fr": "Französisch", "de": "Deutsch", "select": "Sprache", "interface": "Oberflächensprache", "answer": "Antwortsprache", "autoDetect": "Frage-Sprache automatisch erkennen" },
+  "nav": { "howItWorks": "So funktioniert es", "models": "Modelle", "pricing": "Preise", "signIn": "Anmelden", "settings": "Einstellungen", "newQuestion": "Neue Frage", "back": "Zurück" },
+  "home": {
+    "badge": "Die erste KI-Konsens-Plattform",
+    "subtitle_a": "Eine Frage.", "subtitle_b": "Mehrere KI-Meinungen.", "subtitle_c": "Ein vertrauenswürdiges Ergebnis.",
+    "pitch": "Die erste KI-Konsens-Plattform, die das beste Denken mehrerer KI-Modelle zu einer transparenten Antwort vereint.",
+    "askPlaceholder": "Frag irgendetwas...",
+    "responseGoal": "Antwortziel", "accuracy": "Genauigkeit", "creativity": "Kreativität",
+    "detailLevel": "Detailgrad", "quick": "Knapp", "deep": "Tiefgehend",
+    "audience": "Zielgruppe", "beginner": "Anfänger", "professional": "Profi", "expert": "Experte",
+    "format": "Format", "paragraph": "Absatz", "bullets": "Liste", "table": "Tabelle", "steps": "Schritt für Schritt",
+    "strategy": "Konklusions-Strategie", "maxAccuracy": "Maximale Genauigkeit", "balanced": "Ausgewogen",
+    "creative": "Kreatives Denken", "critical": "Kritische Analyse", "fast": "Schnelle Antwort",
+    "generate": "Konklusion erzeugen", "summoning": "Modelle werden aufgerufen...",
+    "shortcut": "Drücke ⌘/Strg + Enter zum Absenden",
+    "emptyError": "Frag zuerst etwas — der Referee kann Schweigen nicht bewerten."
+  },
+  "reuse": {
+    "found": "Smart Reuse gefunden", "match": "Übereinstimmung", "age": "Alter", "days": "T",
+    "trust": "Vertrauen", "consensus": "Konsens", "confidence": "Sicherheit",
+    "originalLang": "Ursprungssprache", "answerLang": "Antwortsprache",
+    "apiCallsAvoided": "Vermiedene KI-Aufrufe", "costSaved": "Gesparte Kosten",
+    "timeSaved": "Gesparte Zeit", "seconds": "s",
+    "title": "Du hast schon etwas Ähnliches gefragt.",
+    "subtitle": "Referee hat eine frühere vertrauenswürdige Konklusion gefunden, die zu deiner Frage passt. Verwende sie für eine sofortige Antwort oder starte einen neuen Multi-Modell-Vergleich, um sie zu aktualisieren.",
+    "useExisting": "Bestehende vertrauenswürdige Konklusion verwenden", "refresh": "Mit neuem KI-Vergleich aktualisieren",
+    "globalMatch": "Globale Übereinstimmung · Übersetzt aus {source} ins {target}",
+    "caveat": "Wiederverwendete Konklusionen zitieren die ursprünglichen Modellantworten. Eine Aktualisierung startet einen vollständigen Multi-Modell-Vergleich und überschreibt den Cache."
+  },
+  "settings": {
+    "title": "Einstellungen", "eyebrow": "Einstellungen",
+    "reusePrefs": "Smart-Reuse-Präferenzen",
+    "reuseHint": "Referee speichert frühere vertrauenswürdige Konklusionen und bietet sie bei ähnlichen Fragen zur Wiederverwendung an.",
+    "prefAsk": "Vor Wiederverwendung immer fragen",
+    "prefFresh": "Neue Ergebnisse bevorzugen",
+    "prefReused": "Schnellere wiederverwendete Ergebnisse bevorzugen",
+    "prefSensitive": "Sensible Themen niemals wiederverwenden",
+    "policy": "Cache-Richtlinie",
+    "language": "Sprache & Multilinguales Reuse"
+  }
+}

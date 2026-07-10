@@ -1,0 +1,42 @@
+{
+  "language": { "en": "Anglais", "it": "Italien", "es": "Espagnol", "fr": "Français", "de": "Allemand", "select": "Langue", "interface": "Langue de l'interface", "answer": "Langue des réponses", "autoDetect": "Détecter automatiquement la langue de la question" },
+  "nav": { "howItWorks": "Comment ça marche", "models": "Modèles", "pricing": "Tarifs", "signIn": "Connexion", "settings": "Paramètres", "newQuestion": "Nouvelle question", "back": "Retour" },
+  "home": {
+    "badge": "La première Plateforme de Consensus IA",
+    "subtitle_a": "Une question.", "subtitle_b": "Plusieurs esprits IA.", "subtitle_c": "Une conclusion fiable.",
+    "pitch": "La première Plateforme de Consensus IA qui combine le meilleur raisonnement de plusieurs modèles IA en une réponse transparente.",
+    "askPlaceholder": "Posez n'importe quelle question...",
+    "responseGoal": "Objectif de la réponse", "accuracy": "Précision", "creativity": "Créativité",
+    "detailLevel": "Niveau de détail", "quick": "Rapide", "deep": "Approfondi",
+    "audience": "Public", "beginner": "Débutant", "professional": "Professionnel", "expert": "Expert",
+    "format": "Format", "paragraph": "Paragraphe", "bullets": "Liste", "table": "Tableau", "steps": "Étape par étape",
+    "strategy": "Stratégie de conclusion", "maxAccuracy": "Précision maximale", "balanced": "Équilibrée",
+    "creative": "Pensée créative", "critical": "Analyse critique", "fast": "Réponse rapide",
+    "generate": "Générer la conclusion", "summoning": "Invocation des modèles...",
+    "shortcut": "Appuyez sur ⌘/Ctrl + Entrée pour envoyer",
+    "emptyError": "Posez d'abord une question — l'arbitre ne peut pas juger le silence."
+  },
+  "reuse": {
+    "found": "Réutilisation intelligente trouvée", "match": "correspondance", "age": "Âge", "days": "j",
+    "trust": "Confiance", "consensus": "Consensus", "confidence": "Fiabilité",
+    "originalLang": "Langue originale", "answerLang": "Langue de la réponse",
+    "apiCallsAvoided": "Appels IA évités", "costSaved": "Coût économisé",
+    "timeSaved": "Temps économisé", "seconds": "s",
+    "title": "Vous avez déjà posé une question similaire.",
+    "subtitle": "Referee a trouvé une Conclusion Fiable précédente qui recoupe votre question. Réutilisez-la pour une réponse immédiate ou lancez une nouvelle comparaison multi-modèles.",
+    "useExisting": "Utiliser la Conclusion Fiable existante", "refresh": "Actualiser avec une nouvelle comparaison IA",
+    "globalMatch": "Correspondance globale · Traduit de {source} vers {target}",
+    "caveat": "Les conclusions réutilisées citent les réponses originales des modèles. L'actualisation lance une comparaison multi-modèles complète et écrase le cache."
+  },
+  "settings": {
+    "title": "Préférences", "eyebrow": "Paramètres",
+    "reusePrefs": "Préférences de Réutilisation Intelligente",
+    "reuseHint": "Referee met en cache les Conclusions Fiables précédentes et propose de les réutiliser quand vous posez une question similaire.",
+    "prefAsk": "Toujours demander avant de réutiliser",
+    "prefFresh": "Préférer les résultats frais",
+    "prefReused": "Préférer les résultats réutilisés plus rapides",
+    "prefSensitive": "Ne jamais réutiliser les sujets sensibles",
+    "policy": "Politique de cache",
+    "language": "Langue et Réutilisation Multilingue"
+  }
+}

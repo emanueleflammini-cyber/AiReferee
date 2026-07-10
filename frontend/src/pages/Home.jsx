@@ -23,6 +23,7 @@ import {
 import { NavBar } from "@/components/NavBar";
 import { Slider } from "@/components/ui/slider";
 import { useQueryState } from "@/lib/QueryContext";
+import { useI18n } from "@/lib/i18n";
 import { STRATEGIES, SUPPORTED_MODELS, WORKFLOW_STEPS } from "@/lib/mockData";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -50,6 +51,7 @@ const STRATEGY_ICONS = {
 export default function Home() {
   const navigate = useNavigate();
   const { query, setQuery, settings } = useQueryState();
+  const { t, lang } = useI18n();
   const [submitting, setSubmitting] = useState(false);
   const taRef = useRef(null);
 
@@ -64,7 +66,7 @@ export default function Home() {
 
   const handleGenerate = async () => {
     if (!query.prompt.trim()) {
-      toast.error("Ask something first — the referee can't judge silence.");
+      toast.error(t("home.emptyError"));
       taRef.current?.focus();
       return;
     }
@@ -77,7 +79,6 @@ export default function Home() {
       format: query.format,
       strategy: query.strategy,
     };
-    // 1) persist the query and grab its id
     let queryId = null;
     try {
       const r = await axios.post(`${API}/queries`, payload);
@@ -86,10 +87,14 @@ export default function Home() {
       console.warn("Query save failed", e);
     }
 
-    // 2) Smart Reuse — ask the server whether a prior conclusion can be reused
+    const answerLanguage = settings?.answerLanguage || lang;
     let matchRes = null;
     try {
-      const r = await axios.post(`${API}/queries/match`, { prompt: query.prompt });
+      const r = await axios.post(`${API}/queries/match`, {
+        prompt: query.prompt,
+        answer_language: answerLanguage,
+        auto_detect_language: settings?.autoDetectQuestion !== false,
+      });
       matchRes = r.data;
     } catch (e) {
       console.warn("Match check failed", e);
@@ -97,32 +102,38 @@ export default function Home() {
     setSubmitting(false);
 
     const pref = settings?.reusePref || "ask";
+    const commonState = {
+      queryId, answerLanguage,
+      questionLanguage: matchRes?.question_language,
+      savings: matchRes?.savings,
+      thresholds: matchRes?.thresholds,
+    };
 
     if (!matchRes || matchRes.policy === "never_reuse") {
-      navigate("/results", { state: { mode: "fresh", queryId, policy: matchRes?.policy, topic: matchRes?.topic, reason: matchRes?.reason } });
+      navigate("/results", { state: { mode: "fresh", ...commonState, policy: matchRes?.policy, topic: matchRes?.topic, reason: matchRes?.reason } });
       return;
     }
     if (matchRes.policy === "always_refresh") {
-      navigate("/results", { state: { mode: "fresh", queryId, policy: matchRes.policy, topic: matchRes.topic, reason: matchRes.reason } });
+      navigate("/results", { state: { mode: "fresh", ...commonState, policy: matchRes.policy, topic: matchRes.topic, reason: matchRes.reason } });
       return;
     }
     if (!matchRes.match) {
-      navigate("/results", { state: { mode: "fresh", queryId, topic: matchRes.topic } });
+      navigate("/results", { state: { mode: "fresh", ...commonState, topic: matchRes.topic } });
       return;
     }
     if (pref === "never_sensitive" && (matchRes.topic === "sensitive" || matchRes.topic === "news")) {
-      navigate("/results", { state: { mode: "fresh", queryId, topic: matchRes.topic } });
+      navigate("/results", { state: { mode: "fresh", ...commonState, topic: matchRes.topic } });
       return;
     }
     if (pref === "prefer_reused") {
-      navigate("/results", { state: { mode: "reused", queryId, match: matchRes.match, topic: matchRes.topic } });
+      navigate("/results", { state: { mode: "reused", ...commonState, match: matchRes.match, topic: matchRes.topic } });
       return;
     }
     if (pref === "prefer_fresh") {
-      navigate("/results", { state: { mode: "updated", queryId, replacedMatch: matchRes.match, topic: matchRes.topic } });
+      navigate("/results", { state: { mode: "updated", ...commonState, replacedMatch: matchRes.match, topic: matchRes.topic } });
       return;
     }
-    navigate("/reuse-found", { state: { queryId, match: matchRes.match, topic: matchRes.topic } });
+    navigate("/reuse-found", { state: { ...commonState, match: matchRes.match, topic: matchRes.topic } });
   };
 
   const goalLabel =

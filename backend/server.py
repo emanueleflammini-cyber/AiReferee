@@ -17,6 +17,9 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 from providers import selected_providers, provider_status, fallback_for  # noqa: E402
+from providers.embeddings import get_or_create_embedding, cosine, EMBED_MODEL  # noqa: E402
+from providers.language import detect_language, normalize_prompt as lang_normalize, SUPPORTED as SUPPORTED_LANGS  # noqa: E402
+from providers.translator import Translator, LANG_NAMES  # noqa: E402
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -66,16 +69,25 @@ CACHE_TTL_DAYS = {
     "sensitive": 0,
     "technical": 14,
     "stable": 30,
+    "moderate": 7,
+    "personal": 0,
 }
 
+# Configurable semantic thresholds — tune via env if needed.
+SIM_NEAR_EXACT   = float(os.environ.get("REUSE_SIM_NEAR_EXACT", "0.95"))
+SIM_STRONG_MATCH = float(os.environ.get("REUSE_SIM_STRONG",     "0.88"))
+# Fallback Jaccard threshold used when no embeddings are available.
 SIM_THRESHOLD = 0.55
 
+# Assumed savings per avoided comparison (approximate real cost of 4 model calls today).
+ASSUMED_SAVED_COST_USD = float(os.environ.get("REUSE_SAVED_COST", "0.00030"))
+ASSUMED_SAVED_LATENCY_MS = int(os.environ.get("REUSE_SAVED_LATENCY_MS", "8000"))
+ASSUMED_SAVED_API_CALLS = 4
+ASSUMED_SAVED_TOKENS = 400
 
-def normalize_prompt(p: str) -> str:
-    p = (p or "").lower()
-    p = re.sub(r"[^a-z0-9\s]", " ", p)
-    p = re.sub(r"\s+", " ", p).strip()
-    return p
+
+def normalize_prompt(p: str) -> str:  # kept for backward-compat
+    return lang_normalize(p)
 
 
 def tokens_of(p: str):
@@ -137,14 +149,19 @@ class QueryRecord(BaseModel):
 
 class MatchRequest(BaseModel):
     prompt: str
+    answer_language: Optional[str] = None
+    auto_detect_language: bool = True
 
 
 class MatchResponse(BaseModel):
     policy: str          # reusable | never_reuse | always_refresh
     topic: str           # stable | technical | sensitive | news
+    question_language: str = "en"
     match: Optional[Dict[str, Any]] = None
     reason: str
     ttl_days: int
+    thresholds: Dict[str, float] = {}
+    savings: Optional[Dict[str, Any]] = None
 
 
 # --------------------------------------------------------------------------
@@ -184,18 +201,28 @@ async def create_query(payload: QueryCreate):
     doc['created_at'] = doc['created_at'].isoformat()
     await db.queries.insert_one(doc)
 
-    # Cache a mock conclusion for the Smart Reuse system unless the topic
-    # is never-reuse (news) or always-refresh (sensitive).
     topic = classify_topic(payload.prompt)
     if topic in ("technical", "stable"):
+        # Detect the language locally (no API cost).
+        lang = detect_language(payload.prompt)
+        # Generate (or reuse) a multilingual embedding — very cheap.
+        vec, embed_meta = await get_or_create_embedding(db, payload.prompt)
+
         await db.conclusions.insert_one({
             "id": record.id,
             "prompt": payload.prompt,
+            "prompt_norm": normalize_prompt(payload.prompt),
             "prompt_tokens": list(tokens_of(payload.prompt)),
             "topic": topic,
-            "confidence": 82,
+            "language": lang,
+            "trust_score": 92,
             "consensus": 87,
-            "trust": 92,
+            "confidence": 82,
+            "is_public": True,
+            "is_time_sensitive": topic == "news",
+            "category": "stable" if topic == "stable" else "technical",
+            "embedding": list(vec) if vec is not None else None,
+            "embedding_model": embed_meta.get("model"),
             "created_at": doc['created_at'],
         })
     return record
@@ -229,42 +256,67 @@ async def match_query(req: MatchRequest):
 
     topic = classify_topic(prompt)
     ttl = CACHE_TTL_DAYS.get(topic, 0)
+    q_lang = detect_language(prompt) if req.auto_detect_language else "en"
+    target_lang = (req.answer_language or q_lang or "en").lower()
+    thresholds = {
+        "near_exact": SIM_NEAR_EXACT,
+        "strong": SIM_STRONG_MATCH,
+        "jaccard_fallback": SIM_THRESHOLD,
+    }
 
     if topic == "news":
         return MatchResponse(
-            policy="never_reuse",
-            topic=topic,
+            policy="never_reuse", topic=topic, question_language=q_lang,
             reason="News, prices, weather and current-event topics are never cached — this will be fetched fresh.",
-            ttl_days=0,
+            ttl_days=0, thresholds=thresholds,
         )
     if topic == "sensitive":
         return MatchResponse(
-            policy="always_refresh",
-            topic=topic,
+            policy="always_refresh", topic=topic, question_language=q_lang,
             reason="Financial, legal and medical topics always run a fresh comparison for safety.",
-            ttl_days=0,
+            ttl_days=0, thresholds=thresholds,
         )
 
-    # Look for a semantically-similar prior conclusion
-    toks = tokens_of(prompt)
+    # ---- Semantic matching via multilingual embeddings (with Jaccard fallback) ----
     now = datetime.now(timezone.utc)
+    query_vec, _ = await get_or_create_embedding(db, prompt)
     best_doc = None
     best_score = 0.0
-    async for doc in db.conclusions.find({}, {"_id": 0}).sort("created_at", -1).limit(300):
-        prev_toks = set(doc.get("prompt_tokens", []))
-        score = jaccard(toks, prev_toks)
-        if score > best_score:
-            best_score = score
-            best_doc = doc
+    best_method = "jaccard"
 
-    if best_doc is None or best_score < SIM_THRESHOLD:
+    if query_vec is not None:
+        # Linear scan against recent public conclusions with an embedding.
+        cursor = db.conclusions.find(
+            {"embedding": {"$ne": None}, "is_public": True},
+            {"_id": 0},
+        ).sort("created_at", -1).limit(300)
+        async for doc in cursor:
+            score = cosine(query_vec, doc.get("embedding") or [])
+            if score > best_score:
+                best_score = score
+                best_doc = doc
+                best_method = "embedding"
+
+    # Fallback to Jaccard on tokens if embeddings unavailable or scored low
+    if best_score < SIM_STRONG_MATCH:
+        toks = tokens_of(prompt)
+        async for doc in db.conclusions.find({"is_public": True}, {"_id": 0}).sort("created_at", -1).limit(300):
+            prev_toks = set(doc.get("prompt_tokens", []))
+            score = jaccard(toks, prev_toks)
+            if score > best_score and score >= SIM_THRESHOLD:
+                best_score = score
+                best_doc = doc
+                best_method = "jaccard"
+
+    # No match at all
+    if best_doc is None or best_score < min(SIM_STRONG_MATCH, SIM_THRESHOLD):
         return MatchResponse(
-            policy="reusable",
-            topic=topic,
+            policy="reusable", topic=topic, question_language=q_lang,
             reason="No similar prior conclusion in cache — this will be a fresh comparison.",
-            ttl_days=ttl,
+            ttl_days=ttl, thresholds=thresholds,
         )
 
+    # TTL check
     created = best_doc.get("created_at")
     if isinstance(created, str):
         created = datetime.fromisoformat(created)
@@ -272,11 +324,24 @@ async def match_query(req: MatchRequest):
     age_days = max(0, age.days)
     if age_days > ttl:
         return MatchResponse(
-            policy="reusable",
-            topic=topic,
+            policy="reusable", topic=topic, question_language=q_lang,
             reason=f"A prior conclusion exists but exceeds the {ttl}-day cache window for this topic.",
-            ttl_days=ttl,
+            ttl_days=ttl, thresholds=thresholds,
         )
+
+    # Trust guardrail
+    if best_doc.get("trust_score", 0) < 60:
+        return MatchResponse(
+            policy="reusable", topic=topic, question_language=q_lang,
+            reason="A match exists but its trust score is below the reuse floor.",
+            ttl_days=ttl, thresholds=thresholds,
+        )
+
+    stored_lang = best_doc.get("language", "en")
+    tier = ("near_exact" if best_score >= SIM_NEAR_EXACT
+            else "strong" if best_score >= SIM_STRONG_MATCH
+            else "weak")
+    needs_translation = (best_method == "embedding") and (stored_lang != target_lang)
 
     match = {
         "id": best_doc["id"],
@@ -284,17 +349,100 @@ async def match_query(req: MatchRequest):
         "created_at": created.isoformat(),
         "age_days": age_days,
         "similarity": round(best_score * 100),
+        "similarity_tier": tier,
+        "match_method": best_method,
         "confidence": best_doc.get("confidence", 82),
         "consensus": best_doc.get("consensus", 87),
-        "trust": best_doc.get("trust", 92),
+        "trust": best_doc.get("trust_score", 92),
         "topic": topic,
+        "original_language": stored_lang,
+        "answer_language": target_lang,
+        "needs_translation": needs_translation,
+    }
+    savings = {
+        "api_calls_avoided": ASSUMED_SAVED_API_CALLS,
+        "tokens_avoided": ASSUMED_SAVED_TOKENS,
+        "cost_saved_usd": round(ASSUMED_SAVED_COST_USD, 6),
+        "response_time_saved_ms": ASSUMED_SAVED_LATENCY_MS,
     }
     return MatchResponse(
-        policy="reusable",
-        topic=topic,
-        match=match,
-        reason=f"A similar prior conclusion ({match['similarity']}% match, {age_days}d old) is available for reuse.",
-        ttl_days=ttl,
+        policy="reusable", topic=topic, question_language=q_lang, match=match,
+        reason=f"{tier.replace('_', ' ')} match ({match['similarity']}%, {age_days}d old, via {best_method}).",
+        ttl_days=ttl, thresholds=thresholds, savings=savings,
+    )
+
+
+# --------------------------------------------------------------------------
+# /api/conclusions/{id}/translate — translate ONLY the final conclusion
+# --------------------------------------------------------------------------
+
+class TranslateRequest(BaseModel):
+    target_language: str
+
+
+class TranslateResponse(BaseModel):
+    conclusion_id: str
+    source_language: str
+    target_language: str
+    text: str
+    cache_hit: bool
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int
+    cost_usd: float
+    model_used: str = ""
+
+
+@api_router.post("/conclusions/{conclusion_id}/translate", response_model=TranslateResponse)
+async def translate_conclusion(conclusion_id: str, req: TranslateRequest):
+    target = (req.target_language or "en").lower()
+    doc = await db.conclusions.find_one({"id": conclusion_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Conclusion not found")
+    source_lang = doc.get("language", "en")
+    source_version = doc.get("version", 1)
+
+    # 1) Same-language: no translation needed.
+    if source_lang == target:
+        return TranslateResponse(
+            conclusion_id=conclusion_id, source_language=source_lang, target_language=target,
+            text=doc.get("trusted_conclusion") or doc.get("prompt", ""),
+            cache_hit=True, input_tokens=0, output_tokens=0, latency_ms=0, cost_usd=0.0, model_used="none",
+        )
+
+    # 2) Translation cache lookup — key = (conclusion_id, target, source_version)
+    cache_key = {"conclusion_id": conclusion_id, "target_language": target, "source_version": source_version}
+    cached = await db.translation_cache.find_one(cache_key, {"_id": 0})
+    if cached:
+        return TranslateResponse(
+            conclusion_id=conclusion_id, source_language=source_lang, target_language=target,
+            text=cached["text"], cache_hit=True,
+            input_tokens=0, output_tokens=0, latency_ms=0, cost_usd=0.0, model_used=cached.get("model_used", ""),
+        )
+
+    # 3) Real translation call — ONLY the final conclusion body.
+    body = doc.get("trusted_conclusion") or doc.get("prompt", "")
+    tr = Translator()
+    if not tr.available:
+        raise HTTPException(status_code=503, detail="No translator configured (OPENAI_API_KEY missing).")
+    out = await tr.translate(body, target_lang=target, source_lang=source_lang)
+
+    # 4) Save to cache
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.translation_cache.insert_one({
+        **cache_key,
+        "text": out["text"],
+        "input_tokens": out["input_tokens"],
+        "output_tokens": out["output_tokens"],
+        "cost_usd": out["cost_usd"],
+        "model_used": out["model_used"],
+        "created_at": now_iso,
+    })
+    return TranslateResponse(
+        conclusion_id=conclusion_id, source_language=source_lang, target_language=target,
+        text=out["text"], cache_hit=False,
+        input_tokens=out["input_tokens"], output_tokens=out["output_tokens"],
+        latency_ms=out["latency_ms"], cost_usd=out["cost_usd"], model_used=out["model_used"],
     )
 
 
