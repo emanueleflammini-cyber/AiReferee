@@ -14,7 +14,18 @@
     "creative": "Pensiero creativo", "critical": "Analisi critica", "fast": "Risposta rapida",
     "generate": "Genera conclusione", "summoning": "Convoco i modelli...",
     "shortcut": "Premi ⌘/Ctrl + Invio per inviare",
-    "emptyError": "Prima chiedi qualcosa — l'arbitro non può giudicare il silenzio."
+    "emptyError": "Prima chiedi qualcosa — l'arbitro non può giudicare il silenzio.",
+    "howEyebrow": "Come funziona",
+    "howTitle": "Dalla tua domanda a una conclusione di cui puoi fidarti",
+    "howBody": "Ogni fase è trasparente — vedi sempre su cosa i modelli concordano, dove non sono d'accordo e perché.",
+    "modelsEyebrow": "Modelli supportati",
+    "modelsTitle": "Le migliori IA del mondo, nella stessa stanza",
+    "modelsBody": "Referee invia la tua domanda a ciascuno in parallelo — e ti mostra solo ciò su cui concordano.",
+    "moreModels": "Altri modelli in arrivo.",
+    "featureA": "Più menti, un verdetto", "featureAbody": "GPT e Gemini ragionano sulla tua domanda in parallelo. Claude, Grok e Mistral sono nella roadmap.",
+    "featureB": "Consenso + affidabilità", "featureBbody": "Ogni conclusione include un livello di consenso e un punteggio di affidabilità difendibile.",
+    "featureC": "Sfida, non accettare", "featureCbody": "Con un clic, chiedi a tutti i modelli di provare a smontare la conclusione — e di aggiornarla.",
+    "footer": "La Piattaforma di Consenso IA"
   },
   "reuse": {
     "found": "Riuso Intelligente Trovato", "match": "corrispondenza", "age": "Età", "days": "g",
@@ -33,10 +44,53 @@
     "reusePrefs": "Preferenze di Riuso Intelligente",
     "reuseHint": "Referee mette in cache le Conclusioni Affidabili precedenti e propone di riutilizzarle quando fai una domanda simile.",
     "prefAsk": "Chiedi sempre prima di riutilizzare",
+    "prefAskHint": "Referee mostrerà la schermata di Consenso Riutilizzabile ogni volta che viene trovata una corrispondenza.",
     "prefFresh": "Preferisci risultati aggiornati",
+    "prefFreshHint": "Salta la richiesta di riuso e avvia sempre un nuovo confronto multi-modello.",
     "prefReused": "Preferisci risultati riutilizzati più veloci",
+    "prefReusedHint": "Riutilizza automaticamente una conclusione precedente quando esiste una corrispondenza nella finestra di cache.",
     "prefSensitive": "Non riutilizzare mai argomenti sensibili",
-    "policy": "Politica di cache",
-    "language": "Lingua e Riuso Multilingue"
+    "prefSensitiveHint": "Esegui sempre nuovi confronti per argomenti finanziari, legali, medici e di attualità. Gli altri argomenti possono essere riutilizzati.",
+    "policy": "Politica di cache", "language": "Lingua e Riuso Multilingue",
+    "stable": "Conoscenza stabile", "technical": "Spiegazioni tecniche",
+    "sensitive": "Finanza / legale / medico", "news": "Notizie / prezzi / meteo",
+    "policyStable": "riutilizzabile · 30 giorni", "policyTechnical": "riutilizzabile · 14 giorni",
+    "policySensitive": "aggiorna sempre", "policyNews": "mai riutilizzare"
+  },
+  "results": {
+    "yourQuestion": "La tua domanda", "backPrompt": "Torna alla domanda",
+    "confidence": "Affidabilità", "consensus": "Consenso", "trust": "Attendibilità",
+    "thinking": "Sto pensando...", "complete": "Completato",
+    "consensusAnalysis": "Analisi del Consenso", "consensusAnalysisSub": "Confronto il ragionamento di quattro modelli",
+    "trustedConclusion": "Conclusione Affidabile", "refereeVerdict": "Verdetto dell'arbitro",
+    "confidenceScore": "Punteggio di affidabilità", "consensusLevel": "Livello di consenso",
+    "whyConclusion": "Perché questa conclusione?", "whyBody": "Ogni affermazione è ordinata in base al supporto ricevuto dai modelli. Nulla è nascosto.",
+    "fullConsensus": "Consenso pieno", "partialConsensus": "Consenso parziale",
+    "disagreements": "Disaccordi", "uniqueInsights": "Intuizioni uniche",
+    "evidenceMeter": "Indicatore di prove", "evidenceTitle": "Quanto è difendibile questa risposta?",
+    "consensusEvolution": "Evoluzione del consenso", "evolutionTitle": "Come Referee è arrivato qui",
+    "modelContribution": "Contributo dei modelli", "contributionTitle": "Come ogni modello ha plasmato la conclusione",
+    "whyChoseAnswer": "Perché AI Referee ha scelto questa risposta?",
+    "challengeConclusion": "Sfida la conclusione", "challenging": "In corso...", "challengeAgain": "Sfida di nuovo",
+    "seeDebate": "Vedi il dibattito completo", "viewDebate": "Vedi il dibattito completo",
+    "challengeProgress": "Sfida in corso",
+    "showBreakdown": "Mostra argomenti, punti di forza e debolezza", "hideBreakdown": "Nascondi dettagli",
+    "mainArguments": "Argomenti principali", "strengths": "Punti di forza", "weaknesses": "Punti deboli",
+    "synthFrom": "Sintetizzata da 4 modelli",
+    "addKeys": "Aggiungi altre chiavi provider in"
+  },
+  "badge": {
+    "live": "ATTIVO", "mocked": "SIMULATO", "fallback": "RISERVA",
+    "reused": "Consenso Riutilizzato", "updated": "Risultato Aggiornato", "fresh": "Nuovo Confronto",
+    "premium": "Premium", "primary": "PRINCIPALE"
+  },
+  "providers": {
+    "live": "Attivo",
+    "comingSoon": "Prossimamente",
+    "premiumSoon": "Premium · Prossimamente"
+  },
+  "common": {
+    "loading": "Caricamento...", "error": "Errore", "retry": "Riprova",
+    "close": "Chiudi", "save": "Salva", "cancel": "Annulla", "active": "Attivo"
   }
 }

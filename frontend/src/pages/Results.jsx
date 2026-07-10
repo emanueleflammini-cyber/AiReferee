@@ -30,8 +30,11 @@ import {
 } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
 import { useQueryState } from "@/lib/QueryContext";
+import { useI18n } from "@/lib/i18n";
 import {
   MODELS,
+  LIVE_MODELS,
+  MODEL_STATUS,
   MOCK_RESPONSES,
   MOCK_SCORES,
   MOCK_SUPER_ANSWER,
@@ -58,6 +61,7 @@ export default function Results() {
   const navigate = useNavigate();
   const location = useLocation();
   const { query } = useQueryState();
+  const { t } = useI18n();
   const prompt = query.prompt || "What is a distributed database and why would I use one?";
 
   const routeState = location.state || {};
@@ -68,7 +72,7 @@ export default function Results() {
   const queryId = routeState.queryId || null;
 
   const [phase, setPhase] = useState(mode === "reused" ? "reveal" : "models");
-  const [completedModels, setCompletedModels] = useState(mode === "reused" ? MODELS.map((m) => m.id) : []);
+  const [completedModels, setCompletedModels] = useState(mode === "reused" ? LIVE_MODELS.map((m) => m.id) : []);
   const [analysisStep, setAnalysisStep] = useState(mode === "reused" ? ANALYSIS_STEPS.length : 0);
   const [liveResponses, setLiveResponses] = useState(null); // [{id, label, text, is_mock, ...}]
   const [liveCount, setLiveCount] = useState(0);
@@ -93,10 +97,10 @@ export default function Results() {
 
   useEffect(() => {
     if (phase !== "models") return;
-    const timers = MODELS.map((m, i) =>
+    const timers = LIVE_MODELS.map((m, i) =>
       setTimeout(() => {
         setCompletedModels((prev) => (prev.includes(m.id) ? prev : [...prev, m.id]));
-        if (i === MODELS.length - 1) {
+        if (i === LIVE_MODELS.length - 1) {
           setTimeout(() => setPhase("analysis"), 600);
         }
       }, 900 + i * 900),
@@ -139,11 +143,11 @@ export default function Results() {
           data-testid="back-home-button"
           className="inline-flex items-center gap-1.5 text-[13px] text-white/50 hover:text-white transition-colors"
         >
-          <ArrowLeft className="w-3.5 h-3.5" /> Back to prompt
+          <ArrowLeft className="w-3.5 h-3.5" /> {t("results.backPrompt")}
         </button>
 
         <div className="mt-4 max-w-3xl">
-          <div className="text-[11px] uppercase tracking-[0.2em] text-white/40 mb-2">Your question</div>
+          <div className="text-[11px] uppercase tracking-[0.2em] text-white/40 mb-2">{t("results.yourQuestion")}</div>
           <h1 className="text-2xl md:text-3xl font-semibold tracking-tight leading-snug" data-testid="results-question">
             “{prompt}”
           </h1>
@@ -164,7 +168,7 @@ export default function Results() {
               data-testid="loading-phase"
             >
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {MODELS.map((m) => {
+                {LIVE_MODELS.map((m) => {
                   const done = completedModels.includes(m.id);
                   return (
                     <div
@@ -189,11 +193,11 @@ export default function Results() {
                         <div className="text-[12px] flex items-center gap-2">
                           {done ? (
                             <span className="inline-flex items-center gap-1.5 text-[#10B981]" data-testid={`load-${m.id}-complete`}>
-                              <Check className="w-3.5 h-3.5" /> Complete
+                              <Check className="w-3.5 h-3.5" /> {t("results.complete")}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 text-white/50" data-testid={`load-${m.id}-thinking`}>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Thinking...
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("results.thinking")}
                             </span>
                           )}
                         </div>
@@ -217,8 +221,8 @@ export default function Results() {
                         <Sparkles className="w-4 h-4 text-[#00E5FF]" />
                       </div>
                       <div>
-                        <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80">Consensus Analysis</div>
-                        <div className="text-[14px] text-white">Comparing reasoning across four models</div>
+                        <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80">{t("results.consensusAnalysis")}</div>
+                        <div className="text-[14px] text-white">{t("results.consensusAnalysisSub")}</div>
                       </div>
                     </div>
                     <ul className="space-y-2">
@@ -266,6 +270,7 @@ export default function Results() {
 
 function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, liveResponses, liveCount, totalCost }) {
   const modelById = useMemo(() => Object.fromEntries(MODELS.map((m) => [m.id, m])), []);
+  const { t } = useI18n();
   const liveById = useMemo(() => {
     if (!liveResponses) return {};
     return Object.fromEntries(liveResponses.map((r) => [r.id, r]));
@@ -280,9 +285,9 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
         transition={{ duration: 0.5 }}
         className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-3"
       >
-        <MeterCard label="Confidence" value={currentConfidence} accent="#00E5FF" testId="score-confidence" icon={Gauge} delta={challengeOutcome ? currentConfidence - MOCK_SCORES.confidence : 0} />
-        <MeterCard label="Consensus Level" value={MOCK_SCORES.consensus} accent="#10B981" testId="score-consensus" icon={Trophy} />
-        <MeterCard label="Trust" value={MOCK_SCORES.trust} accent="#0066FF" testId="score-trust" icon={ShieldCheck} />
+        <MeterCard label={t("results.confidence")} value={currentConfidence} accent="#00E5FF" testId="score-confidence" icon={Gauge} delta={challengeOutcome ? currentConfidence - MOCK_SCORES.confidence : 0} />
+        <MeterCard label={t("results.consensusLevel")} value={MOCK_SCORES.consensus} accent="#10B981" testId="score-consensus" icon={Trophy} />
+        <MeterCard label={t("results.trust")} value={MOCK_SCORES.trust} accent="#0066FF" testId="score-trust" icon={ShieldCheck} />
       </motion.div>
 
       {/* Live indicator strip */}
@@ -309,7 +314,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
               ~${totalCost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}
             </span>
           )}
-          <span className="text-white/40">Add more provider keys in <code className="font-mono text-white/60">backend/.env</code> to light up more slots.</span>
+          <span className="text-white/40">Grok, Mistral and Claude are on the roadmap — enable them in <code className="font-mono text-white/60">backend/.env</code> to light up more slots.</span>
         </div>
       )}
 
@@ -322,6 +327,9 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
         data-testid="models-grid"
       >
         {MODELS.map((m) => {
+          if (m.status !== MODEL_STATUS.LIVE) {
+            return <ComingSoonModelCard key={m.id} model={m} />;
+          }
           const live = liveById[m.id];
           const responseText = live?.text || MOCK_RESPONSES[m.id];
           const isMock = live ? live.is_mock : true;
@@ -448,7 +456,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
           <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-6 border-t border-white/[0.08]">
             <div className="flex flex-wrap items-center gap-3 text-[12px] text-white/50">
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF]" /> Synthesized from 4 models
+                <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF]" /> Synthesized from {LIVE_MODELS.length} live model{LIVE_MODELS.length === 1 ? "" : "s"}
               </span>
               <span>·</span>
               <span>Confidence {currentConfidence}%</span>
@@ -510,7 +518,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
           style={{ boxShadow: "0 20px 50px -18px rgba(0,229,255,0.6)" }}
         >
           <MessagesSquare className="w-4 h-4" />
-          View Full Debate
+          {t("results.viewDebate")}
           <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
         </button>
       </div>
@@ -572,12 +580,12 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
 /* -------------------- Sub-components -------------------- */
 
 function ReuseBadgeBanner({ mode, match, topic, reason }) {
+  const { t } = useI18n();
   if (!mode || mode === "fresh") {
-    // A subtle badge for fresh comparisons — keeps the transparency contract explicit.
     return (
       <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-[#0066FF]/40 bg-[#0066FF]/[0.08] px-3.5 py-1.5 text-[12px] text-[#00E5FF]" data-testid="badge-fresh">
         <Sparkles className="w-3.5 h-3.5" />
-        Fresh Comparison
+        {t("badge.fresh")}
         {reason && <span className="text-white/50 ml-1 hidden sm:inline"> · {reason}</span>}
       </div>
     );
@@ -585,7 +593,7 @@ function ReuseBadgeBanner({ mode, match, topic, reason }) {
 
   const isReused = mode === "reused";
   const accent = isReused ? "#00E5FF" : "#10B981";
-  const label = isReused ? "Reused Consensus" : "Updated Result";
+  const label = isReused ? t("badge.reused") : t("badge.updated");
   const Icon = isReused ? Recycle : RefreshCcw;
 
   return (
@@ -631,8 +639,59 @@ function ReuseBadgeBanner({ mode, match, topic, reason }) {
   );
 }
 
+function ComingSoonModelCard({ model: m }) {
+  const { t } = useI18n();
+  const isPremium = m.status === MODEL_STATUS.PREMIUM_COMING_SOON;
+  const accentBadge = isPremium
+    ? "text-[#FBBF24] border-[#FBBF24]/40 bg-[#FBBF24]/[0.08]"
+    : "text-white/60 border-white/15 bg-white/[0.04]";
+  const label = isPremium ? t("providers.premiumSoon") : t("providers.comingSoon");
+  return (
+    <motion.article
+      variants={item}
+      data-testid={`card-${m.id}`}
+      data-status={m.status}
+      className="relative rounded-2xl border border-dashed border-white/[0.12] bg-[#0B1120]/60 opacity-90"
+      style={{ boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)" }}
+    >
+      <span className={`absolute left-0 top-6 bottom-6 w-[3px] rounded-r ${m.accentClass || ""}`} style={{ backgroundColor: `${m.accent}55` }} />
+      <div className="flex items-start justify-between p-6 pl-9 gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div
+            className="w-9 h-9 rounded-xl border flex items-center justify-center text-[12px] font-medium flex-shrink-0"
+            style={{ backgroundColor: `${m.accent}12`, borderColor: `${m.accent}40`, color: m.accent }}
+          >
+            {m.initials}
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="text-[14.5px] font-medium text-white/85">{m.label}</div>
+              {isPremium && (
+                <span className="text-[11px] text-[#FBBF24]" aria-hidden data-testid={`card-${m.id}-premium-star`}>★</span>
+              )}
+              <span
+                data-testid={`card-${m.id}-status`}
+                className={"inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] uppercase " + accentBadge}
+              >
+                {label}
+              </span>
+            </div>
+            <div className="text-[11.5px] text-white/40">{m.codename} · {m.provider}</div>
+          </div>
+        </div>
+      </div>
+      <div className="px-6 pl-9 pb-6 text-[13.5px] leading-[1.65] text-white/50 italic" data-testid={`response-${m.id}`}>
+        {isPremium
+          ? "Claude will join the panel for Premium subscribers. When Premium launches, this slot will contribute to a three-model Trusted Conclusion (GPT + Gemini + Claude)."
+          : `${m.label} is on the roadmap. The provider registry is ready — this slot will go live as soon as the API is wired.`}
+      </div>
+    </motion.article>
+  );
+}
+
 function ExpandableModelCard({ model: m, response, details, contribution, codename, latencyMs, tokens, isMock, error, inputTokens, outputTokens, costUsd, modelUsed }) {
   const [open, setOpen] = useState(false);
+  const { t } = useI18n();
   const displayCodename = modelUsed || codename || m.codename;
   const showLive = isMock === false;
   const isFallback = isMock === true && !!error;
@@ -640,15 +699,15 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
   let badge;
   if (showLive) {
     badge = (
-      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#10B981]/40 bg-[#10B981]/[0.1] text-[#10B981] px-1.5 py-0.5" data-testid={`card-${m.id}-live`}>LIVE</span>
+      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#10B981]/40 bg-[#10B981]/[0.1] text-[#10B981] px-1.5 py-0.5" data-testid={`card-${m.id}-live`}>{t("badge.live")}</span>
     );
   } else if (isFallback) {
     badge = (
-      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.1] text-[#F43F5E] px-1.5 py-0.5" title={error} data-testid={`card-${m.id}-fallback`}>FALLBACK</span>
+      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.1] text-[#F43F5E] px-1.5 py-0.5" title={error} data-testid={`card-${m.id}-fallback`}>{t("badge.fallback")}</span>
     );
   } else {
     badge = (
-      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#A78BFA]/40 bg-[#A78BFA]/[0.1] text-[#A78BFA] px-1.5 py-0.5" data-testid={`card-${m.id}-mocked`}>MOCKED</span>
+      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#A78BFA]/40 bg-[#A78BFA]/[0.1] text-[#A78BFA] px-1.5 py-0.5" data-testid={`card-${m.id}-mocked`}>{t("badge.mocked")}</span>
     );
   }
 

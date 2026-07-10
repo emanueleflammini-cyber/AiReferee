@@ -1,28 +1,28 @@
 // Placeholder data used across Results and Debate pages until AI integration is added.
 
-// The 4 models that actually participate in the comparison flow.
+// Provider status labels (must mirror backend registry `status` field).
+export const MODEL_STATUS = {
+  LIVE: "live",
+  COMING_SOON: "coming_soon",
+  PREMIUM_COMING_SOON: "premium_coming_soon",
+};
+
+// The models that participate in the comparison flow. Order controls how they
+// appear in the Results grid — live providers first, then Coming Soon slots,
+// then Premium/Coming Soon (Claude).
 export const MODELS = [
   {
     id: "model-a",
     label: "ChatGPT",
-    codename: "GPT-5.4",
+    codename: "GPT-5.4 mini",
     provider: "OpenAI",
     accent: "#10A37F",
     accentClass: "model-bar-a",
     latencyMs: 812,
     tokens: 428,
     initials: "GT",
-  },
-  {
-    id: "model-b",
-    label: "Claude",
-    codename: "Sonnet 4.6",
-    provider: "Anthropic",
-    accent: "#D97757",
-    accentClass: "model-bar-b",
-    latencyMs: 1120,
-    tokens: 512,
-    initials: "CL",
+    status: MODEL_STATUS.LIVE,
+    tier: "free",
   },
   {
     id: "model-c",
@@ -34,6 +34,8 @@ export const MODELS = [
     latencyMs: 940,
     tokens: 389,
     initials: "GE",
+    status: MODEL_STATUS.LIVE,
+    tier: "free",
   },
   {
     id: "model-d",
@@ -45,17 +47,48 @@ export const MODELS = [
     latencyMs: 1305,
     tokens: 471,
     initials: "GR",
+    status: MODEL_STATUS.COMING_SOON,
+    tier: "free",
+  },
+  {
+    id: "model-e",
+    label: "Mistral",
+    codename: "Large 2",
+    provider: "Mistral AI",
+    accent: "#FF7A00",
+    accentClass: "model-bar-e",
+    latencyMs: 1180,
+    tokens: 402,
+    initials: "MI",
+    status: MODEL_STATUS.COMING_SOON,
+    tier: "free",
+  },
+  {
+    id: "model-b",
+    label: "Claude",
+    codename: "Sonnet 4.6",
+    provider: "Anthropic",
+    accent: "#D97757",
+    accentClass: "model-bar-b",
+    latencyMs: 1120,
+    tokens: 512,
+    initials: "CL",
+    status: MODEL_STATUS.PREMIUM_COMING_SOON,
+    tier: "premium",
   },
 ];
 
-// All models advertised on the marketing "Supported Models" section.
+// Live subset used anywhere we need to render only the currently-callable models.
+export const LIVE_MODELS = MODELS.filter((m) => m.status === MODEL_STATUS.LIVE);
+
+// All models advertised on the marketing "Supported Models" section — mirrors MODELS + DeepSeek.
 export const SUPPORTED_MODELS = [
-  { id: "chatgpt", name: "ChatGPT",  provider: "OpenAI",         accent: "#10A37F", initials: "GT" },
-  { id: "gemini",  name: "Gemini",   provider: "Google DeepMind", accent: "#4285F4", initials: "GE" },
-  { id: "claude",  name: "Claude",   provider: "Anthropic",       accent: "#D97757", initials: "CL" },
-  { id: "grok",    name: "Grok",     provider: "xAI",             accent: "#F43F5E", initials: "GR" },
-  { id: "mistral", name: "Mistral",  provider: "Mistral AI",      accent: "#FF7A00", initials: "MI" },
-  { id: "deepseek",name: "DeepSeek", provider: "DeepSeek",        accent: "#7C3AED", initials: "DS" },
+  { id: "chatgpt", name: "ChatGPT",  provider: "OpenAI",         accent: "#10A37F", initials: "GT", status: MODEL_STATUS.LIVE },
+  { id: "gemini",  name: "Gemini",   provider: "Google DeepMind",accent: "#4285F4", initials: "GE", status: MODEL_STATUS.LIVE },
+  { id: "grok",    name: "Grok",     provider: "xAI",            accent: "#F43F5E", initials: "GR", status: MODEL_STATUS.COMING_SOON },
+  { id: "mistral", name: "Mistral",  provider: "Mistral AI",     accent: "#FF7A00", initials: "MI", status: MODEL_STATUS.COMING_SOON },
+  { id: "claude",  name: "Claude",   provider: "Anthropic",      accent: "#D97757", initials: "CL", status: MODEL_STATUS.PREMIUM_COMING_SOON },
+  { id: "deepseek",name: "DeepSeek", provider: "DeepSeek",       accent: "#7C3AED", initials: "DS", status: MODEL_STATUS.COMING_SOON },
 ];
 
 // Conclusion strategy presets (used before submit).

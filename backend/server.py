@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from providers import selected_providers, provider_status, fallback_for  # noqa: E402
+from providers import selected_providers, provider_status, all_provider_specs, fallback_for  # noqa: E402
 from providers.embeddings import get_or_create_embedding, cosine, EMBED_MODEL  # noqa: E402
 from providers.language import detect_language, normalize_prompt as lang_normalize, SUPPORTED as SUPPORTED_LANGS  # noqa: E402
 from providers.translator import Translator, LANG_NAMES  # noqa: E402
@@ -455,6 +455,12 @@ async def get_providers():
     return {"providers": provider_status()}
 
 
+@api_router.get("/providers/specs")
+async def get_provider_specs():
+    """Full slot list — including Coming Soon / Premium — for the frontend."""
+    return {"providers": all_provider_specs()}
+
+
 # --------------------------------------------------------------------------
 # /api/queries/{id}/compare — real 4-model comparison
 # --------------------------------------------------------------------------
@@ -503,6 +509,11 @@ async def compare_query(query_id: str):
     )
 
     providers = selected_providers()
+    if not providers:
+        raise HTTPException(
+            status_code=503,
+            detail="No live AI providers are enabled. Enable ENABLE_OPENAI or ENABLE_GEMINI in backend/.env.",
+        )
     tasks = [
         p.timed_generate(prompt, system, fallback_text_fn=fallback_for(p))
         for p in providers

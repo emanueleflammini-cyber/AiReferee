@@ -18,7 +18,18 @@
     "creative": "Creative Thinking", "critical": "Critical Analysis", "fast": "Fast Response",
     "generate": "Generate Conclusion", "summoning": "Summoning models...",
     "shortcut": "Press ⌘/Ctrl + Enter to submit",
-    "emptyError": "Ask something first — the referee can't judge silence."
+    "emptyError": "Ask something first — the referee can't judge silence.",
+    "howEyebrow": "How it works",
+    "howTitle": "From your question to a conclusion you can trust",
+    "howBody": "Every step is transparent — you always see what the models agreed on, disagreed on, and why.",
+    "modelsEyebrow": "Supported models",
+    "modelsTitle": "The world's best AIs, in the same room",
+    "modelsBody": "Referee sends your question to each in parallel — and only shows you what they agree on.",
+    "moreModels": "More models coming soon.",
+    "featureA": "Multiple minds, one verdict", "featureAbody": "GPT and Gemini reason on your question in parallel. Claude, Grok and Mistral are on the roadmap.",
+    "featureB": "Consensus + confidence", "featureBbody": "Every conclusion ships with a consensus level and a defensible confidence score.",
+    "featureC": "Challenge, don't accept", "featureCbody": "One click asks every model to try to refute the conclusion — and update it.",
+    "footer": "The AI Consensus Platform"
   },
   "reuse": {
     "found": "Smart Reuse Found", "match": "match", "age": "Age", "days": "d",
@@ -37,10 +48,54 @@
     "reusePrefs": "Smart Reuse Preferences",
     "reuseHint": "Referee caches prior Trusted Conclusions and offers to reuse them when you ask a similar question.",
     "prefAsk": "Always ask before reusing",
+    "prefAskHint": "Referee will show the Reusable Consensus screen every time a match is found.",
     "prefFresh": "Prefer fresh results",
+    "prefFreshHint": "Skip the reuse prompt and run a new multi-model comparison by default.",
     "prefReused": "Prefer faster reused results",
+    "prefReusedHint": "Automatically reuse a matching prior conclusion when one exists within the cache window.",
     "prefSensitive": "Never reuse sensitive topics",
+    "prefSensitiveHint": "Always run fresh comparisons for financial, legal, medical and current-event topics. Other topics may still be reused.",
     "policy": "Cache policy",
-    "language": "Language & Multilingual Reuse"
+    "language": "Language & Multilingual Reuse",
+    "stable": "Stable knowledge", "technical": "Technical explanations",
+    "sensitive": "Financial / legal / medical", "news": "News / prices / weather",
+    "policyStable": "reusable · 30 days", "policyTechnical": "reusable · 14 days",
+    "policySensitive": "always refresh", "policyNews": "never reuse"
+  },
+  "results": {
+    "yourQuestion": "Your question", "backPrompt": "Back to prompt",
+    "confidence": "Confidence", "consensus": "Consensus", "trust": "Trust",
+    "thinking": "Thinking...", "complete": "Complete",
+    "consensusAnalysis": "Consensus Analysis", "consensusAnalysisSub": "Comparing reasoning across four models",
+    "trustedConclusion": "Trusted Conclusion", "refereeVerdict": "Referee verdict",
+    "confidenceScore": "Confidence Score", "consensusLevel": "Consensus Level",
+    "whyConclusion": "Why this conclusion?", "whyBody": "Every claim is sorted by how much support it earned from the models. Nothing is hidden.",
+    "fullConsensus": "Full Consensus", "partialConsensus": "Partial Consensus",
+    "disagreements": "Disagreements", "uniqueInsights": "Unique Insights",
+    "evidenceMeter": "Evidence Meter", "evidenceTitle": "How defensible is this answer?",
+    "consensusEvolution": "Consensus Evolution", "evolutionTitle": "How Referee arrived here",
+    "modelContribution": "Model Contribution", "contributionTitle": "How each model shaped the conclusion",
+    "whyChoseAnswer": "Why did AI Referee choose this answer?",
+    "challengeConclusion": "Challenge Conclusion", "challenging": "Challenging...", "challengeAgain": "Challenge again",
+    "seeDebate": "See Full Debate", "viewDebate": "View Full Debate",
+    "challengeProgress": "Challenge in progress",
+    "showBreakdown": "Show arguments, strengths & weaknesses", "hideBreakdown": "Hide breakdown",
+    "mainArguments": "Main arguments", "strengths": "Strengths", "weaknesses": "Weaknesses",
+    "synthFrom": "Synthesized from 4 models",
+    "addKeys": "Add more provider keys in"
+  },
+  "badge": {
+    "live": "LIVE", "mocked": "MOCKED", "fallback": "FALLBACK",
+    "reused": "Reused Consensus", "updated": "Updated Result", "fresh": "Fresh Comparison",
+    "premium": "Premium", "primary": "PRIMARY"
+  },
+  "providers": {
+    "live": "Live",
+    "comingSoon": "Coming Soon",
+    "premiumSoon": "Premium · Coming Soon"
+  },
+  "common": {
+    "loading": "Loading...", "error": "Error", "retry": "Retry",
+    "close": "Close", "save": "Save", "cancel": "Cancel", "active": "Active"
   }
 }

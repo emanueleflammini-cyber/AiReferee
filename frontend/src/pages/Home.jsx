@@ -24,7 +24,7 @@ import { NavBar } from "@/components/NavBar";
 import { Slider } from "@/components/ui/slider";
 import { useQueryState } from "@/lib/QueryContext";
 import { useI18n } from "@/lib/i18n";
-import { STRATEGIES, SUPPORTED_MODELS, WORKFLOW_STEPS } from "@/lib/mockData";
+import { STRATEGIES, SUPPORTED_MODELS, WORKFLOW_STEPS, MODEL_STATUS } from "@/lib/mockData";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const AUDIENCES = [
@@ -165,7 +165,7 @@ export default function Home() {
             data-testid="hero-badge"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF] animate-pulse-ring" />
-            The first AI Consensus Platform
+            {t("home.badge")}
           </div>
           <h1
             className="text-5xl sm:text-6xl md:text-7xl font-semibold tracking-tighter leading-[1.02]"
@@ -174,12 +174,12 @@ export default function Home() {
             AI <span className="shimmer-text">Referee</span>
           </h1>
           <p className="mt-6 text-lg md:text-xl text-white/70 max-w-2xl mx-auto leading-relaxed" data-testid="hero-subtitle">
-            <span className="text-white">One Question.</span>{" "}
-            <span className="text-white/80">Multiple AI Minds.</span>{" "}
-            <span className="text-white">One Trusted Conclusion.</span>
+            <span className="text-white">{t("home.subtitle_a")}</span>{" "}
+            <span className="text-white/80">{t("home.subtitle_b")}</span>{" "}
+            <span className="text-white">{t("home.subtitle_c")}</span>
           </p>
           <p className="mt-5 text-[15px] text-white/55 max-w-2xl mx-auto leading-relaxed" data-testid="hero-pitch">
-            The first AI Consensus Platform that combines the best reasoning from multiple AI models into one transparent answer.
+            {t("home.pitch")}
           </p>
         </motion.div>
 
@@ -198,7 +198,7 @@ export default function Home() {
                 ref={taRef}
                 data-testid="ask-textarea"
                 className="ask-textarea text-xl md:text-2xl leading-relaxed min-h-[80px] tracking-tight"
-                placeholder="Ask anything..."
+                placeholder={t("home.askPlaceholder")}
                 value={query.prompt}
                 onChange={(e) => setQuery({ ...query, prompt: e.target.value })}
                 onKeyDown={(e) => {
@@ -318,7 +318,7 @@ export default function Home() {
           </div>
 
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-[12px] text-white/45 hidden sm:block">Press ⌘/Ctrl + Enter to submit</div>
+            <div className="text-[12px] text-white/45 hidden sm:block">{t("home.shortcut")}</div>
             <button
               onClick={handleGenerate}
               disabled={submitting}
@@ -327,7 +327,7 @@ export default function Home() {
               style={{ boxShadow: "0 0 0 1px rgba(255,255,255,0.08) inset, 0 20px 40px -12px rgba(0,102,255,0.6)" }}
             >
               <Sparkles className="w-4 h-4 transition-transform group-hover:rotate-12" />
-              {submitting ? "Summoning models..." : "Generate Conclusion"}
+              {submitting ? t("home.summoning") : t("home.generate")}
               <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
             </button>
           </div>
@@ -336,9 +336,9 @@ export default function Home() {
         {/* How it works */}
         <section id="how" className="mt-28" data-testid="how-it-works">
           <SectionHeader
-            eyebrow="How it works"
-            title="From your question to a conclusion you can trust"
-            body="Every step is transparent — you always see what the models agreed on, disagreed on, and why."
+            eyebrow={t("home.howEyebrow")}
+            title={t("home.howTitle")}
+            body={t("home.howBody")}
           />
           <div className="mt-10 overflow-x-auto pb-3 -mx-5 px-5">
             <div className="flex items-stretch gap-3 md:grid md:grid-cols-7 md:gap-3 min-w-max md:min-w-0">
@@ -359,51 +359,85 @@ export default function Home() {
         {/* Supported Models */}
         <section id="models" className="mt-28" data-testid="supported-models-section">
           <SectionHeader
-            eyebrow="Supported Models"
-            title="The world's leading AI minds, in one room"
-            body="Referee sends your question to each in parallel — and only surfaces what they can agree on."
+            eyebrow={t("home.modelsEyebrow")}
+            title={t("home.modelsTitle")}
+            body={t("home.modelsBody")}
           />
           <div className="mt-10 grid grid-cols-2 md:grid-cols-3 gap-3">
-            {SUPPORTED_MODELS.map((m) => (
-              <div
-                key={m.id}
-                data-testid={`model-chip-${m.id}`}
-                className="group rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 hover:bg-white/[0.04] hover:border-white/20 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-10 h-10 rounded-xl border flex items-center justify-center font-medium text-[13px]"
-                    style={{
-                      backgroundColor: `${m.accent}18`,
-                      borderColor: `${m.accent}55`,
-                      color: m.accent,
-                    }}
-                  >
-                    {m.initials}
+            {SUPPORTED_MODELS.map((m) => {
+              const isLive = m.status === MODEL_STATUS.LIVE;
+              const isPremium = m.status === MODEL_STATUS.PREMIUM_COMING_SOON;
+              const statusLabel = isLive
+                ? t("providers.live")
+                : isPremium
+                  ? t("providers.premiumSoon")
+                  : t("providers.comingSoon");
+              const badgeCls = isLive
+                ? "text-[#10B981] bg-[#10B981]/10 border-[#10B981]/30"
+                : isPremium
+                  ? "text-[#FBBF24] bg-[#FBBF24]/10 border-[#FBBF24]/30"
+                  : "text-white/50 bg-white/[0.04] border-white/10";
+              return (
+                <div
+                  key={m.id}
+                  data-testid={`model-chip-${m.id}`}
+                  data-status={m.status}
+                  className={
+                    "group rounded-2xl border p-5 transition-colors " +
+                    (isLive
+                      ? "border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/20"
+                      : "border-white/[0.06] bg-white/[0.01] opacity-80")
+                  }
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-10 h-10 rounded-xl border flex items-center justify-center font-medium text-[13px]"
+                      style={{
+                        backgroundColor: `${m.accent}18`,
+                        borderColor: `${m.accent}55`,
+                        color: m.accent,
+                      }}
+                    >
+                      {m.initials}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[15px] font-medium text-white">{m.name}</span>
+                        {isPremium && (
+                          <span className="text-[10px] text-[#FBBF24]" aria-hidden data-testid={`model-chip-${m.id}-premium-star`}>★</span>
+                        )}
+                      </div>
+                      <div className="text-[12px] text-white/45">{m.provider}</div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-[15px] font-medium text-white">{m.name}</div>
-                    <div className="text-[12px] text-white/45">{m.provider}</div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <span
+                      data-testid={`model-chip-${m.id}-status`}
+                      className={"inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] uppercase " + badgeCls}
+                    >
+                      {isLive && <span className="w-1.5 h-1.5 rounded-full bg-[#10B981] animate-pulse-ring" />}
+                      {statusLabel}
+                    </span>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="mt-6 text-center text-[13px] text-white/45" data-testid="more-models-note">
-            More models coming soon.
+            {t("home.moreModels")}
           </div>
         </section>
 
         {/* Trust strip */}
         <section id="pricing" className="mt-28 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <FeatureTile icon={Brain} title="Four minds, one verdict"  body="ChatGPT, Claude, Gemini and Grok reason on your question in parallel." />
-          <FeatureTile icon={ShieldCheck} title="Consensus + confidence" body="Every conclusion ships with a consensus level and a defensible confidence score." />
-          <FeatureTile icon={Zap} title="Challenge, don't accept" body="One click to have every model try to disprove the conclusion — and update it." />
+          <FeatureTile icon={Brain} title={t("home.featureA")}  body={t("home.featureAbody")} />
+          <FeatureTile icon={ShieldCheck} title={t("home.featureB")} body={t("home.featureBbody")} />
+          <FeatureTile icon={Zap} title={t("home.featureC")} body={t("home.featureCbody")} />
         </section>
       </main>
 
       <footer className="relative border-t border-white/[0.06] py-8 text-center text-[12px] text-white/40">
-        © {new Date().getFullYear()} AI Referee · The AI Consensus Platform
+        © {new Date().getFullYear()} AI Referee · {t("home.footer")}
       </footer>
     </div>
   );

@@ -4,10 +4,11 @@ import it from "@/locales/it.json";
 import es from "@/locales/es.json";
 import fr from "@/locales/fr.json";
 import de from "@/locales/de.json";
+import pt from "@/locales/pt.json";
 
-const BUNDLES = { en, it, es, fr, de };
-export const SUPPORTED_LANGS = ["en", "it", "es", "fr", "de"];
-export const LANG_LABELS = { en: "English", it: "Italiano", es: "Español", fr: "Français", de: "Deutsch" };
+const BUNDLES = { en, it, es, fr, de, pt };
+export const SUPPORTED_LANGS = ["en", "it", "es", "fr", "de", "pt"];
+export const LANG_LABELS = { en: "English", it: "Italiano", es: "Español", fr: "Français", de: "Deutsch", pt: "Português" };
 
 const I18nContext = createContext(null);
 
@@ -30,7 +31,7 @@ export function I18nProvider({ children }) {
   const [lang, setLang] = useState(detectBrowserLang);
 
   useEffect(() => {
-    try { localStorage.setItem("referee_interface_lang", lang); } catch {}
+    try { localStorage.setItem("referee_interface_lang", lang); } catch { /* ignore storage errors */ }
     document.documentElement.lang = lang;
   }, [lang]);
 

@@ -14,7 +14,18 @@
     "creative": "Pensamiento creativo", "critical": "Análisis crítico", "fast": "Respuesta rápida",
     "generate": "Generar conclusión", "summoning": "Invocando modelos...",
     "shortcut": "Pulsa ⌘/Ctrl + Enter para enviar",
-    "emptyError": "Pregunta algo primero — el árbitro no puede juzgar el silencio."
+    "emptyError": "Pregunta algo primero — el árbitro no puede juzgar el silencio.",
+    "howEyebrow": "Cómo funciona",
+    "howTitle": "De tu pregunta a una conclusión en la que puedes confiar",
+    "howBody": "Cada paso es transparente — siempre ves en qué están de acuerdo los modelos, en qué no, y por qué.",
+    "modelsEyebrow": "Modelos compatibles",
+    "modelsTitle": "Las mejores IAs del mundo, en la misma sala",
+    "modelsBody": "Referee envía tu pregunta a cada una en paralelo — y solo muestra aquello en lo que coinciden.",
+    "moreModels": "Más modelos próximamente.",
+    "featureA": "Varias mentes, un veredicto", "featureAbody": "GPT y Gemini razonan tu pregunta en paralelo. Claude, Grok y Mistral están en la hoja de ruta.",
+    "featureB": "Consenso + confianza", "featureBbody": "Cada conclusión incluye un nivel de consenso y una puntuación de confianza defendible.",
+    "featureC": "Desafía, no aceptes", "featureCbody": "Con un clic, todos los modelos intentan refutar la conclusión — y actualizarla.",
+    "footer": "La Plataforma de Consenso IA"
   },
   "reuse": {
     "found": "Reutilización inteligente encontrada", "match": "coincidencia", "age": "Edad", "days": "d",
@@ -33,10 +44,19 @@
     "reusePrefs": "Preferencias de Reutilización Inteligente",
     "reuseHint": "Referee guarda en caché Conclusiones Fiables previas y ofrece reutilizarlas cuando haces una pregunta similar.",
     "prefAsk": "Preguntar siempre antes de reutilizar",
+    "prefAskHint": "Referee mostrará la pantalla de Consenso Reutilizable cada vez que se encuentre una coincidencia.",
     "prefFresh": "Preferir resultados nuevos",
+    "prefFreshHint": "Omite el aviso de reutilización y ejecuta una nueva comparación multi-modelo.",
     "prefReused": "Preferir resultados reutilizados más rápidos",
+    "prefReusedHint": "Reutiliza automáticamente una conclusión previa cuando existe una coincidencia dentro de la ventana de caché.",
     "prefSensitive": "Nunca reutilizar temas sensibles",
+    "prefSensitiveHint": "Ejecuta siempre comparaciones nuevas para temas financieros, legales, médicos y de actualidad. Otros temas pueden reutilizarse.",
     "policy": "Política de caché",
     "language": "Idioma y Reutilización Multilingüe"
+  },
+  "providers": {
+    "live": "Activo",
+    "comingSoon": "Próximamente",
+    "premiumSoon": "Premium · Próximamente"
   }
 }

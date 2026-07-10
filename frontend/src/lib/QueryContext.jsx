@@ -31,7 +31,7 @@ export function QueryProvider({ children }) {
   const [settings, setSettingsState] = useState(loadSettings);
 
   useEffect(() => {
-    try { localStorage.setItem("referee_settings", JSON.stringify(settings)); } catch {}
+    try { localStorage.setItem("referee_settings", JSON.stringify(settings)); } catch { /* ignore storage errors */ }
   }, [settings]);
 
   const setSettings = (patch) => setSettingsState((prev) => ({ ...prev, ...patch }));

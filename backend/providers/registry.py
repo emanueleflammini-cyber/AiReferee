@@ -1,188 +1,217 @@
 """Provider registry for AI Referee.
 
-`selected_providers()` returns the four models that participate in every
-comparison in a stable order:
-  - model-a → OpenAI  (LIVE when OPENAI_API_KEY is set)
-  - model-b → Claude  (mock — provider ready, not enabled)
-  - model-c → Gemini  (LIVE when GEMINI_API_KEY + ENABLE_GEMINI=true)
-  - model-d → Grok    (mock — provider ready, not enabled)
+Design goals (Feb 2026):
+    * OpenAI + Gemini are the only providers that ever get called from the
+      compare endpoint. They contribute equally to the Trusted Conclusion.
+    * Claude, Grok and Mistral are configured in the registry so the UI can
+      advertise them, but they must never be invoked while their ENABLE_X
+      flag is false. Their `status` field tells the frontend how to label
+      them ("live" / "coming_soon" / "premium_coming_soon").
+    * Adding or activating a provider only requires flipping an env flag
+      (ENABLE_OPENAI, ENABLE_GEMINI, ENABLE_CLAUDE, ENABLE_GROK,
+      ENABLE_MISTRAL) and — for real vendors — supplying the API key.
 
-`primary_provider_id()` returns the id of the featured "default" provider —
-its slot is the one users see as the app's primary answer generator. The
-frontend gets it via /api/providers.
-
-`fallback_for(provider)` returns an async callable that produces a
-ProviderResult when the primary call fails. Gemini's fallback chains
-OpenAI → mock text; every other provider falls back to themed mock text.
+Exports:
+    selected_providers()        -> live Provider instances the compare
+                                    endpoint should iterate over.
+    all_provider_specs()        -> metadata for EVERY registered slot
+                                    (live + coming_soon + premium_coming_soon).
+    provider_status()           -> the payload for /api/providers.
+    fallback_for(provider)      -> async fallback callable for LIVE providers.
 """
 from __future__ import annotations
 
 import logging
 import os
-from typing import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Awaitable, Callable, Optional
 
 from .base import Provider, ProviderResult
 from .openai_provider import OpenAIProvider, SYSTEM_FALLBACK
-from .gemini_provider import GeminiProvider  # noqa: F401 — imported so the class is ready
-from .mock_provider import MockProvider, build_mock_providers  # noqa: F401
+from .gemini_provider import GeminiProvider
 
 log = logging.getLogger(__name__)
 
 FallbackFn = Callable[[str], Awaitable[ProviderResult]]
 
 
-def primary_provider_id() -> str:
-    return os.environ.get("PRIMARY_PROVIDER", "openai").strip().lower()
+# --------------------------------------------------------------------------
+# Registry — one entry per model slot the app knows about.
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ProviderSpec:
+    id: str                 # stable slot id (model-a, model-c, ...)
+    label: str              # user-facing name (ChatGPT, Gemini, Claude, ...)
+    codename: str           # user-facing model version
+    provider_name: str      # vendor (OpenAI, Google DeepMind, ...)
+    enable_env: str         # env flag that turns the slot on
+    key_env: str            # env var that holds the API key (may be empty)
+    tier: str               # "free" | "premium"
+    builder: Optional[Callable[[], Provider]]  # factory when the slot goes live
+    accent: str = ""        # brand color hint for the frontend
 
 
-def _openai_or_mock() -> Provider:
-    if os.environ.get("OPENAI_API_KEY", "").strip():
-        return OpenAIProvider()
-    return MockProvider(
-        id="model-a",
-        label="ChatGPT",
-        codename="GPT-5.4 mini",
+def _build_openai() -> Provider:
+    return OpenAIProvider()
+
+
+def _build_gemini() -> Provider:
+    return GeminiProvider()
+
+
+PROVIDER_REGISTRY: list[ProviderSpec] = [
+    ProviderSpec(
+        id="model-a", label="ChatGPT", codename="GPT-5.4 mini",
         provider_name="OpenAI",
-        template_key="openai",
-        env_var="OPENAI_API_KEY",
-    )
-
-
-def _gemini_or_mock() -> Provider:
-    enabled = os.environ.get("ENABLE_GEMINI", "false").strip().lower() == "true"
-    has_key = bool(os.environ.get("GEMINI_API_KEY", "").strip())
-    if enabled and has_key:
-        return GeminiProvider()
-    return MockProvider(
-        id="model-c",
-        label="Gemini",
-        codename="3.1 Pro",
+        enable_env="ENABLE_OPENAI", key_env="OPENAI_API_KEY",
+        tier="free", builder=_build_openai, accent="#10A37F",
+    ),
+    ProviderSpec(
+        id="model-c", label="Gemini", codename="3.1 Pro",
         provider_name="Google DeepMind",
-        template_key="gemini",
-        env_var="GEMINI_API_KEY",
-    )
+        enable_env="ENABLE_GEMINI", key_env="GEMINI_API_KEY",
+        tier="free", builder=_build_gemini, accent="#4285F4",
+    ),
+    # --- Coming soon (free tier, disabled) ---
+    ProviderSpec(
+        id="model-d", label="Grok", codename="3.0",
+        provider_name="xAI",
+        enable_env="ENABLE_GROK", key_env="XAI_API_KEY",
+        tier="free", builder=None, accent="#F43F5E",
+    ),
+    ProviderSpec(
+        id="model-e", label="Mistral", codename="Large 2",
+        provider_name="Mistral AI",
+        enable_env="ENABLE_MISTRAL", key_env="MISTRAL_API_KEY",
+        tier="free", builder=None, accent="#FF7A00",
+    ),
+    # --- Premium (Claude) — coming soon ---
+    ProviderSpec(
+        id="model-b", label="Claude", codename="Sonnet 4.6",
+        provider_name="Anthropic",
+        enable_env="ENABLE_CLAUDE", key_env="ANTHROPIC_API_KEY",
+        tier="premium", builder=None, accent="#D97757",
+    ),
+]
 
+
+# --------------------------------------------------------------------------
+# Enable / status helpers
+# --------------------------------------------------------------------------
+
+def _env_true(name: str) -> bool:
+    return os.environ.get(name, "false").strip().lower() == "true"
+
+
+def _slot_status(spec: ProviderSpec) -> str:
+    """Return "live" | "coming_soon" | "premium_coming_soon".
+
+    A slot is only LIVE when its ENABLE_X flag is true, it has a real
+    builder (non-mock), and an API key is present. Otherwise it is a
+    Coming Soon slot — never invoked by the compare engine.
+    """
+    if spec.tier == "premium" and not _env_true(spec.enable_env):
+        return "premium_coming_soon"
+    if not _env_true(spec.enable_env):
+        return "coming_soon"
+    if spec.builder is None:
+        return "coming_soon"
+    if not os.environ.get(spec.key_env, "").strip():
+        # Enabled but missing key — surface as coming_soon so we don't call it.
+        return "coming_soon"
+    return "live"
+
+
+def primary_provider_id() -> str:
+    return os.environ.get("PRIMARY_PROVIDER", "gemini").strip().lower()
+
+
+def _primary_slot_id() -> str:
+    key_map = {
+        "openai": "model-a",
+        "gemini": "model-c", "google": "model-c",
+    }
+    return key_map.get(primary_provider_id(), "model-a")
+
+
+# --------------------------------------------------------------------------
+# Public API
+# --------------------------------------------------------------------------
 
 def selected_providers() -> list[Provider]:
-    return [
-        _openai_or_mock(),
-        # model-b — Claude (mock until wired)
-        MockProvider(
-            id="model-b",
-            label="Claude",
-            codename="Sonnet 4.6",
-            provider_name="Anthropic",
-            template_key="claude",
-            env_var="ANTHROPIC_API_KEY",
-        ),
-        _gemini_or_mock(),
-        # model-d — Grok (mock until wired)
-        MockProvider(
-            id="model-d",
-            label="Grok",
-            codename="3.0",
-            provider_name="xAI",
-            template_key="grok",
-            env_var="XAI_API_KEY",
-        ),
-    ]
+    """Provider instances that the compare endpoint may call.
+
+    Disabled slots (coming_soon / premium_coming_soon) are omitted — the
+    backend never calls them.
+    """
+    live: list[Provider] = []
+    for spec in PROVIDER_REGISTRY:
+        if _slot_status(spec) != "live":
+            continue
+        assert spec.builder is not None  # narrow for mypy — status "live" guarantees builder
+        try:
+            live.append(spec.builder())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Failed to build live provider %s: %s", spec.id, exc)
+    return live
 
 
-# --------------------------------------------------------------------------
-# Fallback chains
-# --------------------------------------------------------------------------
-
-def _mock_fn(provider: Provider, template_key: str) -> FallbackFn:
-    """Return an async callable that emits themed mock text as the fallback."""
-    mock = MockProvider(
-        id=provider.id,
-        label=provider.label,
-        codename=provider.codename,
-        provider_name=provider.provider_name,
-        template_key=template_key,
-        env_var="",
-    )
-
-    async def _fn(prompt: str) -> ProviderResult:
-        return await mock.fallback_text(prompt)
-
-    return _fn
-
-
-def _gemini_fallback_chain(gemini_provider: Provider) -> FallbackFn:
-    """When Gemini fails, first try OpenAI; if OpenAI also fails, mock text."""
-    themed_mock = _mock_fn(gemini_provider, "gemini")
-
-    async def _fn(prompt: str) -> ProviderResult:
-        openai = OpenAIProvider()
-        if openai.available:
-            try:
-                res = await openai.generate(prompt, SYSTEM_FALLBACK)
-                # Mark as a fallback path — same slot label (Gemini), model_used = actual OpenAI model
-                res.is_mock = True
-                res.error = "Gemini call failed — served by OpenAI fallback"
-                return res.with_computed_cost()
-            except Exception as e:  # noqa: BLE001
-                log.warning("Gemini→OpenAI fallback also failed: %s", e)
-        return await themed_mock(prompt)
-
-    return _fn
-
-
-def fallback_for(provider: Provider) -> FallbackFn:
-    template_map = {
-        "model-a": "openai",
-        "model-b": "claude",
-        "model-c": "gemini",
-        "model-d": "grok",
-    }
-    # Gemini gets the OpenAI-first fallback chain
-    if provider.id == "model-c" and isinstance(provider, GeminiProvider):
-        return _gemini_fallback_chain(provider)
-    return _mock_fn(provider, template_map.get(provider.id, "openai"))
-
-
-# --------------------------------------------------------------------------
-# Status
-# --------------------------------------------------------------------------
-
-def provider_status() -> list[dict]:
-    primary = primary_provider_id()
-    provider_key_map = {
-        "openai": "model-a",
-        "claude": "model-b",
-        "anthropic": "model-b",
-        "gemini": "model-c",
-        "google": "model-c",
-        "grok": "model-d",
-        "xai": "model-d",
-    }
-    primary_slot = provider_key_map.get(primary, "model-a")
+def all_provider_specs() -> list[dict]:
+    """Full slot list (including disabled) with status metadata for the UI."""
+    primary_slot = _primary_slot_id()
     out: list[dict] = []
-    for p in selected_providers():
-        live = not isinstance(p, MockProvider) and p.available
+    for spec in PROVIDER_REGISTRY:
+        status = _slot_status(spec)
         out.append({
-            "id": p.id,
-            "label": p.label,
-            "codename": p.codename,
-            "provider": p.provider_name,
-            "live": live,
-            "is_primary": p.id == primary_slot,
-            "fallback": "openai" if p.id == "model-c" else "mock",
-            "enabled_hint": _enable_hint(p),
+            "id": spec.id,
+            "label": spec.label,
+            "codename": spec.codename,
+            "provider": spec.provider_name,
+            "tier": spec.tier,
+            "status": status,           # live | coming_soon | premium_coming_soon
+            "live": status == "live",
+            "is_primary": spec.id == primary_slot and status == "live",
+            "accent": spec.accent,
+            "enable_env": spec.enable_env,
         })
     return out
 
 
-def _enable_hint(p: Provider) -> str:
-    if not isinstance(p, MockProvider):
-        return ""
-    if p.id == "model-a":
-        return "Set OPENAI_API_KEY in backend/.env to go LIVE."
-    if p.id == "model-b":
-        return "Set ANTHROPIC_API_KEY (Claude ready, not yet wired to the registry)."
-    if p.id == "model-c":
-        return "Set GEMINI_API_KEY and ENABLE_GEMINI=true in backend/.env."
-    if p.id == "model-d":
-        return "Set XAI_API_KEY (Grok ready, not yet wired to the registry)."
-    return ""
+def provider_status() -> list[dict]:
+    """Backwards-compatible payload for /api/providers."""
+    return all_provider_specs()
+
+
+# --------------------------------------------------------------------------
+# Fallback chain — only ever installed on LIVE providers.
+# --------------------------------------------------------------------------
+
+def _openai_rescue_fn() -> FallbackFn:
+    """If a live provider fails, try OpenAI once, then give up (raise)."""
+    async def _fn(prompt: str) -> ProviderResult:
+        openai = OpenAIProvider()
+        if openai.available:
+            res = await openai.generate(prompt, SYSTEM_FALLBACK)
+            res.is_mock = True
+            res.error = "Primary provider failed — served by OpenAI rescue path"
+            return res.with_computed_cost()
+        # If OpenAI itself isn't available, propagate an explicit error result.
+        return ProviderResult(
+            text="",
+            is_mock=True,
+            error="No live fallback available.",
+        )
+    return _fn
+
+
+def fallback_for(provider: Provider) -> Optional[FallbackFn]:
+    """Return a fallback callable ONLY for the Gemini slot (rescued by OpenAI).
+
+    OpenAI is the last line — its failure is surfaced directly to the caller
+    so we never fake a live answer. Disabled slots don't have a fallback
+    because they are never invoked.
+    """
+    if isinstance(provider, GeminiProvider):
+        return _openai_rescue_fn()
+    return None

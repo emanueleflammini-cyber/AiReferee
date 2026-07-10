@@ -1,0 +1,37 @@
+{
+  "summary": "Comprehensive re-test of AI Referee provider architecture + multilingual UI. Backend: 7/7 pytest tests passed. /api/providers and /api/providers/specs both return exactly 5 slots with correct statuses (model-a live, model-c live+primary, model-d/e coming_soon, model-b premium_coming_soon). POST /api/queries/{id}/compare returns exactly 2 responses (model-a + model-c) with is_mock=false and no leakage of model-b/d/e ids. Smart Reuse /queries/match returns never_reuse for news, always_refresh for medical/legal/financial, reusable for technical. /api/conclusions/{id}/translate returns 200 with Italian text. No outgoing calls to Anthropic/xAI/Mistral endpoints found in supervisor logs. Frontend: Home renders with no raw i18n keys, 6 Supported-Models chips (chatgpt, gemini, grok, mistral, claude, deepseek). Language switcher to Italiano updates all copy ('ATTIVO', 'Come funziona', 'Prezzi') and persists after page reload via localStorage referee_interface_lang. Switch back to EN restores English. Settings page renders 4 Smart Reuse preference cards with localized labels; clicking one shows Active pill and updates localStorage referee_settings. Full happy path: Home -> Generate Conclusion -> /reuse-found (Smart Reuse triggered) -> Refresh -> /results shows 5 cards total (2 LIVE with real OpenAI+Gemini text, 3 COMING SOON for Grok/Mistral/Claude, Claude has ★ premium). '2 LIVE models' strip and 'Synthesized from 2' footer confirmed. Backend .env values unchanged.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/reuse-found", "issues": ["'API CALLS AVOIDED: 4' and 'COST SAVED ~$0.0003' are hard-coded (ASSUMED_SAVED_API_CALLS=4, ASSUMED_SAVED_COST_USD=0.0003 in server.py). Now that only 2 live providers run, these numbers overstate the actual savings. Consider setting ASSUMED_SAVED_API_CALLS=2 and recomputing ASSUMED_SAVED_COST_USD, or deriving from live_count."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: update ASSUMED_SAVED_API_CALLS from 4 -> 2 in /app/backend/server.py (and matching cost) so Smart Reuse Found screen doesn't overstate savings now that only OpenAI+Gemini are live.",
+    "Optional: Smart Reuse triggered on 'quaternion in graphics programming' due to prior 'merkle tree' cache via Jaccard fallback matching common technical tokens — thresholds may be too lax; consider raising SIM_THRESHOLD (currently 0.55) or requiring embedding-based strong match only."
+  ],
+  "critical_code_review_comments": [
+    "server.py compare_query correctly raises 503 when no live providers — matches spec.",
+    "providers/registry.py _slot_status() correctly returns 'live' only for OpenAI+Gemini given current .env; disabled slots are advertised via all_provider_specs() but never included in selected_providers().",
+    "fallback_for(provider) correctly returns None for OpenAI (no rescue) and an OpenAI-based rescue only for Gemini, matching the spec.",
+    "Minor: Smart Reuse savings values are hard-coded to a 4-model assumption; should be dynamic given the 2-live architecture."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "N/A (no auth in this app)",
+  "seed_data_creation": "Created several TEST_ prefixed queries via /api/queries to exercise compare + translate; safe to leave in test_database — no PII.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend .env has ENABLE_OPENAI=true, ENABLE_GEMINI=true and valid keys. Public base URL: https://referee-ai-4.preview.emergentagent.com. Smart Reuse Jaccard fallback (threshold 0.55) matches broad technical topics — expect frequent /reuse-found redirects for technical prompts. Use data-testid='reuse-refresh' to force fresh compare from ReuseFound page. Results page renders 5 cards via [data-testid=card-model-{a|b|c|d|e}]. Frontend LanguageSelector data-testids: lang-toggle, lang-menu, lang-option-{code}. localStorage keys: referee_interface_lang, referee_settings."
+}

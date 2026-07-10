@@ -14,7 +14,18 @@
     "creative": "Kreatives Denken", "critical": "Kritische Analyse", "fast": "Schnelle Antwort",
     "generate": "Konklusion erzeugen", "summoning": "Modelle werden aufgerufen...",
     "shortcut": "Drücke ⌘/Strg + Enter zum Absenden",
-    "emptyError": "Frag zuerst etwas — der Referee kann Schweigen nicht bewerten."
+    "emptyError": "Frag zuerst etwas — der Referee kann Schweigen nicht bewerten.",
+    "howEyebrow": "So funktioniert es",
+    "howTitle": "Von deiner Frage zu einer Konklusion, der du vertrauen kannst",
+    "howBody": "Jeder Schritt ist transparent — du siehst immer, worin die Modelle übereinstimmen, wo sie nicht übereinstimmen und warum.",
+    "modelsEyebrow": "Unterstützte Modelle",
+    "modelsTitle": "Die besten KIs der Welt, im selben Raum",
+    "modelsBody": "Referee sendet deine Frage parallel an jede — und zeigt dir nur, worin sie übereinstimmen.",
+    "moreModels": "Weitere Modelle folgen.",
+    "featureA": "Mehrere Köpfe, ein Urteil", "featureAbody": "GPT und Gemini denken parallel über deine Frage nach. Claude, Grok und Mistral sind in der Roadmap.",
+    "featureB": "Konsens + Vertrauen", "featureBbody": "Jede Konklusion kommt mit einem Konsens-Level und einer verteidigbaren Vertrauens-Bewertung.",
+    "featureC": "Hinterfrage, akzeptiere nicht", "featureCbody": "Ein Klick lässt jedes Modell versuchen, die Konklusion zu widerlegen — und sie zu aktualisieren.",
+    "footer": "Die KI-Konsens-Plattform"
   },
   "reuse": {
     "found": "Smart Reuse gefunden", "match": "Übereinstimmung", "age": "Alter", "days": "T",
@@ -33,10 +44,19 @@
     "reusePrefs": "Smart-Reuse-Präferenzen",
     "reuseHint": "Referee speichert frühere vertrauenswürdige Konklusionen und bietet sie bei ähnlichen Fragen zur Wiederverwendung an.",
     "prefAsk": "Vor Wiederverwendung immer fragen",
+    "prefAskHint": "Referee zeigt den Wiederverwendbaren-Konsens-Bildschirm jedes Mal, wenn eine Übereinstimmung gefunden wird.",
     "prefFresh": "Neue Ergebnisse bevorzugen",
+    "prefFreshHint": "Überspringt die Wiederverwendungs-Abfrage und startet standardmäßig einen neuen Multi-Modell-Vergleich.",
     "prefReused": "Schnellere wiederverwendete Ergebnisse bevorzugen",
+    "prefReusedHint": "Verwendet automatisch eine passende frühere Konklusion wieder, wenn eine im Cache-Fenster existiert.",
     "prefSensitive": "Sensible Themen niemals wiederverwenden",
+    "prefSensitiveHint": "Führt immer neue Vergleiche für finanzielle, rechtliche, medizinische und aktuelle Themen durch. Andere Themen können weiterhin wiederverwendet werden.",
     "policy": "Cache-Richtlinie",
     "language": "Sprache & Multilinguales Reuse"
+  },
+  "providers": {
+    "live": "Aktiv",
+    "comingSoon": "Bald verfügbar",
+    "premiumSoon": "Premium · Bald verfügbar"
   }
 }

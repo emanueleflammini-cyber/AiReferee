@@ -14,7 +14,18 @@
     "creative": "Pensée créative", "critical": "Analyse critique", "fast": "Réponse rapide",
     "generate": "Générer la conclusion", "summoning": "Invocation des modèles...",
     "shortcut": "Appuyez sur ⌘/Ctrl + Entrée pour envoyer",
-    "emptyError": "Posez d'abord une question — l'arbitre ne peut pas juger le silence."
+    "emptyError": "Posez d'abord une question — l'arbitre ne peut pas juger le silence.",
+    "howEyebrow": "Comment ça marche",
+    "howTitle": "De votre question à une conclusion en laquelle vous pouvez avoir confiance",
+    "howBody": "Chaque étape est transparente — vous voyez toujours sur quoi les modèles sont d'accord, en désaccord, et pourquoi.",
+    "modelsEyebrow": "Modèles pris en charge",
+    "modelsTitle": "Les meilleures IA du monde, dans la même pièce",
+    "modelsBody": "Referee envoie votre question à chacune en parallèle — et n'affiche que ce sur quoi elles s'accordent.",
+    "moreModels": "D'autres modèles bientôt.",
+    "featureA": "Plusieurs esprits, un verdict", "featureAbody": "GPT et Gemini raisonnent votre question en parallèle. Claude, Grok et Mistral sont sur la feuille de route.",
+    "featureB": "Consensus + confiance", "featureBbody": "Chaque conclusion arrive avec un niveau de consensus et un score de confiance défendable.",
+    "featureC": "Contestez, n'acceptez pas", "featureCbody": "Un clic demande à chaque modèle de tenter de réfuter la conclusion — et de la mettre à jour.",
+    "footer": "La Plateforme de Consensus IA"
   },
   "reuse": {
     "found": "Réutilisation intelligente trouvée", "match": "correspondance", "age": "Âge", "days": "j",
@@ -33,10 +44,19 @@
     "reusePrefs": "Préférences de Réutilisation Intelligente",
     "reuseHint": "Referee met en cache les Conclusions Fiables précédentes et propose de les réutiliser quand vous posez une question similaire.",
     "prefAsk": "Toujours demander avant de réutiliser",
+    "prefAskHint": "Referee affichera l'écran de Consensus Réutilisable chaque fois qu'une correspondance est trouvée.",
     "prefFresh": "Préférer les résultats frais",
+    "prefFreshHint": "Ignorez l'invite de réutilisation et lancez une nouvelle comparaison multi-modèles par défaut.",
     "prefReused": "Préférer les résultats réutilisés plus rapides",
+    "prefReusedHint": "Réutilise automatiquement une conclusion antérieure lorsqu'une correspondance existe dans la fenêtre de cache.",
     "prefSensitive": "Ne jamais réutiliser les sujets sensibles",
+    "prefSensitiveHint": "Toujours exécuter de nouvelles comparaisons pour les sujets financiers, juridiques, médicaux et d'actualité. Les autres sujets peuvent être réutilisés.",
     "policy": "Politique de cache",
     "language": "Langue et Réutilisation Multilingue"
+  },
+  "providers": {
+    "live": "Actif",
+    "comingSoon": "Bientôt disponible",
+    "premiumSoon": "Premium · Bientôt"
   }
 }
