@@ -19,7 +19,7 @@ from .base import Provider, ProviderResult
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.1-pro-preview"
 
 SYSTEM_FALLBACK = (
     "You are one participant in a multi-model AI consensus panel called AI Referee. "
