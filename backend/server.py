@@ -356,7 +356,7 @@ async def compare_query(query_id: str):
 
     providers = selected_providers()
     tasks = [
-        p.timed_generate(prompt, system, fallback_text_fn=fallback_for(p).fallback_text)
+        p.timed_generate(prompt, system, fallback_text_fn=fallback_for(p))
         for p in providers
     ]
     results = await asyncio.gather(*tasks, return_exceptions=False)
