@@ -116,6 +116,7 @@ async def enforce_daily_compare_limit(identity: IdentityContext) -> int:
     if identity.is_anonymous or identity.user_id is None:
         return 0
 
+    from pymongo import ReturnDocument  # local import — pymongo is already a Motor dep.
     from server import db  # local import avoids circular.
     events = db["usage_events"]
     key = {"user_id": identity.user_id, "day": _today_key(), "kind": "compare"}
@@ -123,16 +124,9 @@ async def enforce_daily_compare_limit(identity: IdentityContext) -> int:
         key,
         {"$inc": {"count": 1}, "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}},
         upsert=True,
-        return_document=True,
+        return_document=ReturnDocument.AFTER,
     )
-    # Motor's find_one_and_update returns the pre-update doc by default when
-    # `return_document` isn't a pymongo constant. We handle both shapes.
-    count = int((doc or {}).get("count", 0)) if doc else 1
-    # If we got the pre-update doc, add 1 to reflect the post-update count.
-    # The safe path: fetch canonical count.
-    canonical = await events.find_one(key, {"_id": 0, "count": 1})
-    if canonical:
-        count = int(canonical.get("count", count))
+    count = int((doc or {}).get("count", 1))
 
     limit = identity.entitlements.daily_compare_limit
     if count > limit:

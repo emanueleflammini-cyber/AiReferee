@@ -526,6 +526,9 @@ async def admin_set_plan(user_id: str, req: PlanChangeRequest):
     No frontend UI hooks into this yet — it exists so operators can test
     Premium and BYOK end-to-end before billing ships.
     """
+    if not user_id or len(user_id.strip()) < 4:
+        raise HTTPException(status_code=400, detail="user_id must be at least 4 characters")
+    user_id = user_id.strip()
     try:
         new_plan = Plan(req.plan)
     except ValueError:
