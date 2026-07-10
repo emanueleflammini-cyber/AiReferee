@@ -7,56 +7,49 @@ factual consistency, reasoning quality and confidence.
 
 ## Core Requirements (static)
 - Two ACTIVE providers today: **OpenAI + Google Gemini** (free tier).
-- Three visible-but-disabled slots: **Grok** (Coming Soon), **Mistral** (Coming Soon), 
+- Three visible-but-disabled slots: **Grok** / **Mistral** (Coming Soon), 
   **Claude ★ Premium** (Coming Soon, fully wired).
-- Backend must NEVER call disabled providers. No mocks masquerading as live answers.
-- Multilingual UI (en/it/es/fr/de/pt) with persistent user choice.
-- Smart Reuse: semantic cache lookup BEFORE any AI call; translate final answer only.
+- Backend must NEVER call disabled providers.
+- Full multilingual pipeline (en/it/es/fr/de/pt):
+   * Detect prompt language, run panel in the natural language.
+   * Synthesise Trusted Conclusion in `answer_language` (user's UI language).
+   * Cache per-language translations of the conclusion for Smart Reuse.
+- Smart Reuse: semantic cache lookup BEFORE any AI call. `SMART_REUSE_THRESHOLD` env-tunable.
 - API keys read from env only. Provider activation via ENABLE_X flags.
-- Three-tier plan architecture: FREE, PREMIUM, BYOK. FREE active; PREMIUM/BYOK ready.
-- Per-user plan resolution via `X-User-Id` header; anonymous callers keep MVP behaviour.
-- Fail-closed admin surface for plan management (no frontend UI).
+- Three-tier plan architecture: FREE (active), PREMIUM (Claude ready), BYOK (encrypted key store ready).
+- Per-user plan resolution via `X-User-Id` header + rate limit; anonymous keeps MVP behaviour.
+- Admin surface (`X-Admin-Token`) fail-closed.
 
 ## What's Implemented (Feb 2026)
+### Core AI comparison
 - [x] Provider registry with 5 slots + status labels.
-- [x] Claude wired — flip `ENABLE_CLAUDE=true` + `ANTHROPIC_API_KEY` to activate.
-- [x] Compare endpoint 503s if 0 live providers.
+- [x] Claude wired (`ENABLE_CLAUDE=true` + `ANTHROPIC_API_KEY` activates).
+- [x] Compare endpoint 503s if 0 live providers; 429 on rate-limit.
 - [x] `/api/providers`, `/api/providers/specs`, `/api/plans`, `/api/me`, `/api/admin/users/{id}/plan`.
-- [x] Home + Results UI: LIVE / COMING SOON / PREMIUM · COMING SOON badges.
-- [x] i18n locales (en/it/es/fr/de/pt) with persistent selector.
-- [x] Smart Reuse: `SMART_REUSE_THRESHOLD` env-tunable, multilingual conclusion cache.
-- [x] Fallback chain: Gemini → OpenAI rescue → hard error.
-- [x] Savings payload scales with live provider count.
-- [x] Plans/entitlements module.
-- [x] Encrypted user-key store (Fernet), never-log-key discipline. BYOK backend-only.
-- [x] Identity layer (`auth.py`): `X-User-Id` header → users collection upsert; anonymous → FREE.
-- [x] Admin surface: fail-closed on unset `ADMIN_TOKEN`; 400 on invalid plan/user_id.
-- [x] Per-user daily compare rate limit via `usage_events` collection (atomic $inc + ReturnDocument.AFTER).
+### Multilingual pipeline (fixed this iteration)
+- [x] `providers/synthesizer.py` — writes Trusted Conclusion in `answer_language`.
+- [x] `QueryCreate.answer_language` persisted on the query record.
+- [x] `CompareResponse` returns `trusted_conclusion`, `answer_language`, `synthesis_model`, `synthesis_latency_ms`, `synthesis_cost_usd`.
+- [x] `GET /api/conclusions/{id}?lang=X` — translates + caches on read, powers Smart Reuse in target lang.
+- [x] `conclusions.translations[lang]` sub-document for per-language cache.
+- [x] Legacy conclusion rows without `trusted_conclusion` synthesise on-demand.
+- [x] Home + Results + Reuse pages fully localised (no hardcoded English strings on user-visible chrome).
+- [x] Removed self-match bug: `create_query` no longer seeds `conclusions`; only compare_query does.
+### Plans + identity
+- [x] `providers/plans.py`, `providers/key_source.py`, `services/user_keys.py` (Fernet, refuses without key).
+- [x] `auth.py`: identity, admin guard, per-user daily rate limiter (atomic `$inc` + `ReturnDocument.AFTER`).
 
 ## Testing Coverage
-- iteration_1.json — MVP scaffolding + reuse system.
+- iteration_1.json — MVP scaffolding + reuse.
 - iteration_2.json — Provider architecture + multilingual: 100% pass.
-- iteration_3.json — Claude wiring + plans + SMART_REUSE_THRESHOLD + BYOK abstraction: 16/16.
+- iteration_3.json — Claude + plans + BYOK: 16/16.
 - iteration_4.json — Identity/auth wiring: 14/14.
+- iteration_5.json — Multilingual synthesis + i18n coverage: 11/11 backend + ~95% frontend (2 remaining strings fixed post-report).
 
 ## Backlog / Next
-### P1 (contest-safe additions)
-- Ship the current stack for the contest — MVP is stable end-to-end.
-
-### P2 (Premium launch)
-- Real auth (JWT or OAuth) — swap `get_identity` implementation only, all routes stay stable.
-- Priority scheduling queue for Premium users (has `priority` int already in entitlements).
-- Three-model consensus tuning (GPT + Gemini + Claude) — weighting logic.
-- Premium Waitlist CTA on Claude chip (roadmap — deferred per user request).
-- Marketing plan cards driven by `/api/plans` (deferred per user request).
-
-### P3 (BYOK launch)
-- User settings UI to add/rotate/delete provider keys (service methods `set_user_key`/`delete_user_key` exist).
-- Generate + install `USER_KEY_ENCRYPTION_KEY` (Fernet).
-- One-time purchase billing (Stripe integration).
-- Frontend "Powered by your key" badge on cards using a BYOK key.
-
-### P4 (polish)
-- Raise Jaccard reuse threshold via `SMART_REUSE_THRESHOLD=0.65` after A/B test.
-- Community-voted Trusted Conclusions.
-- Debate replay export.
+- P2: real auth (JWT/OAuth) — swap `get_identity` implementation, all routes stay stable.
+- P2: Priority scheduling queue for Premium users.
+- P2: Three-model consensus weighting (GPT + Gemini + Claude) — post-Premium.
+- P3: BYOK: generate + install `USER_KEY_ENCRYPTION_KEY`; add "Connect your keys" settings UI (service methods ready).
+- P4: Optional per-model response translation on Smart Reuse read (currently only Trusted Conclusion is translated; panellist responses show original language).
+- P4: Split `server.py` (currently ~875 lines) into `routers/queries.py`, `routers/conclusions.py`, `routers/identity.py`.

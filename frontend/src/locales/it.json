@@ -111,6 +111,18 @@
       "unique": "Intuizioni Uniche",
       "uniqueWhy": "Esplorativo"
     },
+    "reusedExplainer": "Questa Conclusione Affidabile è stata servita istantaneamente dalla cache di consenso di Referee. Non è stato eseguito alcun nuovo confronto AI.",
+    "updatedExplainer": "Avevi una conclusione precedente corrispondente, ma hai chiesto a Referee di aggiornarla con un nuovo confronto AI. La cache è stata aggiornata.",
+    "previousQuestion": "Domanda precedente",
+    "matchAgeStrip": "% corrispondenza · {days}g fa",
+    "hideBreakdown": "Nascondi analisi",
+    "showBreakdown": "Mostra argomenti, punti di forza e debolezze",
+    "topic": {
+      "stable": "STABILE",
+      "technical": "TECNICO",
+      "news": "NOTIZIE",
+      "sensitive": "SENSIBILE"
+    },
     "addKeys": "Aggiungi altre chiavi provider in"
   },
   "badge": {

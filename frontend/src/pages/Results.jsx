@@ -660,19 +660,17 @@ function ReuseBadgeBanner({ mode, match, topic, reason }) {
           <div className="text-[13.5px] font-medium text-white">{label}</div>
           {match && (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-mono text-white/70">
-              {match.similarity}% match · {match.age_days}d old
+              {match.similarity}{t("results.matchAgeStrip", { days: match.age_days })}
             </span>
           )}
           {topic && (
-            <span className="text-[11px] uppercase tracking-[0.2em] text-white/40 font-mono">{topic}</span>
+            <span className="text-[11px] uppercase tracking-[0.2em] text-white/40 font-mono" data-testid="reuse-topic-badge">{t(`results.topic.${topic}`) === `results.topic.${topic}` ? topic : t(`results.topic.${topic}`)}</span>
           )}
         </div>
         <div className="mt-1 text-[12.5px] text-white/60 leading-relaxed">
-          {isReused
-            ? "This Trusted Conclusion was served instantly from Referee's consensus cache. No new AI comparison was run."
-            : "You had a matching prior conclusion, but you asked Referee to refresh with a new AI comparison. The cache has been updated."}
+          {isReused ? t("results.reusedExplainer") : t("results.updatedExplainer")}
           {match && (
-            <span className="text-white/40"> · Previous question: <span className="italic text-white/60">“{match.prompt}”</span></span>
+            <span className="text-white/40"> · {t("results.previousQuestion")}: <span className="italic text-white/60">“{match.prompt}”</span></span>
           )}
         </div>
       </div>
@@ -809,7 +807,7 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
       >
         <span className="flex items-center gap-2">
           <ScatterChart className="w-3.5 h-3.5" />
-          {open ? "Hide breakdown" : "Show arguments, strengths & weaknesses"}
+          {open ? t("results.hideBreakdown") : t("results.showBreakdown")}
         </span>
         <ChevronDown className={"w-4 h-4 transition-transform " + (open ? "rotate-180" : "")} />
       </button>

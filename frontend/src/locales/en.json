@@ -116,6 +116,18 @@
       "unique": "Unique Insights",
       "uniqueWhy": "Exploratory"
     },
+    "reusedExplainer": "This Trusted Conclusion was served instantly from Referee's consensus cache. No new AI comparison was run.",
+    "updatedExplainer": "You had a matching prior conclusion, but you asked Referee to refresh with a new AI comparison. The cache has been updated.",
+    "previousQuestion": "Previous question",
+    "matchAgeStrip": "% match · {days}d old",
+    "hideBreakdown": "Hide breakdown",
+    "showBreakdown": "Show arguments, strengths & weaknesses",
+    "topic": {
+      "stable": "STABLE",
+      "technical": "TECHNICAL",
+      "news": "NEWS",
+      "sensitive": "SENSITIVE"
+    },
     "addKeys": "Add more provider keys in"
   },
   "badge": {
