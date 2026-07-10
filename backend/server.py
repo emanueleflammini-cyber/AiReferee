@@ -82,8 +82,7 @@ SIM_THRESHOLD = 0.55
 # Assumed savings per avoided comparison (approximate real cost of 4 model calls today).
 ASSUMED_SAVED_COST_USD = float(os.environ.get("REUSE_SAVED_COST", "0.00030"))
 ASSUMED_SAVED_LATENCY_MS = int(os.environ.get("REUSE_SAVED_LATENCY_MS", "8000"))
-ASSUMED_SAVED_API_CALLS = 4
-ASSUMED_SAVED_TOKENS = 400
+ASSUMED_SAVED_TOKENS_PER_CALL = 200
 
 
 def normalize_prompt(p: str) -> str:  # kept for backward-compat
@@ -359,10 +358,12 @@ async def match_query(req: MatchRequest):
         "answer_language": target_lang,
         "needs_translation": needs_translation,
     }
+    live_count = len([p for p in all_provider_specs() if p.get("live")])
+    api_calls_avoided = max(live_count, 1)
     savings = {
-        "api_calls_avoided": ASSUMED_SAVED_API_CALLS,
-        "tokens_avoided": ASSUMED_SAVED_TOKENS,
-        "cost_saved_usd": round(ASSUMED_SAVED_COST_USD, 6),
+        "api_calls_avoided": api_calls_avoided,
+        "tokens_avoided": api_calls_avoided * ASSUMED_SAVED_TOKENS_PER_CALL,
+        "cost_saved_usd": round(ASSUMED_SAVED_COST_USD * (api_calls_avoided / 2), 6),
         "response_time_saved_ms": ASSUMED_SAVED_LATENCY_MS,
     }
     return MatchResponse(

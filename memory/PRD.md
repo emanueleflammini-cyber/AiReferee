@@ -1,68 +1,47 @@
-# AI Referee — PRD
+# AI Referee – Product Requirements & Session Log
 
 ## Original Problem Statement
-Build **AI Referee** — the first **AI Consensus Platform**. Not another chatbot. Instead of trusting a single AI, Referee sends a question to multiple models, analyses where they agree/disagree, and generates one transparent Trusted Conclusion. Never claims absolute truth — supports better-informed decisions via transparent consensus.
+Build AI Referee: a multi-model AI consensus platform that compares answers from 
+multiple AI models and produces a single "Trusted Conclusion" based on agreement, 
+factual consistency, reasoning quality and confidence.
 
-## User Positioning
-- Hero: "One Question. Multiple AI Minds. One Trusted Conclusion."
-- Pitch: "The first AI Consensus Platform that combines the best reasoning from multiple AI models into one transparent answer."
-- Aesthetic: Apple / Linear / OpenAI / Perplexity. White / dark navy / electric blue. Glassmorphism, soft blue glow, smooth motion.
+## Core Requirements (static)
+- Two ACTIVE providers today: **OpenAI + Google Gemini** (free tier).
+- Three visible-but-disabled slots: **Grok** (Coming Soon), **Mistral** (Coming Soon), 
+  **Claude ★ Premium** (Coming Soon).
+- Backend must NEVER call disabled providers. No mocks masquerading as live answers.
+- Multilingual UI (en/it/es/fr/de/pt) with persistent user choice.
+- Smart Reuse: semantic cache lookup BEFORE any AI call; translate final answer only.
+- API keys read from env only. Provider activation via ENABLE_X flags.
 
-## Architecture
-- **Frontend**: React 19, React Router 7, TailwindCSS, shadcn/ui, framer-motion, sonner, lucide-react.
-- **Backend**: FastAPI + Motor (MongoDB), `/api` prefix.
-- **State**: `QueryProvider` context (prompt, goal, detail, audience, format, strategy).
+## What's Implemented (Feb 2026)
+- [x] Provider registry with 5 slots + status labels (live / coming_soon / premium_coming_soon).
+- [x] `selected_providers()` returns only live providers; compare endpoint 503s if 0 live.
+- [x] `/api/providers` & `/api/providers/specs` expose full slot metadata to the UI.
+- [x] Home Supported-Models grid renders LIVE / COMING SOON / PREMIUM · COMING SOON badges.
+- [x] Results page renders 5 cards (2 live + 3 Coming Soon placeholders) with premium star for Claude.
+- [x] i18n locale system with per-language JSON + persistent language selector.
+- [x] Settings page uses `useI18n()` for all preference cards + hints.
+- [x] Smart Reuse cache with semantic embeddings; multilingual conclusion translation.
+- [x] Fallback chain: Gemini → OpenAI rescue → hard error (no fake mocks).
+- [x] `savings` payload now scales with live provider count (was hardcoded 4).
 
-## Implemented (2026-02)
-### Homepage `/`
-- Hero: title, subtitle "One Question. / Multiple AI Minds. / One Trusted Conclusion.", pitch line.
-- Ask textarea with autosize + ⌘/Ctrl+Enter shortcut.
-- Filters: Response Goal + Detail Level sliders (with dynamic hint labels), Audience & Format pills.
-- **Conclusion Strategy** section with 5 selectable cards: Maximum Accuracy, Balanced, Creative Thinking, Critical Analysis, Fast Response.
-- **Generate Conclusion** primary CTA (renamed from Compare AIs).
-- **How It Works** — 7-step visual workflow: Question → Multiple AI Models → Consensus Analysis → Evidence Review → Trusted Conclusion → Challenge Conclusion → Updated Conclusion. Numbered 01-07 with chevron connectors.
-- **Supported Models** — 6 branded chips: ChatGPT, Gemini, Claude, Grok, Mistral, DeepSeek + "More models coming soon."
-- Trust strip footer tiles.
+## Testing Coverage
+- iteration_1.json — MVP scaffolding + reuse system.
+- iteration_2.json — 100% pass on provider architecture + multilingual + no leakage.
 
-### Results `/`
-- Phased loading experience:
-  1. `models` phase — each of 4 models (ChatGPT, Claude, Gemini, Grok) staggers from **Thinking…** → **Complete**.
-  2. `analysis` phase — 7 Consensus Analysis messages tick off ("Comparing answers…" through "Preparing final conclusion…").
-  3. `reveal` phase.
-- Three top meters: Confidence, Consensus Level, Trust.
-- 4 model cards with brand-color initials, latency & token stats.
-- Three lists: Key Agreements, Key Disagreements, Remaining Uncertainty.
-- **Trusted Conclusion** premium card (renamed from Super Answer) with animated Confidence + Consensus Level bars, main body, and a **Why this Conclusion?** transparency block.
-- **Challenge Conclusion** button that plays a 6-step challenge animation, then reveals a strengthened outcome: **82% → 94%** with findings list. Confidence updates live in the meter and CTA footer.
-- **Model Contribution** horizontal bar chart (34/28/23/15%) with animated fills.
-- Transparency note verbatim.
-- See Full Debate CTA to `/debate`.
+## Backlog / Next
+### P1 (unlocked by architecture)
+- Wire real Claude when Premium billing lands (`ENABLE_CLAUDE=true` + key).
+- Wire Grok (xAI) when API pricing stabilises.
+- Wire Mistral (Large 2) — provider spec ready.
 
-### Debate `/debate`
-- Chat-style thread across the 4 models with brand-colored bubbles + avatars, legend chips, verdict banner.
+### P2 (product polish)
+- Persist Smart Reuse policy per user across devices (currently localStorage only).
+- Raise Jaccard fallback threshold in `providers/embeddings.py` (0.55 → 0.65) to reduce 
+  overly-lax matches across broad technical topics.
+- Add per-provider health page / uptime monitor.
 
-### Backend
-- `POST /api/queries` accepts `{prompt, goal, detail, audience, format, strategy}` — strategy defaults to `balanced`.
-- `GET /api/queries?limit=N`, `GET /api/queries/{id}`.
-- `POST /api/status`, `GET /api/status` for infra checks.
-
-## Testing
-- Iteration 1: backend 100%, frontend 97% (harness-only quirks).
-- Iteration 2: backend 100% (strategy field verified). Frontend verified visually + Playwright selector checks for `challenge-outcome`, `transparency-note`, `contribution-card` all True; every new section (strategy, workflow, supported models, phased loading, trusted-conclusion, model contribution) captured in screenshots.
-
-## Prioritized Backlog
-
-### P0 — Real intelligence
-- Wire actual models (GPT-5.4, Claude Sonnet 4.6, Gemini 3.1 Pro, Grok 3.0) behind `POST /api/queries/{id}/compare` — parallel calls, real consensus + confidence, real challenge round.
-- Persist full results (per-model text, scores, contributions, challenge history, super answer) and hydrate `/results/{id}` and `/debate/{id}` with real data.
-- Auth (Emergent Google OAuth) + per-user query history.
-
-### P1
-- Shareable `/results/{id}` links with auto-generated OG image previews (huge for social growth).
-- Prompt library / saved presets (strategy + filter bundles).
-- Real streaming for the "Thinking…" phase — swap the fake timers for token stream indicators.
-
-### P2
-- Team workspaces + collaborative challenges (comment on findings).
-- Export Trusted Conclusion as PDF / Markdown / Notion block.
-- Stripe billing — free (2 models) vs Pro (all 6, higher rate limits, challenge unlimited).
+### P3
+- Community-voted Trusted Conclusions.
+- Debate replay export (share link).
