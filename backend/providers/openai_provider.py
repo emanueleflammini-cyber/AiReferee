@@ -22,7 +22,7 @@ SYSTEM_FALLBACK = (
     "Keep the answer self-contained — the panel synthesises multiple answers afterwards."
 )
 
-DEFAULT_MODEL = "gpt-5.5-mini"
+DEFAULT_MODEL = "gpt-5.4-mini"
 
 
 class OpenAIProvider(Provider):

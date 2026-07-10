@@ -35,8 +35,23 @@ PRICING: dict[str, dict[str, float]] = {
 
 
 def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Return USD estimate for a single call. Zero for unknown models."""
+    """Return USD estimate for a single call. Zero for unknown models.
+
+    OpenAI (and other vendors) often echo back a versioned model string like
+    `gpt-5.4-mini-2026-03-17`. We first try an exact match, then fall back to
+    matching by longest known prefix so the versioned form still gets priced.
+    """
+    if not model:
+        return 0.0
     p = PRICING.get(model)
+    if not p:
+        # Longest-prefix match — pick the most specific pricing entry that starts with `model`.
+        candidate = ""
+        for key in PRICING:
+            if model.startswith(key) and len(key) > len(candidate):
+                candidate = key
+        if candidate:
+            p = PRICING[candidate]
     if not p:
         return 0.0
     return round(

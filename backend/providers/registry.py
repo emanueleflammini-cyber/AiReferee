@@ -26,7 +26,7 @@ def _openai_or_mock() -> Provider:
     return MockProvider(
         id="model-a",
         label="ChatGPT",
-        codename="GPT-5.5 mini",
+        codename="GPT-5.4 mini",
         provider_name="OpenAI",
         template_key="openai",
         env_var="OPENAI_API_KEY",
