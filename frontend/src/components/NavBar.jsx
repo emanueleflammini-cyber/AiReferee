@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { Logo } from "@/components/Logo";
 import { LanguageSelector } from "@/components/LanguageSelector";
+import { InstallButton } from "@/components/InstallButton";
 import { Settings as SettingsIcon } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
@@ -24,6 +25,7 @@ export function NavBar({ variant = "home" }) {
             </Link>
           )}
           <LanguageSelector />
+          <InstallButton />
           <Link
             to="/settings" state={{ from: loc.pathname }}
             data-testid="nav-settings"

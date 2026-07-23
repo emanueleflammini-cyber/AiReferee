@@ -175,5 +175,11 @@
   "common": {
     "loading": "Loading...", "error": "Error", "retry": "Retry",
     "close": "Close", "save": "Save", "cancel": "Cancel", "active": "Active"
+  },
+  "install": {
+    "button": "Install AI Referee",
+    "iosTitle": "Add to Home Screen",
+    "iosBody": "Tap Share, then Add to Home Screen.",
+    "dismiss": "Close"
   }
 }

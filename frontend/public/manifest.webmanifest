@@ -1,0 +1,14 @@
+{
+  "name": "AI Referee — AI Consensus Platform",
+  "short_name": "AI Referee",
+  "description": "Compare answers from multiple AI models and get one Trusted Conclusion.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#060A14",
+  "theme_color": "#060A14",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "48x48 32x32 16x16", "type": "image/x-icon" }
+  ]
+}
