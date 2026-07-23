@@ -149,6 +149,12 @@
     "matchAgeStrip": "% corrispondenza · {days}g fa",
     "hideBreakdown": "Nascondi analisi",
     "showBreakdown": "Mostra argomenti, punti di forza e debolezze",
+    "shareVerdict": "Condividi verdetto",
+    "shareVerdictLabel": "Conclusione Affidabile",
+    "shareQuestionLabel": "Domanda",
+    "shareShared": "Verdetto condiviso",
+    "shareCopied": "Verdetto copiato",
+    "shareUnavailable": "La condivisione non è disponibile in questo browser.",
     "topic": {
       "stable": "STABILE",
       "technical": "TECNICO",

@@ -154,6 +154,12 @@
     "matchAgeStrip": "% match · {days}d old",
     "hideBreakdown": "Hide breakdown",
     "showBreakdown": "Show arguments, strengths & weaknesses",
+    "shareVerdict": "Share verdict",
+    "shareVerdictLabel": "Trusted Conclusion",
+    "shareQuestionLabel": "Question",
+    "shareShared": "Verdict shared",
+    "shareCopied": "Verdict copied",
+    "shareUnavailable": "Sharing is not available on this browser.",
     "topic": {
       "stable": "STABLE",
       "technical": "TECHNICAL",

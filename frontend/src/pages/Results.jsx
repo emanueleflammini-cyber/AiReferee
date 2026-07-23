@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
+import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft,
@@ -27,6 +28,7 @@ import {
   Recycle,
   Zap,
   RefreshCcw,
+  Share2,
 } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
 import { useQueryState } from "@/lib/QueryContext";
@@ -80,6 +82,7 @@ export default function Results() {
   const [totalCost, setTotalCost] = useState(0);
   const [trustedConclusion, setTrustedConclusion] = useState("");
   const [conclusionLoading, setConclusionLoading] = useState(mode !== "reused");
+  const [sharePrompt, setSharePrompt] = useState(reuseMatch?.prompt || routeState.prompt || "");
 
   // Kick off the real comparison on mount (unless we're reusing a cached one)
   useEffect(() => {
@@ -92,6 +95,7 @@ export default function Results() {
       setLiveCount(r.data?.live_count || 0);
       setTotalCost(r.data?.total_cost_usd || 0);
       setTrustedConclusion(r.data?.trusted_conclusion || "");
+      if (r.data?.prompt) setSharePrompt(r.data.prompt);
       setConclusionLoading(false);
     }).catch((e) => {
       console.warn("Compare failed", e);
@@ -285,6 +289,7 @@ export default function Results() {
             trustedConclusion={trustedConclusion}
             conclusionLoading={conclusionLoading}
             answerLanguage={answerLanguage}
+            prompt={sharePrompt}
             onChallenge={() => {
               if (challengePhase === "idle") {
                 setChallengeStep(0);
@@ -300,7 +305,7 @@ export default function Results() {
   );
 }
 
-function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, liveResponses, liveCount, totalCost, trustedConclusion, conclusionLoading, answerLanguage }) {
+function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, liveResponses, liveCount, totalCost, trustedConclusion, conclusionLoading, answerLanguage, prompt }) {
   const modelById = useMemo(() => Object.fromEntries(MODELS.map((m) => [m.id, m])), []);
   const { t } = useI18n();
   const liveById = useMemo(() => {
@@ -397,14 +402,49 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
         <div className="absolute inset-0 super-glow" />
         <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-[#00E5FF]/60 to-transparent" />
         <div className="relative p-8 md:p-10">
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-9 h-9 rounded-xl bg-[#00E5FF]/10 border border-[#00E5FF]/30 flex items-center justify-center">
+          <div className="flex items-start gap-3 mb-5">
+            <div className="w-9 h-9 rounded-xl bg-[#00E5FF]/10 border border-[#00E5FF]/30 flex items-center justify-center flex-shrink-0">
               <Sparkles className="w-4 h-4 text-[#00E5FF]" />
             </div>
-            <div>
+            <div className="flex-1 min-w-0">
               <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80">{t("results.refereeVerdict")}</div>
               <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-white">{t("results.trustedConclusion")}</h2>
             </div>
+            <button
+              type="button"
+              onClick={async () => {
+                const text = `AI Referee\n\n${prompt ? `${t("results.shareQuestionLabel")}: ${prompt}\n\n` : ""}${t("results.shareVerdictLabel")}: ${trustedConclusion || ""}\n\n${typeof window !== "undefined" ? window.location.href : ""}`.trim();
+                const shareData = { title: "AI Referee", text, url: typeof window !== "undefined" ? window.location.href : "" };
+                try {
+                  if (typeof navigator !== "undefined" && navigator.share) {
+                    await navigator.share(shareData);
+                    toast.success(t("results.shareShared"));
+                  } else if (typeof navigator !== "undefined" && navigator.clipboard) {
+                    await navigator.clipboard.writeText(text);
+                    toast.success(t("results.shareCopied"));
+                  } else {
+                    toast.error(t("results.shareUnavailable"));
+                  }
+                } catch (err) {
+                  if (err && err.name === "AbortError") return; // user cancelled
+                  try {
+                    if (typeof navigator !== "undefined" && navigator.clipboard) {
+                      await navigator.clipboard.writeText(text);
+                      toast.success(t("results.shareCopied"));
+                      return;
+                    }
+                  } catch { /* ignore */ }
+                  toast.error(t("results.shareUnavailable"));
+                }
+              }}
+              disabled={conclusionLoading || !trustedConclusion}
+              data-testid="share-verdict-button"
+              aria-label={t("results.shareVerdict")}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#00E5FF]/40 bg-[#00E5FF]/[0.08] px-3 py-1.5 text-[12px] text-[#00E5FF] hover:bg-[#00E5FF]/[0.14] transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t("results.shareVerdict")}</span>
+            </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
