@@ -16,7 +16,14 @@ from datetime import datetime, timezone
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from providers import selected_providers, provider_status, all_provider_specs, fallback_for  # noqa: E402
+from providers import (  # noqa: E402
+    ProviderResult,
+    provider_status,
+    all_provider_specs,
+    core_provider_specs,
+    providers_for_execution,
+    provider_unavailable_reason,
+)
 from providers.plans import PLAN_ENTITLEMENTS, Plan  # noqa: E402
 from providers.embeddings import get_or_create_embedding, cosine, EMBED_MODEL  # noqa: E402
 from providers.language import detect_language, normalize_prompt as lang_normalize, SUPPORTED as SUPPORTED_LANGS  # noqa: E402
@@ -270,7 +277,11 @@ async def match_query(req: MatchRequest):
     if query_vec is not None:
         # Linear scan against recent public conclusions with an embedding.
         cursor = db.conclusions.find(
-            {"embedding": {"$ne": None}, "is_public": True},
+            {
+                "embedding": {"$ne": None},
+                "is_public": True,
+                "execution_mode": "LIVE",
+            },
             {"_id": 0},
         ).sort("created_at", -1).limit(300)
         async for doc in cursor:
@@ -283,7 +294,10 @@ async def match_query(req: MatchRequest):
     # Fallback to Jaccard on tokens if embeddings unavailable or scored low
     if best_score < SIM_STRONG_MATCH:
         toks = tokens_of(prompt)
-        async for doc in db.conclusions.find({"is_public": True}, {"_id": 0}).sort("created_at", -1).limit(300):
+        async for doc in db.conclusions.find(
+            {"is_public": True, "execution_mode": "LIVE"},
+            {"_id": 0},
+        ).sort("created_at", -1).limit(300):
             prev_toks = set(doc.get("prompt_tokens", []))
             score = jaccard(toks, prev_toks)
             if score > best_score and score >= SIM_THRESHOLD:
@@ -630,13 +644,21 @@ class ModelResponse(BaseModel):
     model_used: str = ""
     is_mock: bool
     error: Optional[str] = None
+    provider_status: str
+    execution_mode: str
+    provider_error: Optional[str] = None
+    provider_latency: int
+    provider_name: str
 
 
 class CompareResponse(BaseModel):
     query_id: str
     prompt: str
     responses: List[ModelResponse]
+    execution_mode: str
     live_count: int
+    failed_count: int = 0
+    mock_count: int = 0
     total_cost_usd: float = 0.0
     total_latency_ms: int = 0
     # NEW — synthesised Trusted Conclusion, always in `answer_language`.
@@ -668,49 +690,98 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
     # Enforce per-user daily limit (anonymous callers are exempt).
     await enforce_daily_compare_limit(identity)
 
-    # Anonymous callers keep the current MVP behaviour (only-live-providers).
-    # Identified callers get plan-aware selection (Premium unlocks Claude, BYOK
-    # can substitute user keys). Both paths NEVER call disabled providers.
     if identity.is_anonymous:
-        providers = selected_providers()
+        execution_mode, providers = providers_for_execution()
     else:
-        providers = selected_providers(user_id=identity.user_id, plan=identity.plan)
-    if not providers:
-        raise HTTPException(
-            status_code=503,
-            detail="No live AI providers are enabled. Enable ENABLE_OPENAI or ENABLE_GEMINI in backend/.env.",
+        execution_mode, providers = providers_for_execution(
+            user_id=identity.user_id,
+            plan=identity.plan,
         )
-    tasks = [
-        p.timed_generate(prompt, system, fallback_text_fn=fallback_for(p))
-        for p in providers
+
+    # Phase 1 intentionally exposes only the two current production slots.
+    # Missing/disabled slots become FAILED records instead of disappearing.
+    expected_specs = core_provider_specs()
+    providers_by_id = {
+        provider.id: provider
+        for provider in providers
+        if provider.id in {spec["id"] for spec in expected_specs}
+    }
+    callable_providers = [
+        providers_by_id[spec["id"]]
+        for spec in expected_specs
+        if spec["id"] in providers_by_id
     ]
-    results = await asyncio.gather(*tasks, return_exceptions=False)
+    generated = await asyncio.gather(
+        *(provider.timed_generate(prompt, system) for provider in callable_providers),
+        return_exceptions=False,
+    )
+    generated_by_id = {
+        provider.id: result
+        for provider, result in zip(callable_providers, generated)
+    }
 
     responses: List[ModelResponse] = []
     live_count = 0
+    failed_count = 0
+    mock_count = 0
     total_cost = 0.0
     total_latency = 0
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    for p, r in zip(providers, results):
-        if not r.is_mock:
+    for spec in expected_specs:
+        provider = providers_by_id.get(spec["id"])
+        result = generated_by_id.get(spec["id"])
+        if result is None:
+            result = ProviderResult(
+                text="",
+                provider_status="FAILED",
+                error=provider_unavailable_reason(spec["id"]),
+            )
+
+        # Defence in depth: even a misconfigured provider cannot leak mock
+        # content into a LIVE execution.
+        if execution_mode == "LIVE" and (
+            result.provider_status == "MOCK" or result.is_mock
+        ):
+            result = ProviderResult(
+                text="",
+                latency_ms=result.latency_ms,
+                provider_status="FAILED",
+                error="Mock content was blocked in LIVE execution mode.",
+            )
+
+        status = result.provider_status
+        if status == "LIVE":
             live_count += 1
-        total_cost += r.cost_usd
-        total_latency += r.latency_ms
+        elif status == "MOCK":
+            mock_count += 1
+        else:
+            status = "FAILED"
+            failed_count += 1
+            result.text = ""
+            result.is_mock = False
+
+        total_cost += result.cost_usd
+        total_latency += result.latency_ms
         responses.append(ModelResponse(
-            id=p.id,
-            label=p.label,
-            codename=r.model_used or p.codename,
-            provider=p.provider_name,
-            text=r.text,
-            latency_ms=r.latency_ms,
-            input_tokens=r.input_tokens,
-            output_tokens=r.output_tokens,
-            total_tokens=r.total_tokens,
-            cost_usd=r.cost_usd,
-            model_used=r.model_used,
-            is_mock=r.is_mock,
-            error=r.error,
+            id=spec["id"],
+            label=spec["label"],
+            codename=result.model_used or spec["codename"],
+            provider=spec["provider"],
+            text=result.text,
+            latency_ms=result.latency_ms,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            total_tokens=result.total_tokens,
+            cost_usd=result.cost_usd,
+            model_used=result.model_used,
+            is_mock=status == "MOCK",
+            error=result.error,
+            provider_status=status,
+            execution_mode=execution_mode,
+            provider_error=result.error,
+            provider_latency=result.latency_ms,
+            provider_name=spec["provider"],
         ))
 
         # Log EVERY provider invocation to Mongo — Task #7
@@ -720,19 +791,21 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                 "query_id": query_id,
                 "prompt": prompt,
                 "prompt_length": len(prompt),
-                "response_length": len(r.text or ""),
-                "provider_id": p.id,
-                "provider_name": p.provider_name,
-                "provider_label": p.label,
-                "model_requested": p.codename,
-                "model_used": r.model_used,
-                "input_tokens": r.input_tokens,
-                "output_tokens": r.output_tokens,
-                "total_tokens": r.total_tokens,
-                "latency_ms": r.latency_ms,
-                "cost_usd": r.cost_usd,
-                "is_mock": r.is_mock,
-                "error": r.error,
+                "response_length": len(result.text or ""),
+                "provider_id": spec["id"],
+                "provider_name": spec["provider"],
+                "provider_label": spec["label"],
+                "model_requested": spec["codename"],
+                "model_used": result.model_used,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "total_tokens": result.total_tokens,
+                "latency_ms": result.latency_ms,
+                "cost_usd": result.cost_usd,
+                "is_mock": status == "MOCK",
+                "provider_status": status,
+                "execution_mode": execution_mode,
+                "error": result.error,
                 "created_at": now_iso,
             })
         except Exception as e:  # noqa: BLE001
@@ -757,7 +830,8 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         if synth.available:
             answers_for_synth = [
                 {"id": r.id, "label": r.label, "provider": r.provider, "text": r.text}
-                for r in responses if not r.error and (r.text or "").strip()
+                for r in responses
+                if r.provider_status in ("LIVE", "MOCK") and (r.text or "").strip()
             ]
             if answers_for_synth:
                 s = await synth.synthesize(prompt, answers_for_synth, target_lang, audience, fmt)
@@ -786,6 +860,7 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
             {
                 "$set": {
                     "responses": [r.model_dump() for r in responses],
+                    "execution_mode": execution_mode,
                     "live_count": live_count,
                     "total_cost_usd": round(total_cost, 6),
                     "generated_at": now_iso,
@@ -793,6 +868,11 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                     "trusted_conclusion": synth_text,
                     "trusted_conclusion_language": target_lang,
                     "synthesis_model": synth_model_used,
+                    "is_public": (
+                        execution_mode == "LIVE"
+                        and bool(synth_text)
+                        and q_topic in ("technical", "stable")
+                    ),
                     # Multilingual reuse cache: keyed by language so subsequent
                     # readers in the same language pay no translation cost.
                     f"translations.{target_lang}": {
@@ -813,7 +893,6 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                     "confidence": 82,
                     # Cacheable topics only. `is_public` gates whether Smart Reuse
                     # searches this row on subsequent matches.
-                    "is_public": q_topic in ("technical", "stable"),
                     "is_time_sensitive": q_topic == "news",
                     "category": "stable" if q_topic == "stable" else ("technical" if q_topic == "technical" else q_topic),
                     "embedding": q_vec,
@@ -832,7 +911,10 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         query_id=query_id,
         prompt=prompt,
         responses=responses,
+        execution_mode=execution_mode,
         live_count=live_count,
+        failed_count=failed_count,
+        mock_count=mock_count,
         total_cost_usd=round(total_cost + synth_cost_usd, 6),
         total_latency_ms=total_latency + synth_latency_ms,
         trusted_conclusion=synth_text,

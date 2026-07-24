@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Sparkles } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
@@ -6,6 +6,8 @@ import { MODELS, MOCK_DEBATE } from "@/lib/mockData";
 
 export default function Debate() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isDemo = location.state?.executionMode === "DEMO";
   const modelMap = Object.fromEntries(MODELS.map((m) => [m.id, m]));
 
   return (
@@ -24,18 +26,29 @@ export default function Debate() {
 
         <div className="mt-6 flex items-start justify-between gap-6 flex-wrap">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80 mb-2">Full Debate</div>
+            <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80 mb-2">{isDemo ? "Demo Debate" : "Debate"}</div>
             <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">
-              How the referee reached consensus
+              {isDemo ? "How the referee reached consensus" : "No verified transcript is available"}
             </h1>
             <p className="mt-2 text-white/50 text-[14px] max-w-2xl">
-              A live transcript of the four models negotiating structure, framing and nuance before the Super Answer was synthesized.
+              {isDemo
+                ? "A simulated transcript used only to demonstrate the debate experience."
+                : "LIVE execution shows only data returned by the providers."}
             </p>
           </div>
         </div>
 
-        {/* Model legend */}
-        <div className="mt-8 flex flex-wrap gap-2">
+        {!isDemo && (
+          <div className="mt-10 rounded-2xl border border-[#F43F5E]/30 bg-[#F43F5E]/[0.05] p-6" data-testid="debate-unavailable">
+            <div className="font-medium text-white">Live debate transcript unavailable</div>
+            <p className="mt-2 text-[13.5px] leading-relaxed text-white/55">
+              AI Referee does not fabricate a debate transcript during LIVE execution.
+            </p>
+          </div>
+        )}
+
+        {/* Demo-only model legend */}
+        {isDemo && <div className="mt-8 flex flex-wrap gap-2">
           {MODELS.map((m) => (
             <div
               key={m.id}
@@ -47,10 +60,10 @@ export default function Debate() {
               <span className="text-white/40">· {m.codename}</span>
             </div>
           ))}
-        </div>
+        </div>}
 
         {/* Chat */}
-        <div className="mt-10 space-y-5" data-testid="debate-thread">
+        {isDemo && <div className="mt-10 space-y-5" data-testid="debate-thread">
           {MOCK_DEBATE.map((msg, i) => {
             const m = modelMap[msg.model];
             const align = i % 2 === 0 ? "left" : "right";
@@ -91,10 +104,10 @@ export default function Debate() {
               </motion.div>
             );
           })}
-        </div>
+        </div>}
 
         {/* Verdict footer */}
-        <motion.div
+        {isDemo && <motion.div
           initial={{ opacity: 0, y: 16 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
@@ -118,7 +131,7 @@ export default function Debate() {
           >
             View Super Answer
           </button>
-        </motion.div>
+        </motion.div>}
       </main>
     </div>
   );

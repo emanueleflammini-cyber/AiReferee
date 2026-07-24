@@ -34,12 +34,15 @@ import { NavBar } from "@/components/NavBar";
 import { useQueryState } from "@/lib/QueryContext";
 import { useI18n } from "@/lib/i18n";
 import {
+  PROVIDER_STATUS,
+  failedProviderResponses,
+  normalizeProviderResponses,
+} from "@/lib/executionMode";
+import {
   MODELS,
   LIVE_MODELS,
   MODEL_STATUS,
-  MOCK_RESPONSES,
   MOCK_SCORES,
-  MOCK_SUPER_ANSWER,
   MOCK_CONTRIBUTIONS,
   ANALYSIS_STEPS,
   CHALLENGE_STEPS,
@@ -82,27 +85,56 @@ export default function Results() {
   const [totalCost, setTotalCost] = useState(0);
   const [trustedConclusion, setTrustedConclusion] = useState("");
   const [conclusionLoading, setConclusionLoading] = useState(mode !== "reused");
+  const [executionMode, setExecutionMode] = useState("LIVE");
+  const [retryNonce, setRetryNonce] = useState(0);
   const [sharePrompt, setSharePrompt] = useState(reuseMatch?.prompt || routeState.prompt || "");
 
   // Kick off the real comparison on mount (unless we're reusing a cached one)
   useEffect(() => {
-    if (!queryId || mode === "reused") return;
+    if (mode === "reused") return;
     let cancelled = false;
+    setPhase("models");
+    setAnalysisStep(0);
+    setCompletedModels([]);
+    setLiveResponses(null);
+    setTrustedConclusion("");
     setConclusionLoading(true);
+
+    if (!queryId) {
+      const reason = "The comparison request could not be created.";
+      setLiveResponses(failedProviderResponses(LIVE_MODELS, reason));
+      setCompletedModels(LIVE_MODELS.map((model) => model.id));
+      setPhase("analysis");
+      setConclusionLoading(false);
+      return;
+    }
+
     axios.post(`${API}/queries/${queryId}/compare`).then((r) => {
       if (cancelled) return;
-      setLiveResponses(r.data?.responses || []);
-      setLiveCount(r.data?.live_count || 0);
+      const responseExecutionMode = r.data?.execution_mode === "DEMO" ? "DEMO" : "LIVE";
+      const responses = normalizeProviderResponses(r.data?.responses, responseExecutionMode);
+      setExecutionMode(responseExecutionMode);
+      setLiveResponses(responses);
+      setLiveCount(responses.filter((response) => response.provider_status === PROVIDER_STATUS.LIVE).length);
       setTotalCost(r.data?.total_cost_usd || 0);
       setTrustedConclusion(r.data?.trusted_conclusion || "");
       if (r.data?.prompt) setSharePrompt(r.data.prompt);
+      setCompletedModels(responses.map((response) => response.id));
+      setPhase("analysis");
       setConclusionLoading(false);
     }).catch((e) => {
       console.warn("Compare failed", e);
+      const reason = e?.response?.data?.detail || e?.message || "Provider unavailable";
+      const responses = failedProviderResponses(LIVE_MODELS, reason);
+      setExecutionMode("LIVE");
+      setLiveResponses(responses);
+      setLiveCount(0);
+      setCompletedModels(responses.map((response) => response.id));
+      setPhase("analysis");
       setConclusionLoading(false);
     });
     return () => { cancelled = true; };
-  }, [queryId, mode]);
+  }, [queryId, mode, retryNonce]);
 
   // For reused mode, fetch the cached Trusted Conclusion in the current answer language.
   useEffect(() => {
@@ -127,19 +159,6 @@ export default function Results() {
   const [challengePhase, setChallengePhase] = useState("idle");
   const [challengeStep, setChallengeStep] = useState(0);
   const [challengeOutcome, setChallengeOutcome] = useState(null);
-
-  useEffect(() => {
-    if (phase !== "models") return;
-    const timers = LIVE_MODELS.map((m, i) =>
-      setTimeout(() => {
-        setCompletedModels((prev) => (prev.includes(m.id) ? prev : [...prev, m.id]));
-        if (i === LIVE_MODELS.length - 1) {
-          setTimeout(() => setPhase("analysis"), 600);
-        }
-      }, 900 + i * 900),
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [phase]);
 
   useEffect(() => {
     if (phase !== "analysis") return;
@@ -289,7 +308,10 @@ export default function Results() {
             trustedConclusion={trustedConclusion}
             conclusionLoading={conclusionLoading}
             answerLanguage={answerLanguage}
+            executionMode={executionMode}
+            showProviderResults={mode !== "reused"}
             prompt={sharePrompt}
+            onRetry={() => setRetryNonce((value) => value + 1)}
             onChallenge={() => {
               if (challengePhase === "idle") {
                 setChallengeStep(0);
@@ -297,7 +319,7 @@ export default function Results() {
                 setChallengePhase("running");
               }
             }}
-            onSeeDebate={() => navigate("/debate")}
+            onSeeDebate={() => navigate("/debate", { state: { executionMode } })}
           />
         )}
       </main>
@@ -305,18 +327,21 @@ export default function Results() {
   );
 }
 
-function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, liveResponses, liveCount, totalCost, trustedConclusion, conclusionLoading, answerLanguage, prompt }) {
+function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, onRetry, liveResponses, liveCount, totalCost, trustedConclusion, conclusionLoading, answerLanguage, executionMode, showProviderResults, prompt }) {
   const modelById = useMemo(() => Object.fromEntries(MODELS.map((m) => [m.id, m])), []);
   const { t } = useI18n();
   const liveById = useMemo(() => {
     if (!liveResponses) return {};
     return Object.fromEntries(liveResponses.map((r) => [r.id, r]));
   }, [liveResponses]);
+  const failedCount = (liveResponses || []).filter((response) => response.provider_status === PROVIDER_STATUS.FAILED).length;
+  const mockCount = (liveResponses || []).filter((response) => response.provider_status === PROVIDER_STATUS.MOCK).length;
+  const isDemo = executionMode === "DEMO";
 
   return (
     <>
       {/* Scores strip */}
-      <motion.div
+      {isDemo && <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
@@ -325,25 +350,30 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
         <MeterCard label={t("results.confidence")} value={currentConfidence} accent="#00E5FF" testId="score-confidence" icon={Gauge} delta={challengeOutcome ? currentConfidence - MOCK_SCORES.confidence : 0} />
         <MeterCard label={t("results.consensusLevel")} value={MOCK_SCORES.consensus} accent="#10B981" testId="score-consensus" icon={Trophy} />
         <MeterCard label={t("results.trust")} value={MOCK_SCORES.trust} accent="#0066FF" testId="score-trust" icon={ShieldCheck} />
-      </motion.div>
+      </motion.div>}
 
       {/* Live indicator strip */}
       {liveResponses && (
         <div className="mt-6 flex flex-wrap items-center gap-2 text-[12px] text-white/60" data-testid="live-status">
+          {executionMode === "DEMO" && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FBBF24]/40 bg-[#FBBF24]/[0.08] px-2.5 py-0.5 text-[#FBBF24]" data-testid="execution-mode-demo">
+              DEMO
+            </span>
+          )}
           <span className="inline-flex items-center gap-1.5 rounded-full border border-[#10B981]/40 bg-[#10B981]/[0.08] px-2.5 py-0.5 text-[#10B981]">
             <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
             {liveCount} LIVE model{liveCount === 1 ? "" : "s"}
           </span>
-          {liveResponses.some((r) => r.is_mock && !r.error) && (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-[#A78BFA]/40 bg-[#A78BFA]/[0.08] px-2.5 py-0.5 text-[#A78BFA]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#A78BFA]" />
-              {liveResponses.filter((r) => r.is_mock && !r.error).length} MOCKED
+          {mockCount > 0 && executionMode === "DEMO" && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FBBF24]/40 bg-[#FBBF24]/[0.08] px-2.5 py-0.5 text-[#FBBF24]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#FBBF24]" />
+              {mockCount} MOCK
             </span>
           )}
-          {liveResponses.some((r) => r.is_mock && r.error) && (
+          {failedCount > 0 && (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.08] px-2.5 py-0.5 text-[#F43F5E]" data-testid="fallback-summary">
               <span className="w-1.5 h-1.5 rounded-full bg-[#F43F5E]" />
-              {liveResponses.filter((r) => r.is_mock && r.error).length} FALLBACK
+              {failedCount} FAILED
             </span>
           )}
           {typeof totalCost === "number" && totalCost > 0 && (
@@ -356,7 +386,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
       )}
 
       {/* Model cards — now expandable */}
-      <motion.div
+      {showProviderResults && <motion.div
         initial="hidden"
         animate="show"
         variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } } }}
@@ -367,29 +397,34 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
           if (m.status !== MODEL_STATUS.LIVE) {
             return <ComingSoonModelCard key={m.id} model={m} />;
           }
-          const live = liveById[m.id];
-          const responseText = live?.text || MOCK_RESPONSES[m.id];
-          const isMock = live ? live.is_mock : true;
+          const live = liveById[m.id] || {
+            id: m.id,
+            provider_status: PROVIDER_STATUS.FAILED,
+            provider_error: "Provider result unavailable.",
+            text: "",
+          };
           return (
             <ExpandableModelCard
               key={m.id}
               model={m}
               codename={live?.codename || m.codename}
-              response={responseText}
-              details={MODEL_DETAILS[m.id]}
-              contribution={MOCK_CONTRIBUTIONS.find((c) => c.modelId === m.id)?.pct || 0}
-              latencyMs={live?.latency_ms || m.latencyMs}
-              tokens={live?.total_tokens || m.tokens}
+              response={live.text}
+              details={isDemo ? MODEL_DETAILS[m.id] : null}
+              contribution={isDemo ? (MOCK_CONTRIBUTIONS.find((c) => c.modelId === m.id)?.pct || 0) : null}
+              latencyMs={live?.provider_latency ?? live?.latency_ms ?? 0}
+              tokens={live?.total_tokens ?? 0}
               inputTokens={live?.input_tokens}
               outputTokens={live?.output_tokens}
               costUsd={live?.cost_usd}
               modelUsed={live?.model_used}
-              isMock={isMock}
-              error={live?.error}
+              providerStatus={live.provider_status}
+              executionMode={executionMode}
+              error={live.provider_error || live.error}
+              onRetry={onRetry}
             />
           );
         })}
-      </motion.div>
+      </motion.div>}
 
       {/* Trusted Conclusion */}
       <motion.section
@@ -447,10 +482,10 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+          {isDemo && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
             <AnimatedMeter label={t("results.confidenceScore")} value={currentConfidence} accent="#00E5FF" testId="meter-confidence" />
             <AnimatedMeter label={t("results.consensusLevel")} value={MOCK_SCORES.consensus} accent="#10B981" testId="meter-consensus" />
-          </div>
+          </div>}
 
           <div className="text-[15.5px] md:text-[16.5px] leading-[1.75] text-white/85 whitespace-pre-line" data-testid="trusted-conclusion-body" data-answer-language={answerLanguage}>
             {conclusionLoading ? (
@@ -465,7 +500,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
             ))}
           </div>
 
-          <AnimatePresence>
+          {isDemo && <AnimatePresence>
             {challengePhase !== "idle" && (
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
@@ -532,19 +567,21 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
                 ) : null}
               </motion.div>
             )}
-          </AnimatePresence>
+          </AnimatePresence>}
 
           <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-6 border-t border-white/[0.08]">
             <div className="flex flex-wrap items-center gap-3 text-[12px] text-white/50">
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF]" /> {t("results.synthesizedFromLive", { n: LIVE_MODELS.length })}
+                <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF]" /> {t("results.synthesizedFromLive", { n: isDemo ? mockCount : liveCount })}
               </span>
-              <span>·</span>
-              <span>{t("results.confidence")} {currentConfidence}%</span>
-              <span>·</span>
-              <span>{t("results.consensus")} {MOCK_SCORES.consensus}%</span>
+              {isDemo && <>
+                <span>·</span>
+                <span>{t("results.confidence")} {currentConfidence}%</span>
+                <span>·</span>
+                <span>{t("results.consensus")} {MOCK_SCORES.consensus}%</span>
+              </>}
             </div>
-            <button
+            {isDemo && <button
               onClick={onChallenge}
               disabled={challengePhase === "running"}
               data-testid="challenge-conclusion-button"
@@ -552,12 +589,13 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
             >
               <Swords className="w-4 h-4" />
               {challengePhase === "idle" ? t("results.challengeConclusion") : challengePhase === "running" ? t("results.challenging") : t("results.challengeAgain")}
-            </button>
+            </button>}
           </div>
         </div>
       </motion.section>
 
-      {/* Why this conclusion? — 4 tier cards */}
+      {isDemo && <>
+      {/* Why this conclusion? — demo-only analytical cards */}
       <SectionHeader
         className="mt-16"
         eyebrow={t("results.transparencyEyebrow")}
@@ -645,6 +683,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
           })}
         </div>
       </motion.section>
+      </>}
 
       {/* Transparency */}
       <div
@@ -768,25 +807,27 @@ function ComingSoonModelCard({ model: m }) {
   );
 }
 
-function ExpandableModelCard({ model: m, response, details, contribution, codename, latencyMs, tokens, isMock, error, inputTokens, outputTokens, costUsd, modelUsed }) {
+function ExpandableModelCard({ model: m, response, details, contribution, codename, latencyMs, tokens, providerStatus, executionMode, error, inputTokens, outputTokens, costUsd, modelUsed, onRetry }) {
   const [open, setOpen] = useState(false);
   const { t } = useI18n();
   const displayCodename = modelUsed || codename || m.codename;
-  const showLive = isMock === false;
-  const isFallback = isMock === true && !!error;
+  const status = providerStatus || PROVIDER_STATUS.FAILED;
+  const showLive = status === PROVIDER_STATUS.LIVE;
+  const isFailed = status === PROVIDER_STATUS.FAILED;
+  const showMock = status === PROVIDER_STATUS.MOCK && executionMode === "DEMO";
 
   let badge;
   if (showLive) {
     badge = (
-      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#10B981]/40 bg-[#10B981]/[0.1] text-[#10B981] px-1.5 py-0.5" data-testid={`card-${m.id}-live`}>{t("badge.live")}</span>
+      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#10B981]/40 bg-[#10B981]/[0.1] text-[#10B981] px-1.5 py-0.5" data-testid={`card-${m.id}-live`}>LIVE</span>
     );
-  } else if (isFallback) {
+  } else if (isFailed) {
     badge = (
-      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.1] text-[#F43F5E] px-1.5 py-0.5" title={error} data-testid={`card-${m.id}-fallback`}>{t("badge.fallback")}</span>
+      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.1] text-[#F43F5E] px-1.5 py-0.5" title={error} data-testid={`card-${m.id}-failed`}>FAILED</span>
     );
   } else {
     badge = (
-      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#A78BFA]/40 bg-[#A78BFA]/[0.1] text-[#A78BFA] px-1.5 py-0.5" data-testid={`card-${m.id}-mocked`}>{t("badge.mocked")}</span>
+      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#FBBF24]/40 bg-[#FBBF24]/[0.1] text-[#FBBF24] px-1.5 py-0.5" data-testid={`card-${m.id}-mocked`}>{showMock ? "MOCK" : "FAILED"}</span>
     );
   }
 
@@ -817,18 +858,30 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
             <div className="text-[11.5px] text-white/45" data-testid={`card-${m.id}-model`}>{displayCodename} · {m.provider}</div>
           </div>
         </div>
-        <div className="flex items-center gap-3 text-[11px] font-mono text-white/40 flex-shrink-0">
+        {details && <div className="flex items-center gap-3 text-[11px] font-mono text-white/40 flex-shrink-0">
           <span data-testid={`card-${m.id}-confidence`}>conf {details.confidence}%</span>
           <span>·</span>
           <span data-testid={`card-${m.id}-contribution`}>contrib {contribution}%</span>
-        </div>
+        </div>}
       </header>
-      <div className="px-6 pl-9 text-[14.5px] leading-[1.65] text-white/75 whitespace-pre-line" data-testid={`response-${m.id}`}>
-        {response}
-      </div>
-      {isFallback && error && (
-        <div className="px-6 pl-9 mt-3 text-[11.5px] text-[#F43F5E]/80" data-testid={`card-${m.id}-error`}>
-          Provider error · {error}. Using fallback text.
+      {isFailed ? (
+        <div className="px-6 pl-9 text-[14px] text-white/70" data-testid={`response-${m.id}`}>
+          <div className="font-medium text-[#F43F5E]">Provider unavailable</div>
+          <div className="mt-2 text-[12.5px] leading-relaxed text-white/50" data-testid={`card-${m.id}-error`}>
+            {error || "The provider did not return a response."}
+          </div>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="mt-4 inline-flex items-center gap-2 rounded-full border border-[#F43F5E]/40 bg-[#F43F5E]/[0.08] px-4 py-2 text-[12px] font-medium text-[#F43F5E] hover:bg-[#F43F5E]/[0.14] transition-colors"
+            data-testid={`retry-${m.id}`}
+          >
+            <RefreshCcw className="w-3.5 h-3.5" /> Retry
+          </button>
+        </div>
+      ) : (
+        <div className="px-6 pl-9 text-[14.5px] leading-[1.65] text-white/75 whitespace-pre-line" data-testid={`response-${m.id}`}>
+          {response}
         </div>
       )}
       <div className="px-6 pl-9 mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-mono text-white/40" data-testid={`card-${m.id}-stats`}>
@@ -840,7 +893,7 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
         <span>·</span>
         <span title="Estimated cost — see /app/backend/providers/base.py for rates">~{formatCost(costUsd || 0)}</span>
       </div>
-      <button
+      {details && !isFailed && <button
         onClick={() => setOpen((v) => !v)}
         data-testid={`expand-${m.id}`}
         className="w-full mt-5 border-t border-white/[0.06] px-6 py-3 flex items-center justify-between text-[12.5px] text-white/60 hover:text-white hover:bg-white/[0.02] transition-colors rounded-b-2xl"
@@ -850,9 +903,9 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
           {open ? t("results.hideBreakdown") : t("results.showBreakdown")}
         </span>
         <ChevronDown className={"w-4 h-4 transition-transform " + (open ? "rotate-180" : "")} />
-      </button>
+      </button>}
       <AnimatePresence initial={false}>
-        {open && (
+        {open && details && !isFailed && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}

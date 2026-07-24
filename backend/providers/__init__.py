@@ -6,5 +6,9 @@ from .registry import (  # noqa: F401
     selected_providers,
     provider_status,
     all_provider_specs,
+    core_provider_specs,
+    execution_mode,
+    providers_for_execution,
+    provider_unavailable_reason,
     fallback_for,
 )

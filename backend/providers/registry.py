@@ -22,25 +22,26 @@ Exports:
     selected_providers(user_id=None, plan=None) -> live Provider instances.
     all_provider_specs()                        -> metadata for EVERY slot.
     provider_status()                           -> the payload for /api/providers.
-    fallback_for(provider)                      -> async fallback callable for LIVE providers.
+    providers_for_execution(...)                -> explicit LIVE or DEMO panel.
 """
 from __future__ import annotations
 
 import logging
 import os
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Optional
+from typing import Optional
 
-from .base import Provider, ProviderResult
-from .openai_provider import OpenAIProvider, SYSTEM_FALLBACK
+from .base import Provider
+from .openai_provider import OpenAIProvider
 from .gemini_provider import GeminiProvider
 from .anthropic_provider import AnthropicProvider
+from .mock_provider import build_mock_providers
 from .plans import Plan, entitlements_for
 from .key_source import resolve_api_key
 
 log = logging.getLogger(__name__)
 
-FallbackFn = Callable[[str], Awaitable[ProviderResult]]
+CORE_PROVIDER_IDS = ("model-a", "model-c")
 
 
 # --------------------------------------------------------------------------
@@ -117,6 +118,14 @@ def _env_true(name: str) -> bool:
     return os.environ.get(name, "false").strip().lower() == "true"
 
 
+def _slot_enabled(spec: ProviderSpec) -> bool:
+    """Core providers default on; an explicit false still disables them."""
+    raw = os.environ.get(spec.enable_env)
+    if raw is None:
+        return spec.id in CORE_PROVIDER_IDS
+    return raw.strip().lower() == "true"
+
+
 def _slot_status(spec: ProviderSpec) -> str:
     """Return "live" | "coming_soon" | "premium_coming_soon".
 
@@ -126,9 +135,9 @@ def _slot_status(spec: ProviderSpec) -> str:
 
     Note: BYOK bypasses this platform-level check on a per-request basis.
     """
-    if spec.tier == "premium" and not _env_true(spec.enable_env):
+    if spec.tier == "premium" and not _slot_enabled(spec):
         return "premium_coming_soon"
-    if not _env_true(spec.enable_env):
+    if not _slot_enabled(spec):
         return "coming_soon"
     if spec.builder is None:
         return "coming_soon"
@@ -225,39 +234,50 @@ def all_provider_specs() -> list[dict]:
     return out
 
 
+def execution_mode() -> str:
+    """Return DEMO only when the operator explicitly sets USE_MOCK=true."""
+    return "DEMO" if _env_true("USE_MOCK") else "LIVE"
+
+
+def providers_for_execution(
+    user_id: Optional[str] = None,
+    plan: Optional[Plan | str] = None,
+) -> tuple[str, list[Provider]]:
+    """Select real providers or the explicit demo panel, never a mixture."""
+    mode = execution_mode()
+    if mode == "DEMO":
+        return mode, build_mock_providers()
+    return mode, selected_providers(user_id=user_id, plan=plan)
+
+
+def core_provider_specs() -> list[dict]:
+    """Metadata for the two providers expected in the current comparison."""
+    return [
+        spec
+        for spec in all_provider_specs()
+        if spec["id"] in CORE_PROVIDER_IDS
+    ]
+
+
+def provider_unavailable_reason(provider_id: str) -> str:
+    """Explain why a core provider could not be called, without secrets."""
+    spec = next((s for s in PROVIDER_REGISTRY if s.id == provider_id), None)
+    if spec is None:
+        return "Provider is not registered."
+    if not _slot_enabled(spec):
+        return f"{spec.label} is disabled by {spec.enable_env}=false."
+    if spec.builder is None:
+        return f"{spec.label} integration is not available."
+    if not os.environ.get(spec.key_env, "").strip():
+        return f"{spec.label} API key is not configured."
+    return f"{spec.label} could not be initialized."
+
+
 def provider_status() -> list[dict]:
     """Backwards-compatible payload for /api/providers."""
     return all_provider_specs()
 
 
-# --------------------------------------------------------------------------
-# Fallback chain — only ever installed on LIVE providers.
-# --------------------------------------------------------------------------
-
-def _openai_rescue_fn() -> FallbackFn:
-    """If a live provider fails, try OpenAI once, then give up (raise)."""
-    async def _fn(prompt: str) -> ProviderResult:
-        openai = OpenAIProvider()
-        if openai.available:
-            res = await openai.generate(prompt, SYSTEM_FALLBACK)
-            res.is_mock = True
-            res.error = "Primary provider failed — served by OpenAI rescue path"
-            return res.with_computed_cost()
-        return ProviderResult(
-            text="",
-            is_mock=True,
-            error="No live fallback available.",
-        )
-    return _fn
-
-
-def fallback_for(provider: Provider) -> Optional[FallbackFn]:
-    """Return a fallback callable ONLY for the Gemini slot (rescued by OpenAI).
-
-    OpenAI is the last line — its failure is surfaced directly to the caller
-    so we never fake a live answer. Disabled slots don't have a fallback
-    because they are never invoked.
-    """
-    if isinstance(provider, GeminiProvider):
-        return _openai_rescue_fn()
+def fallback_for(provider: Provider):
+    """Compatibility shim: hidden provider fallbacks are intentionally disabled."""
     return None
