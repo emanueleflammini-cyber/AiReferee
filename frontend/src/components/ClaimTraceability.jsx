@@ -8,6 +8,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { traceabilityViewModel } from "../lib/claimTraceability";
+import { translateEnum } from "../lib/resultPresentation";
 
 const PROVIDER_LABELS = {
   openai: "ChatGPT",
@@ -36,15 +37,15 @@ export function ClaimTraceability({
   if (view.kind === "failed") {
     return (
       <section
-        className="mt-8 border-t border-white/[0.07] pt-7"
+        className="mt-8 min-w-0 max-w-full border-t border-white/[0.07] pt-7"
         data-testid="claim-traceability-failed"
       >
-        <div className="rounded-2xl border border-[#F43F5E]/30 bg-[#F43F5E]/[0.05] p-5">
+        <div className="min-w-0 max-w-full rounded-2xl border border-[#F43F5E]/30 bg-[#F43F5E]/[0.05] p-4 sm:p-5" role="alert">
           <div className="flex items-center gap-2 text-[13px] font-medium text-[#F43F5E]">
-            <AlertTriangle className="h-4 w-4" />
+            <AlertTriangle className="h-4 w-4" aria-hidden="true" />
             {t("results.traceability.analysisFailed")}
           </div>
-          <p className="mt-2 text-[12.5px] leading-relaxed text-white/55">{view.error}</p>
+          <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/55 [overflow-wrap:anywhere]">{view.error}</p>
         </div>
       </section>
     );
@@ -60,17 +61,17 @@ export function ClaimTraceability({
 
   return (
     <section
-      className="mt-9 border-t border-white/[0.07] pt-8"
+      className="mt-9 min-w-0 max-w-full border-t border-white/[0.07] pt-8"
       data-testid="claim-traceability"
     >
       <div className="mb-5">
         <div className="text-[10.5px] uppercase tracking-[0.2em] text-[#00E5FF]/75">
           {t("results.traceability.eyebrow")}
         </div>
-        <h3 className="mt-1 text-xl font-semibold text-white">
+        <h3 className="mt-1 break-words text-xl font-semibold text-white [overflow-wrap:anywhere]">
           {t("results.traceability.title")}
         </h3>
-        <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-white/50">
+        <p className="mt-2 max-w-3xl break-words text-[13px] leading-relaxed text-white/50 [overflow-wrap:anywhere]">
           {t("results.traceability.description")}
         </p>
       </div>
@@ -132,15 +133,15 @@ export function ClaimTraceability({
 
 function TraceSection({ title, icon: Icon, accent, testId, children }) {
   return (
-    <section className="mt-7" data-testid={testId}>
-      <div className="mb-3 flex items-center gap-2">
+    <section className="mt-7 min-w-0 max-w-full" data-testid={testId}>
+      <div className="mb-3 flex min-w-0 items-center gap-2">
         <span
           className="flex h-7 w-7 items-center justify-center rounded-lg border"
           style={{ color: accent, borderColor: `${accent}45`, backgroundColor: `${accent}12` }}
         >
-          <Icon className="h-3.5 w-3.5" />
+          <Icon className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
-        <h4 className="text-[15px] font-semibold text-white">{title}</h4>
+        <h4 className="min-w-0 break-words text-[15px] font-semibold text-white [overflow-wrap:anywhere]">{title}</h4>
       </div>
       <div className="space-y-3">{children}</div>
     </section>
@@ -155,31 +156,31 @@ function ClaimCard({ claim, t, disputed = false }) {
   ].filter((provider, index, values) => values.indexOf(provider) === index);
   return (
     <article
-      className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4"
+      className="min-w-0 max-w-full rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4"
       data-testid={`trace-claim-${claim.id}`}
     >
-      <p className="text-[14px] leading-relaxed text-white/85">{claim.text}</p>
+      <p className="break-words text-[14px] leading-relaxed text-white/85 [overflow-wrap:anywhere]">{claim.text}</p>
       <ProviderChips providers={providers} />
       {disputed && claim.disputingModels.length > 0 && (
-        <p className="mt-2 text-[11.5px] text-[#F59E0B]/85">
+        <p className="mt-2 break-words text-[11.5px] text-[#F59E0B]/85 [overflow-wrap:anywhere]">
           {t("results.traceability.disputedBy")}:{" "}
           {claim.disputingModels.map(providerLabel).join(", ")}
         </p>
       )}
-      <p className="mt-2 text-[12.5px] leading-relaxed text-white/50">
+      <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/50 [overflow-wrap:anywhere]">
         {claim.assessment.reason}
       </p>
       {claim.support.length > 0 && (
-        <details className="group mt-3 rounded-xl border border-white/[0.06] bg-black/10">
-          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-[12px] text-white/55 hover:text-white/80">
-            <Quote className="h-3.5 w-3.5 text-[#00E5FF]/70" />
+        <details className="group mt-3 min-w-0 max-w-full rounded-xl border border-white/[0.06] bg-black/10">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-xl px-3 py-2.5 text-[12px] text-white/55 hover:text-white/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120]">
+            <Quote className="h-3.5 w-3.5 flex-shrink-0 text-[#00E5FF]/70" aria-hidden="true" />
             {t("results.traceability.showExcerpts")}
           </summary>
           <div className="space-y-3 border-t border-white/[0.06] px-3 py-3">
             {claim.support.map((support, index) => (
-              <blockquote key={`${support.provider}-${index}`} className="border-l-2 border-[#00E5FF]/30 pl-3">
+              <blockquote key={`${support.provider}-${index}`} className="min-w-0 max-w-full border-l-2 border-[#00E5FF]/30 pl-3">
                 <ProviderChips providers={[support.provider]} compact />
-                <p className="mt-2 whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-white/60">
+                <p className="mt-2 whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-white/60 [overflow-wrap:anywhere]">
                   “{support.excerpt}”
                 </p>
               </blockquote>
@@ -208,16 +209,17 @@ function CitationCard({ citation, t }) {
               href={citation.clickableUrl}
               target="_blank"
               rel="noopener noreferrer nofollow"
-              className="inline-flex max-w-full items-start gap-1.5 break-all text-[13.5px] text-[#00E5FF] hover:underline"
+              className="inline-flex max-w-full items-start gap-1.5 break-words text-[13.5px] text-[#00E5FF] hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120] [overflow-wrap:anywhere]"
+              aria-label={t("results.traceability.openSource", { source: displayName })}
             >
-              <span className="min-w-0 break-words">{displayName}</span>
-              <ExternalLink className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">{displayName}</span>
+              <ExternalLink className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
             </a>
           ) : (
-            <div className="break-all text-[13.5px] text-white/75">{displayName}</div>
+            <div className="break-words text-[13.5px] text-white/75 [overflow-wrap:anywhere]">{displayName}</div>
           )}
           {citation.rawUrl && citation.title && (
-            <div className="mt-1 break-all text-[10.5px] text-white/35">{citation.rawUrl}</div>
+            <div className="mt-1 break-words text-[10.5px] text-white/35 [overflow-wrap:anywhere]">{citation.rawUrl}</div>
           )}
         </div>
         <ProviderChips providers={citation.declaredByModels} compact />
@@ -231,7 +233,7 @@ function CitationCard({ citation, t }) {
         </span>
         {citation.extractionMethod && (
           <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 text-[10.5px] text-white/45">
-            {t(`results.traceability.extraction.${citation.extractionMethod}`)}
+            {translateEnum(t, "results.traceability.extraction", citation.extractionMethod)}
           </span>
         )}
       </div>
@@ -242,11 +244,11 @@ function CitationCard({ citation, t }) {
 function ProviderChips({ providers, compact = false }) {
   if (!providers?.length) return null;
   return (
-    <div className={compact ? "flex flex-wrap gap-1.5" : "mt-3 flex flex-wrap gap-1.5"}>
+    <div className={compact ? "flex min-w-0 max-w-full flex-wrap gap-1.5" : "mt-3 flex min-w-0 max-w-full flex-wrap gap-1.5"}>
       {providers.map((provider) => (
         <span
           key={provider}
-          className="inline-flex flex-shrink-0 rounded-full border border-white/10 bg-white/[0.035] px-2 py-0.5 text-[10.5px] text-white/60"
+          className="inline-flex max-w-full break-words rounded-full border border-white/10 bg-white/[0.035] px-2 py-0.5 text-[10.5px] text-white/60 [overflow-wrap:anywhere]"
         >
           {providerLabel(provider)}
         </span>

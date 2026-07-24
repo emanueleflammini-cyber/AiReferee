@@ -79,6 +79,7 @@
   },
   "reuse": {
     "found": "Riuso Intelligente Trovato", "match": "corrispondenza", "age": "Età", "days": "g",
+    "previousQuestion": "Domanda precedente",
     "trust": "Fiducia", "consensus": "Consenso", "confidence": "Sicurezza",
     "originalLang": "Lingua originale", "answerLang": "Lingua della risposta",
     "apiCallsAvoided": "Chiamate AI evitate", "costSaved": "Costo risparmiato",
@@ -88,6 +89,20 @@
     "useExisting": "Usa Conclusione Affidabile esistente", "refresh": "Aggiorna con nuovo confronto AI",
     "globalMatch": "Corrispondenza globale · Tradotto da {source} a {target}",
     "caveat": "Le conclusioni riutilizzate citano le risposte dei modelli originali. L'aggiornamento avvia un confronto multi-modello completo e sovrascrive la cache."
+  },
+  "debate": {
+    "backResults": "Torna ai risultati",
+    "demoEyebrow": "Dibattito dimostrativo",
+    "eyebrow": "Dibattito",
+    "demoTitle": "Come l'arbitro ha raggiunto il consenso",
+    "liveTitle": "Non è disponibile una trascrizione verificata",
+    "demoDescription": "Una trascrizione simulata usata soltanto per mostrare l'esperienza di dibattito.",
+    "liveDescription": "L'esecuzione LIVE mostra esclusivamente i dati restituiti dai provider.",
+    "unavailableTitle": "Trascrizione del dibattito LIVE non disponibile",
+    "unavailableDescription": "AI Referee non inventa una trascrizione del dibattito durante l'esecuzione LIVE.",
+    "consensusReached": "Consenso raggiunto",
+    "demoVerdictDescription": "I modelli dimostrativi concordano sull'esempio. La conclusione simulata è pronta.",
+    "viewConclusion": "Vedi la Conclusione Affidabile"
   },
   "settings": {
     "title": "Preferenze", "eyebrow": "Impostazioni",
@@ -156,6 +171,109 @@
     "shareShared": "Verdetto condiviso",
     "shareCopied": "Verdetto copiato",
     "shareUnavailable": "La condivisione non è disponibile in questo browser.",
+    "defaultPrompt": "Che cos'è un database distribuito e perché dovrei usarne uno?",
+    "retry": "Riprova",
+    "only": "soltanto",
+    "whyStillValuable": "Perché può comunque essere utile",
+    "roadmapProviders": "Claude, Grok e Mistral sono previsti nelle prossime versioni.",
+    "transparencyNote": "Questa conclusione deriva dal consenso più solido tra le risposte disponibili. Aiuta a prendere decisioni, ma non sostituisce il giudizio umano.",
+    "totalScore": "Punteggio totale",
+    "weight": "peso",
+    "evidenceNote": "L'Indicatore di prove combina accordo tra i modelli, coerenza logica, qualità del ragionamento, disponibilità delle citazioni e affidabilità.",
+    "citationLookupSoon": "La verifica online delle citazioni non è ancora disponibile.",
+    "evolutionBody": "Dalla domanda al verdetto finale: ogni fase rimane visibile.",
+    "analysisSteps": {
+      "comparing": "Confronto delle risposte...",
+      "agreements": "Ricerca dei punti di accordo...",
+      "disagreements": "Ricerca dei punti di disaccordo...",
+      "consistency": "Controllo della coerenza logica...",
+      "uncertainty": "Evidenziazione delle incertezze...",
+      "arguments": "Valutazione degli argomenti più solidi...",
+      "preparing": "Preparazione della conclusione finale..."
+    },
+    "challengeSteps": {
+      "evidence": "Ricerca di prove mancanti...",
+      "logic": "Verifica di eventuali errori logici...",
+      "alternatives": "Valutazione di interpretazioni alternative...",
+      "contradictions": "Ricerca di contraddizioni...",
+      "exceptions": "Analisi di eccezioni e casi limite...",
+      "recentInformation": "Controllo delle informazioni recenti..."
+    },
+    "status": {
+      "demo": "DEMO",
+      "live": "LIVE · ATTIVO",
+      "failed": "FAILED · NON DISPONIBILE",
+      "mock": "MOCK · SIMULATO",
+      "liveCount": "Provider LIVE: {n}",
+      "failedCount": "Provider FAILED: {n}",
+      "mockCount": "Provider MOCK: {n}"
+    },
+    "errors": {
+      "requestNotCreated": "Non è stato possibile creare la richiesta di confronto.",
+      "providerUnavailable": "Provider non disponibile",
+      "conclusionUnavailable": "La Conclusione Affidabile non è disponibile.",
+      "traceabilityUnavailable": "La tracciabilità delle affermazioni non è disponibile.",
+      "providerResultUnavailable": "Risultato del provider non disponibile.",
+      "noProviderResponse": "Il provider non ha restituito una risposta."
+    },
+    "providers": {
+      "premiumDescription": "{model} entrerà nel confronto quando questo provider sarà disponibile.",
+      "roadmapDescription": "{model} è previsto nella roadmap e non verrà interrogato finché l'integrazione non sarà attiva."
+    },
+    "stats": {
+      "input": "in",
+      "output": "out",
+      "estimatedCost": "Costo stimato del provider",
+      "confidenceShort": "aff.",
+      "contributionShort": "contr."
+    },
+    "enums": {
+      "notAvailable": "Non disponibile",
+      "unknown": "Valore non riconosciuto ({value})"
+    },
+    "evidenceComponents": {
+      "agreement": "Accordo tra i modelli",
+      "logical": "Coerenza logica",
+      "reasoning": "Qualità del ragionamento",
+      "citation": "Disponibilità delle citazioni",
+      "confidence": "Punteggio di affidabilità"
+    },
+    "evolutionSteps": {
+      "question": {
+        "title": "Domanda",
+        "body": "Hai posto una domanda specifica."
+      },
+      "individual": {
+        "title": "Risposte dei modelli AI",
+        "body": "I modelli disponibili hanno risposto in modo indipendente."
+      },
+      "consensus": {
+        "title": "Formazione del consenso",
+        "body": "Accordi, disaccordi e incertezze sono stati confrontati fianco a fianco."
+      },
+      "challenge": {
+        "title": "Verifica critica",
+        "body": "La conclusione è stata esaminata alla ricerca di errori e contesto mancante."
+      },
+      "verdict": {
+        "title": "Verdetto finale",
+        "body": "La risposta più solida viene mostrata insieme alle prove e ai suoi limiti."
+      }
+    },
+    "rationaleItems": [
+      {
+        "title": "Elementi condivisi più solidi",
+        "body": "La conclusione privilegia i punti sostenuti con maggiore coerenza dalle risposte disponibili."
+      },
+      {
+        "title": "Conflitti risolti durante il confronto",
+        "body": "Quando i modelli non concordano, Referee presenta le diverse posizioni senza sceglierne una in modo nascosto."
+      },
+      {
+        "title": "Incertezza rimanente",
+        "body": "Domande aperte e limiti rimangono visibili, così la conclusione non viene presentata come verità assoluta."
+      }
+    ],
     "topic": {
       "stable": "STABILE",
       "technical": "TECNICO",
@@ -199,7 +317,8 @@
       "disputedBy": "Contestata da",
       "showExcerpts": "Mostra gli estratti delle risposte",
       "unnamedSource": "Fonte del provider senza titolo",
-      "analysisFailed": "La tracciabilità delle affermazioni non è disponibile",
+                         "analysisFailed": "La tracciabilità delle affermazioni non è disponibile",
+                         "openSource": "Apri la fonte: {source}",
       "verification": {
         "unverified": "Dichiarata dal provider — non verificata in modo indipendente",
         "invalid_url": "URL non valido o non sicuro — non cliccabile",

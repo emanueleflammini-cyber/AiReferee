@@ -83,6 +83,7 @@
   },
   "reuse": {
     "found": "Smart Reuse Found", "match": "match", "age": "Age", "days": "d",
+    "previousQuestion": "Previous question",
     "trust": "Trust", "consensus": "Consensus", "confidence": "Confidence",
     "originalLang": "Original language", "answerLang": "Answer language",
     "apiCallsAvoided": "API calls avoided", "costSaved": "Cost saved",
@@ -92,6 +93,20 @@
     "useExisting": "Use existing Trusted Conclusion", "refresh": "Refresh with new AI comparison",
     "globalMatch": "Global Match · Translated from {source} to {target}",
     "caveat": "Reused conclusions cite the original model responses. Refreshing charges a full multi-model comparison and overwrites the cache."
+  },
+  "debate": {
+    "backResults": "Back to results",
+    "demoEyebrow": "Demo debate",
+    "eyebrow": "Debate",
+    "demoTitle": "How the referee reached consensus",
+    "liveTitle": "No verified transcript is available",
+    "demoDescription": "A simulated transcript used only to demonstrate the debate experience.",
+    "liveDescription": "LIVE execution shows only data returned by the providers.",
+    "unavailableTitle": "Live debate transcript unavailable",
+    "unavailableDescription": "AI Referee does not fabricate a debate transcript during LIVE execution.",
+    "consensusReached": "Consensus reached",
+    "demoVerdictDescription": "The demo models aligned on the example framing. The simulated conclusion is ready.",
+    "viewConclusion": "View Trusted Conclusion"
   },
   "settings": {
     "title": "Preferences", "eyebrow": "Settings",
@@ -161,6 +176,109 @@
     "shareShared": "Verdict shared",
     "shareCopied": "Verdict copied",
     "shareUnavailable": "Sharing is not available on this browser.",
+    "defaultPrompt": "What is a distributed database and why would I use one?",
+    "retry": "Retry",
+    "only": "only",
+    "whyStillValuable": "Why it may still be valuable",
+    "roadmapProviders": "Claude, Grok and Mistral are planned for future releases.",
+    "transparencyNote": "This conclusion is generated from the strongest consensus among the available model responses. It supports decision-making and does not replace human judgment.",
+    "totalScore": "Total score",
+    "weight": "weight",
+    "evidenceNote": "The Evidence Meter combines model agreement, logical consistency, reasoning quality, citation availability and confidence.",
+    "citationLookupSoon": "Live citation lookup is not available yet.",
+    "evolutionBody": "From your question to the final verdict — every phase remains visible.",
+    "analysisSteps": {
+      "comparing": "Comparing answers...",
+      "agreements": "Finding agreements...",
+      "disagreements": "Finding disagreements...",
+      "consistency": "Checking logical consistency...",
+      "uncertainty": "Highlighting uncertainty...",
+      "arguments": "Ranking the strongest arguments...",
+      "preparing": "Preparing the final conclusion..."
+    },
+    "challengeSteps": {
+      "evidence": "Scanning for missing evidence...",
+      "logic": "Probing for logical flaws...",
+      "alternatives": "Considering alternative interpretations...",
+      "contradictions": "Checking for contradictions...",
+      "exceptions": "Exploring exceptions and edge cases...",
+      "recentInformation": "Cross-referencing recent information..."
+    },
+    "status": {
+      "demo": "DEMO",
+      "live": "LIVE · Active",
+      "failed": "FAILED · Unavailable",
+      "mock": "MOCK · Simulated",
+      "liveCount": "LIVE providers: {n}",
+      "failedCount": "FAILED providers: {n}",
+      "mockCount": "MOCK providers: {n}"
+    },
+    "errors": {
+      "requestNotCreated": "The comparison request could not be created.",
+      "providerUnavailable": "Provider unavailable",
+      "conclusionUnavailable": "Trusted Conclusion is unavailable.",
+      "traceabilityUnavailable": "Claim traceability is unavailable.",
+      "providerResultUnavailable": "Provider result unavailable.",
+      "noProviderResponse": "The provider did not return a response."
+    },
+    "providers": {
+      "premiumDescription": "{model} will join the panel when this provider becomes available.",
+      "roadmapDescription": "{model} is on the roadmap and will not be called until its integration is active."
+    },
+    "stats": {
+      "input": "in",
+      "output": "out",
+      "estimatedCost": "Estimated provider cost",
+      "confidenceShort": "conf",
+      "contributionShort": "contrib"
+    },
+    "enums": {
+      "notAvailable": "Not available",
+      "unknown": "Unknown ({value})"
+    },
+    "evidenceComponents": {
+      "agreement": "Model agreement",
+      "logical": "Logical consistency",
+      "reasoning": "Reasoning quality",
+      "citation": "Citation availability",
+      "confidence": "Confidence score"
+    },
+    "evolutionSteps": {
+      "question": {
+        "title": "Question",
+        "body": "You asked a single, specific question."
+      },
+      "individual": {
+        "title": "Individual AI responses",
+        "body": "The available models answered independently."
+      },
+      "consensus": {
+        "title": "Consensus formation",
+        "body": "Agreements, disagreements and uncertainty were compared side by side."
+      },
+      "challenge": {
+        "title": "Critical review",
+        "body": "The current conclusion was examined for flaws and missing context."
+      },
+      "verdict": {
+        "title": "Final verdict",
+        "body": "The strongest supportable answer is shown with its evidence and limits."
+      }
+    },
+    "rationaleItems": [
+      {
+        "title": "Strongest shared evidence",
+        "body": "The conclusion prioritizes the points supported most consistently across the available responses."
+      },
+      {
+        "title": "Conflicts resolved during comparison",
+        "body": "When the models disagree, Referee presents the competing positions instead of silently choosing one."
+      },
+      {
+        "title": "Remaining uncertainty",
+        "body": "Open questions and limitations stay visible so the conclusion is not presented as absolute truth."
+      }
+    ],
     "topic": {
       "stable": "STABLE",
       "technical": "TECHNICAL",
@@ -204,7 +322,8 @@
       "disputedBy": "Disputed by",
       "showExcerpts": "Show supporting response excerpts",
       "unnamedSource": "Unnamed provider source",
-      "analysisFailed": "Claim traceability is unavailable",
+                         "analysisFailed": "Claim traceability is unavailable",
+                         "openSource": "Open source: {source}",
       "verification": {
         "unverified": "Provider-declared — not independently verified",
         "invalid_url": "Invalid or unsafe URL — not clickable",

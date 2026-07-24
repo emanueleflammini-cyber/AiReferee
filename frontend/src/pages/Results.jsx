@@ -32,9 +32,11 @@ import {
 } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
 import { ClaimTraceability } from "@/components/ClaimTraceability";
+import { SafeAnswerText } from "@/components/SafeAnswerText";
 import { StructuredConclusion } from "@/components/StructuredConclusion";
 import { useQueryState } from "@/lib/QueryContext";
 import { useI18n } from "@/lib/i18n";
+import { translateEnum } from "@/lib/resultPresentation";
 import {
   PROVIDER_STATUS,
   failedProviderResponses,
@@ -46,10 +48,7 @@ import {
   MODEL_STATUS,
   MOCK_SCORES,
   MOCK_CONTRIBUTIONS,
-  ANALYSIS_STEPS,
-  CHALLENGE_STEPS,
   CHALLENGE_OUTCOMES,
-  TRANSPARENCY_NOTE,
   CONSENSUS_TIERS,
   EVIDENCE_METER,
   EVOLUTION_STEPS,
@@ -57,6 +56,23 @@ import {
 } from "@/lib/mockData";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const ANALYSIS_STEP_KEYS = [
+  "results.analysisSteps.comparing",
+  "results.analysisSteps.agreements",
+  "results.analysisSteps.disagreements",
+  "results.analysisSteps.consistency",
+  "results.analysisSteps.uncertainty",
+  "results.analysisSteps.arguments",
+  "results.analysisSteps.preparing",
+];
+const CHALLENGE_STEP_KEYS = [
+  "results.challengeSteps.evidence",
+  "results.challengeSteps.logic",
+  "results.challengeSteps.alternatives",
+  "results.challengeSteps.contradictions",
+  "results.challengeSteps.exceptions",
+  "results.challengeSteps.recentInformation",
+];
 
 const item = {
   hidden: { opacity: 0, y: 16 },
@@ -68,7 +84,7 @@ export default function Results() {
   const location = useLocation();
   const { query } = useQueryState();
   const { t } = useI18n();
-  const prompt = query.prompt || "What is a distributed database and why would I use one?";
+  const prompt = query.prompt || t("results.defaultPrompt");
 
   const routeState = location.state || {};
   const mode = routeState.mode || "fresh"; // fresh | reused | updated
@@ -80,7 +96,7 @@ export default function Results() {
 
   const [phase, setPhase] = useState(mode === "reused" ? "reveal" : "models");
   const [completedModels, setCompletedModels] = useState(mode === "reused" ? LIVE_MODELS.map((m) => m.id) : []);
-  const [analysisStep, setAnalysisStep] = useState(mode === "reused" ? ANALYSIS_STEPS.length : 0);
+  const [analysisStep, setAnalysisStep] = useState(mode === "reused" ? ANALYSIS_STEP_KEYS.length : 0);
   const [liveResponses, setLiveResponses] = useState(null); // [{id, label, text, is_mock, ...}]
   const [liveCount, setLiveCount] = useState(0);
   const [totalCost, setTotalCost] = useState(0);
@@ -122,7 +138,7 @@ export default function Results() {
     setConclusionLoading(true);
 
     if (!queryId) {
-      const reason = "The comparison request could not be created.";
+      const reason = t("results.errors.requestNotCreated");
       setLiveResponses(failedProviderResponses(LIVE_MODELS, reason));
       setCompletedModels(LIVE_MODELS.map((model) => model.id));
       setPhase("analysis");
@@ -155,7 +171,7 @@ export default function Results() {
       setConclusionLoading(false);
     }).catch((e) => {
       console.warn("Compare failed", e);
-      const reason = e?.response?.data?.detail || e?.message || "Provider unavailable";
+      const reason = e?.response?.data?.detail || e?.message || t("results.errors.providerUnavailable");
       const responses = failedProviderResponses(LIVE_MODELS, reason);
       setExecutionMode("LIVE");
       setLiveResponses(responses);
@@ -170,7 +186,7 @@ export default function Results() {
       setConclusionLoading(false);
     });
     return () => { cancelled = true; };
-  }, [queryId, mode, retryNonce]);
+  }, [queryId, mode, retryNonce, t]);
 
   // For reused mode, fetch the cached Trusted Conclusion in the current answer language.
   useEffect(() => {
@@ -199,13 +215,13 @@ export default function Results() {
       .catch((e) => {
         console.warn("Fetch reused conclusion failed", e);
         setSynthesisStatus("FAILED");
-        setSynthesisError(e?.response?.data?.detail || e?.message || "Trusted Conclusion is unavailable.");
+        setSynthesisError(e?.response?.data?.detail || e?.message || t("results.errors.conclusionUnavailable"));
         setClaimAnalysisStatus("FAILED");
-        setClaimAnalysisError(e?.response?.data?.detail || e?.message || "Claim traceability is unavailable.");
+        setClaimAnalysisError(e?.response?.data?.detail || e?.message || t("results.errors.traceabilityUnavailable"));
         setConclusionLoading(false);
       });
     return () => { cancelled = true; };
-  }, [mode, reuseMatch, queryId, answerLanguage]);
+  }, [mode, reuseMatch, queryId, answerLanguage, t]);
 
   // The pre-2.0 demo challenge remains dormant until it can consume
   // backend-generated structured data. It must never populate real results.
@@ -215,7 +231,7 @@ export default function Results() {
 
   useEffect(() => {
     if (phase !== "analysis") return;
-    if (analysisStep >= ANALYSIS_STEPS.length) {
+    if (analysisStep >= ANALYSIS_STEP_KEYS.length) {
       const t = setTimeout(() => setPhase("reveal"), 500);
       return () => clearTimeout(t);
     }
@@ -225,7 +241,7 @@ export default function Results() {
 
   useEffect(() => {
     if (challengePhase !== "running") return;
-    if (challengeStep >= CHALLENGE_STEPS.length) {
+    if (challengeStep >= CHALLENGE_STEP_KEYS.length) {
       const timer = setTimeout(() => {
         setChallengeOutcome(CHALLENGE_OUTCOMES.strengthened);
         setChallengePhase("done");
@@ -240,22 +256,23 @@ export default function Results() {
     ? challengeOutcome.newConfidence
     : MOCK_SCORES.confidence;
   return (
-    <div className="relative min-h-screen bg-[#060A14] text-white overflow-hidden" data-testid="results-page">
+    <div className="relative min-h-screen max-w-full overflow-x-hidden bg-[#060A14] text-white" data-testid="results-page">
       <div className="pointer-events-none absolute inset-0 opacity-60 grid-pattern" />
       <NavBar variant="results" />
 
       <main className="relative mx-auto max-w-6xl px-5 md:px-8 pt-10 md:pt-14 pb-24">
         <button
+          type="button"
           onClick={() => navigate("/")}
           data-testid="back-home-button"
-          className="inline-flex items-center gap-1.5 text-[13px] text-white/50 hover:text-white transition-colors"
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-lg text-[13px] text-white/50 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#060A14]"
         >
           <ArrowLeft className="w-3.5 h-3.5" /> {t("results.backPrompt")}
         </button>
 
         <div className="mt-4 max-w-3xl">
           <div className="text-[11px] uppercase tracking-[0.2em] text-white/40 mb-2">{t("results.yourQuestion")}</div>
-          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight leading-snug" data-testid="results-question">
+          <h1 className="break-words text-2xl font-semibold leading-snug tracking-tight [overflow-wrap:anywhere] md:text-3xl" data-testid="results-question">
             “{prompt}”
           </h1>
         </div>
@@ -274,7 +291,7 @@ export default function Results() {
               className="mt-10"
               data-testid="loading-phase"
             >
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
                 {LIVE_MODELS.map((m) => {
                   const done = completedModels.includes(m.id);
                   return (
@@ -282,29 +299,29 @@ export default function Results() {
                       key={m.id}
                       data-testid={`load-${m.id}`}
                       className={
-                        "relative rounded-2xl border p-5 transition-colors " +
+                        "relative min-w-0 max-w-full rounded-2xl border p-4 transition-colors sm:p-5 " +
                         (done ? "border-white/15 bg-white/[0.04]" : "border-white/[0.06] bg-[#0B1120]")
                       }
                     >
                       <span className="absolute left-0 top-5 bottom-5 w-[3px] rounded-r" style={{ backgroundColor: m.accent, boxShadow: `0 0 20px ${m.accent}80` }} />
-                      <div className="flex items-center justify-between pl-3">
-                        <div className="flex items-center gap-3">
+                      <div className="flex min-w-0 flex-col items-start gap-3 pl-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex min-w-0 items-center gap-3">
                           <div className="w-9 h-9 rounded-xl border flex items-center justify-center text-[12px] font-medium" style={{ backgroundColor: `${m.accent}18`, borderColor: `${m.accent}55`, color: m.accent }}>
                             {m.initials}
                           </div>
-                          <div>
-                            <div className="text-[14.5px] font-medium text-white">{m.label}</div>
-                            <div className="text-[11.5px] text-white/45">{m.codename} · {m.provider}</div>
+                          <div className="min-w-0">
+                            <div className="break-words text-[14.5px] font-medium text-white [overflow-wrap:anywhere]">{m.label}</div>
+                            <div className="break-words text-[11.5px] text-white/45 [overflow-wrap:anywhere]">{m.codename} · {m.provider}</div>
                           </div>
                         </div>
-                        <div className="text-[12px] flex items-center gap-2">
+                        <div className="flex flex-shrink-0 items-center gap-2 text-[12px]">
                           {done ? (
                             <span className="inline-flex items-center gap-1.5 text-[#10B981]" data-testid={`load-${m.id}-complete`}>
-                              <Check className="w-3.5 h-3.5" /> {t("results.complete")}
+                              <Check className="w-3.5 h-3.5" aria-hidden="true" /> {t("results.complete")}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 text-white/50" data-testid={`load-${m.id}-thinking`}>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("results.thinking")}
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" /> {t("results.thinking")}
                             </span>
                           )}
                         </div>
@@ -320,8 +337,10 @@ export default function Results() {
                     initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.4 }}
-                    className="mt-6 rounded-2xl border border-[#00E5FF]/25 bg-[#00E5FF]/[0.04] p-6"
+                    className="mt-6 min-w-0 max-w-full rounded-2xl border border-[#00E5FF]/25 bg-[#00E5FF]/[0.04] p-4 sm:p-6"
                     data-testid="analysis-phase"
+                    role="status"
+                    aria-live="polite"
                   >
                     <div className="flex items-center gap-3 mb-4">
                       <div className="w-8 h-8 rounded-lg bg-[#00E5FF]/15 border border-[#00E5FF]/40 flex items-center justify-center">
@@ -333,14 +352,14 @@ export default function Results() {
                       </div>
                     </div>
                     <ul className="space-y-2">
-                      {ANALYSIS_STEPS.slice(0, analysisStep).map((s, i) => (
+                      {ANALYSIS_STEP_KEYS.slice(0, analysisStep).map((key, i) => (
                         <motion.li key={i} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.35 }} className="flex items-center gap-2 text-[13.5px] text-white/80" data-testid={`analysis-step-${i}`}>
-                          <Check className="w-3.5 h-3.5 text-[#10B981]" /> {s}
+                          <Check className="w-3.5 h-3.5 flex-shrink-0 text-[#10B981]" aria-hidden="true" /> <span className="min-w-0 break-words">{t(key)}</span>
                         </motion.li>
                       ))}
-                      {analysisStep < ANALYSIS_STEPS.length && (
+                      {analysisStep < ANALYSIS_STEP_KEYS.length && (
                         <li className="flex items-center gap-2 text-[13.5px] text-white/60">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#00E5FF]" /> {ANALYSIS_STEPS[analysisStep]}
+                          <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin text-[#00E5FF]" aria-hidden="true" /> <span className="min-w-0 break-words">{t(ANALYSIS_STEP_KEYS[analysisStep])}</span>
                         </li>
                       )}
                     </ul>
@@ -410,26 +429,26 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
     <>
       {/* Live indicator strip */}
       {liveResponses && (
-        <div className="mt-6 flex flex-wrap items-center gap-2 text-[12px] text-white/60" data-testid="live-status">
+        <div className="mt-6 flex min-w-0 max-w-full flex-wrap items-center gap-2 text-[12px] text-white/60" data-testid="live-status" role="status">
           {executionMode === "DEMO" && (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FBBF24]/40 bg-[#FBBF24]/[0.08] px-2.5 py-0.5 text-[#FBBF24]" data-testid="execution-mode-demo">
-              DEMO
+              {t("results.status.demo")}
             </span>
           )}
           <span className="inline-flex items-center gap-1.5 rounded-full border border-[#10B981]/40 bg-[#10B981]/[0.08] px-2.5 py-0.5 text-[#10B981]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
-            {liveCount} LIVE model{liveCount === 1 ? "" : "s"}
+            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" aria-hidden="true" />
+            {t("results.status.liveCount", { n: liveCount })}
           </span>
           {mockCount > 0 && executionMode === "DEMO" && (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FBBF24]/40 bg-[#FBBF24]/[0.08] px-2.5 py-0.5 text-[#FBBF24]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#FBBF24]" />
-              {mockCount} MOCK
+              <span className="w-1.5 h-1.5 rounded-full bg-[#FBBF24]" aria-hidden="true" />
+              {t("results.status.mockCount", { n: mockCount })}
             </span>
           )}
           {failedCount > 0 && (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.08] px-2.5 py-0.5 text-[#F43F5E]" data-testid="fallback-summary">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#F43F5E]" />
-              {failedCount} FAILED
+              <span className="w-1.5 h-1.5 rounded-full bg-[#F43F5E]" aria-hidden="true" />
+              {t("results.status.failedCount", { n: failedCount })}
             </span>
           )}
           {typeof totalCost === "number" && totalCost > 0 && (
@@ -437,7 +456,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
               ~${totalCost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}
             </span>
           )}
-          <span className="text-white/40">Grok, Mistral and Claude are on the roadmap — enable them in <code className="font-mono text-white/60">backend/.env</code> to light up more slots.</span>
+          <span className="min-w-0 break-words text-white/40 [overflow-wrap:anywhere]">{t("results.roadmapProviders")}</span>
         </div>
       )}
 
@@ -446,7 +465,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
         initial="hidden"
         animate="show"
         variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } } }}
-        className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-5"
+        className="mt-6 grid min-w-0 grid-cols-1 gap-5 md:grid-cols-2"
         data-testid="models-grid"
       >
         {MODELS.map((m) => {
@@ -456,7 +475,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
           const live = liveById[m.id] || {
             id: m.id,
             provider_status: PROVIDER_STATUS.FAILED,
-            provider_error: "Provider result unavailable.",
+            provider_error: t("results.errors.providerResultUnavailable"),
             text: "",
           };
           return (
@@ -487,13 +506,13 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
         initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.7, ease: "easeOut", delay: 0.1 }}
-        className="relative mt-12 rounded-3xl overflow-hidden border border-[#0066FF]/40"
+        className="relative mt-12 min-w-0 max-w-full overflow-hidden rounded-3xl border border-[#0066FF]/40"
         data-testid="trusted-conclusion-card"
       >
         <div className="absolute inset-0 super-glow" />
         <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-[#00E5FF]/60 to-transparent" />
-        <div className="relative p-8 md:p-10">
-          <div className="flex items-start gap-3 mb-5">
+        <div className="relative p-4 sm:p-6 md:p-10">
+          <div className="mb-5 flex min-w-0 items-start gap-3">
             <div className="w-9 h-9 rounded-xl bg-[#00E5FF]/10 border border-[#00E5FF]/30 flex items-center justify-center flex-shrink-0">
               <Sparkles className="w-4 h-4 text-[#00E5FF]" />
             </div>
@@ -531,9 +550,9 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
               disabled={conclusionLoading || !trustedConclusion}
               data-testid="share-verdict-button"
               aria-label={t("results.shareVerdict")}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[#00E5FF]/40 bg-[#00E5FF]/[0.08] px-3 py-1.5 text-[12px] text-[#00E5FF] hover:bg-[#00E5FF]/[0.14] transition-colors disabled:opacity-40 disabled:pointer-events-none"
+              className="inline-flex min-h-11 flex-shrink-0 items-center gap-1.5 rounded-full border border-[#00E5FF]/40 bg-[#00E5FF]/[0.08] px-3 py-1.5 text-[12px] text-[#00E5FF] transition-colors hover:bg-[#00E5FF]/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120] disabled:pointer-events-none disabled:opacity-40"
             >
-              <Share2 className="w-3.5 h-3.5" />
+              <Share2 className="w-3.5 h-3.5" aria-hidden="true" />
               <span className="hidden sm:inline">{t("results.shareVerdict")}</span>
             </button>
           </div>
@@ -584,17 +603,17 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
                 {challengePhase === "running" ? (
                   <div className="rounded-2xl border border-[#F59E0B]/30 bg-[#F59E0B]/[0.04] p-5">
                     <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-[#F59E0B] mb-3">
-                      <Swords className="w-3.5 h-3.5" /> Challenge in progress
+                      <Swords className="w-3.5 h-3.5" aria-hidden="true" /> {t("results.challengeProgress")}
                     </div>
                     <ul className="space-y-2">
-                      {CHALLENGE_STEPS.slice(0, challengeStep).map((s, i) => (
+                      {CHALLENGE_STEP_KEYS.slice(0, challengeStep).map((key, i) => (
                         <li key={i} className="flex items-center gap-2 text-[13.5px] text-white/80" data-testid={`challenge-step-${i}`}>
-                          <Check className="w-3.5 h-3.5 text-[#10B981]" /> {s}
+                          <Check className="w-3.5 h-3.5 text-[#10B981]" aria-hidden="true" /> {t(key)}
                         </li>
                       ))}
-                      {challengeStep < CHALLENGE_STEPS.length && (
+                      {challengeStep < CHALLENGE_STEP_KEYS.length && (
                         <li className="flex items-center gap-2 text-[13.5px] text-white/60">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#F59E0B]" /> {CHALLENGE_STEPS[challengeStep]}
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#F59E0B]" aria-hidden="true" /> {t(CHALLENGE_STEP_KEYS[challengeStep])}
                         </li>
                       )}
                     </ul>
@@ -657,10 +676,11 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
               </>}
             </div>
             {legacyDemoAnalyticsEnabled && isDemo && <button
+              type="button"
               onClick={onChallenge}
               disabled={challengePhase === "running"}
               data-testid="challenge-conclusion-button"
-              className="group inline-flex items-center gap-2 rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/[0.08] text-[#F59E0B] hover:bg-[#F59E0B]/[0.14] px-5 py-2.5 text-[13px] font-medium transition-colors disabled:opacity-70"
+              className="group inline-flex min-h-11 items-center gap-2 rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/[0.08] px-5 py-2.5 text-[13px] font-medium text-[#F59E0B] transition-colors hover:bg-[#F59E0B]/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120] disabled:opacity-70"
             >
               <Swords className="w-4 h-4" />
               {challengePhase === "idle" ? t("results.challengeConclusion") : challengePhase === "running" ? t("results.challenging") : t("results.challengeAgain")}
@@ -698,17 +718,24 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
         body={t("results.rationaleBody")}
       />
       <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="why-referee-chose">
-        {WHY_CHOSE_ANSWER.map((w, i) => (
-          <RationaleCard key={i} index={i + 1} title={w.title} body={w.body} testId={`rationale-${i}`} />
+        {WHY_CHOSE_ANSWER.map((_, i) => (
+          <RationaleCard
+            key={i}
+            index={i + 1}
+            title={t(`results.rationaleItems.${i}.title`)}
+            body={t(`results.rationaleItems.${i}.body`)}
+            testId={`rationale-${i}`}
+          />
         ))}
       </div>
 
       {/* View Full Debate CTA */}
       <div className="mt-10 flex justify-center">
         <button
+          type="button"
           onClick={onSeeDebate}
           data-testid="view-full-debate-button"
-          className="group inline-flex items-center gap-2 rounded-full bg-white text-[#060A14] font-medium px-6 py-3 text-[14px] hover:bg-white/90 transition-colors"
+          className="group inline-flex min-h-11 items-center gap-2 rounded-full bg-white px-6 py-3 text-[14px] font-medium text-[#060A14] transition-colors hover:bg-white/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#060A14]"
           style={{ boxShadow: "0 20px 50px -18px rgba(0,229,255,0.6)" }}
         >
           <MessagesSquare className="w-4 h-4" />
@@ -762,11 +789,11 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
 
       {/* Transparency */}
       <div
-        className="mt-8 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 flex gap-3 items-start"
+        className="mt-8 flex min-w-0 max-w-full items-start gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4 sm:p-5"
         data-testid="transparency-note"
       >
-        <Info className="w-4 h-4 text-white/50 mt-0.5 flex-shrink-0" />
-        <p className="text-[13px] text-white/60 leading-relaxed">{TRANSPARENCY_NOTE}</p>
+        <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-white/50" aria-hidden="true" />
+        <p className="min-w-0 break-words text-[13px] leading-relaxed text-white/60 [overflow-wrap:anywhere]">{t("results.transparencyNote")}</p>
       </div>
     </>
   );
@@ -818,13 +845,13 @@ function ReuseBadgeBanner({ mode, match, topic, reason }) {
             </span>
           )}
           {topic && (
-            <span className="text-[11px] uppercase tracking-[0.2em] text-white/40 font-mono" data-testid="reuse-topic-badge">{t(`results.topic.${topic}`) === `results.topic.${topic}` ? topic : t(`results.topic.${topic}`)}</span>
+            <span className="max-w-full break-words text-[11px] uppercase tracking-[0.2em] text-white/40 font-mono [overflow-wrap:anywhere]" data-testid="reuse-topic-badge">{translateEnum(t, "results.topic", topic)}</span>
           )}
         </div>
         <div className="mt-1 text-[12.5px] text-white/60 leading-relaxed">
           {isReused ? t("results.reusedExplainer") : t("results.updatedExplainer")}
           {match && (
-            <span className="text-white/40"> · {t("results.previousQuestion")}: <span className="italic text-white/60">“{match.prompt}”</span></span>
+            <span className="break-words text-white/40 [overflow-wrap:anywhere]"> · {t("results.previousQuestion")}: <span className="italic text-white/60">“{match.prompt}”</span></span>
           )}
         </div>
       </div>
@@ -844,11 +871,11 @@ function ComingSoonModelCard({ model: m }) {
       variants={item}
       data-testid={`card-${m.id}`}
       data-status={m.status}
-      className="relative rounded-2xl border border-dashed border-white/[0.12] bg-[#0B1120]/60 opacity-90"
+      className="relative min-w-0 max-w-full rounded-2xl border border-dashed border-white/[0.12] bg-[#0B1120]/60 opacity-90"
       style={{ boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)" }}
     >
       <span className={`absolute left-0 top-6 bottom-6 w-[3px] rounded-r ${m.accentClass || ""}`} style={{ backgroundColor: `${m.accent}55` }} />
-      <div className="flex items-start justify-between p-6 pl-9 gap-3">
+      <div className="flex min-w-0 items-start justify-between gap-3 p-4 pl-7 sm:p-6 sm:pl-9">
         <div className="flex items-center gap-3 min-w-0">
           <div
             className="w-9 h-9 rounded-xl border flex items-center justify-center text-[12px] font-medium flex-shrink-0"
@@ -857,26 +884,26 @@ function ComingSoonModelCard({ model: m }) {
             {m.initials}
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="text-[14.5px] font-medium text-white/85">{m.label}</div>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div className="min-w-0 break-words text-[14.5px] font-medium text-white/85 [overflow-wrap:anywhere]">{m.label}</div>
               {isPremium && (
                 <span className="text-[11px] text-[#FBBF24]" aria-hidden data-testid={`card-${m.id}-premium-star`}>★</span>
               )}
               <span
                 data-testid={`card-${m.id}-status`}
-                className={"inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] uppercase " + accentBadge}
+                className={"inline-flex max-w-full flex-shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-[0.14em] uppercase " + accentBadge}
               >
                 {label}
               </span>
             </div>
-            <div className="text-[11.5px] text-white/40">{m.codename} · {m.provider}</div>
+            <div className="break-words text-[11.5px] text-white/40 [overflow-wrap:anywhere]">{m.codename} · {m.provider}</div>
           </div>
         </div>
       </div>
-      <div className="px-6 pl-9 pb-6 text-[13.5px] leading-[1.65] text-white/50 italic" data-testid={`response-${m.id}`}>
+      <div className="break-words px-4 pb-5 pl-7 text-[13.5px] italic leading-[1.65] text-white/50 [overflow-wrap:anywhere] sm:px-6 sm:pb-6 sm:pl-9" data-testid={`response-${m.id}`}>
         {isPremium
-          ? "Claude will join the panel for Premium subscribers. When Premium launches, this slot will contribute to a three-model Trusted Conclusion (GPT + Gemini + Claude)."
-          : `${m.label} is on the roadmap. The provider registry is ready — this slot will go live as soon as the API is wired.`}
+          ? t("results.providers.premiumDescription", { model: m.provider })
+          : t("results.providers.roadmapDescription", { model: m.provider })}
       </div>
     </motion.article>
   );
@@ -894,15 +921,15 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
   let badge;
   if (showLive) {
     badge = (
-      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#10B981]/40 bg-[#10B981]/[0.1] text-[#10B981] px-1.5 py-0.5" data-testid={`card-${m.id}-live`}>LIVE</span>
+      <span className="flex-shrink-0 rounded-full border border-[#10B981]/40 bg-[#10B981]/[0.1] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-[#10B981]" data-testid={`card-${m.id}-live`}>{t("results.status.live")}</span>
     );
   } else if (isFailed) {
     badge = (
-      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.1] text-[#F43F5E] px-1.5 py-0.5" title={error} data-testid={`card-${m.id}-failed`}>FAILED</span>
+      <span className="flex-shrink-0 rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.1] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-[#F43F5E]" title={error} data-testid={`card-${m.id}-failed`}>{t("results.status.failed")}</span>
     );
   } else {
     badge = (
-      <span className="text-[9.5px] font-mono tracking-wider rounded-full border border-[#FBBF24]/40 bg-[#FBBF24]/[0.1] text-[#FBBF24] px-1.5 py-0.5" data-testid={`card-${m.id}-mocked`}>{showMock ? "MOCK" : "FAILED"}</span>
+      <span className="flex-shrink-0 rounded-full border border-[#FBBF24]/40 bg-[#FBBF24]/[0.1] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-[#FBBF24]" data-testid={`card-${m.id}-mocked`}>{showMock ? t("results.status.mock") : t("results.status.failed")}</span>
     );
   }
 
@@ -916,62 +943,67 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
     <motion.article
       variants={item}
       data-testid={`card-${m.id}`}
-      className="group relative rounded-2xl border border-white/[0.08] bg-[#0B1120] hover:border-white/20 transition-colors"
+      className="group relative min-w-0 max-w-full rounded-2xl border border-white/[0.08] bg-[#0B1120] transition-colors hover:border-white/20"
       style={{ boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)" }}
     >
       <span className={`absolute left-0 top-6 bottom-6 w-[3px] rounded-r ${m.accentClass}`} />
-      <header className="flex items-start justify-between p-6 pl-9 gap-3">
+      <header className="flex min-w-0 flex-col items-start gap-3 p-4 pl-7 sm:flex-row sm:justify-between sm:p-6 sm:pl-9">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-9 h-9 rounded-xl border flex items-center justify-center text-[12px] font-medium flex-shrink-0" style={{ backgroundColor: `${m.accent}18`, borderColor: `${m.accent}55`, color: m.accent }}>
             {m.initials}
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="text-[14.5px] font-medium text-white">{m.label}</div>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div className="min-w-0 break-words text-[14.5px] font-medium text-white [overflow-wrap:anywhere]">{m.label}</div>
               {badge}
             </div>
-            <div className="text-[11.5px] text-white/45" data-testid={`card-${m.id}-model`}>{displayCodename} · {m.provider}</div>
+            <div className="break-words text-[11.5px] text-white/45 [overflow-wrap:anywhere]" data-testid={`card-${m.id}-model`}>{displayCodename} · {m.provider}</div>
           </div>
         </div>
-        {details && <div className="flex items-center gap-3 text-[11px] font-mono text-white/40 flex-shrink-0">
-          <span data-testid={`card-${m.id}-confidence`}>conf {details.confidence}%</span>
+        {details && <div className="flex flex-shrink-0 items-center gap-3 text-[11px] font-mono text-white/40">
+          <span data-testid={`card-${m.id}-confidence`}>{t("results.stats.confidenceShort")} {details.confidence}%</span>
           <span>·</span>
-          <span data-testid={`card-${m.id}-contribution`}>contrib {contribution}%</span>
+          <span data-testid={`card-${m.id}-contribution`}>{t("results.stats.contributionShort")} {contribution}%</span>
         </div>}
       </header>
       {isFailed ? (
-        <div className="px-6 pl-9 text-[14px] text-white/70" data-testid={`response-${m.id}`}>
-          <div className="font-medium text-[#F43F5E]">Provider unavailable</div>
-          <div className="mt-2 text-[12.5px] leading-relaxed text-white/50" data-testid={`card-${m.id}-error`}>
-            {error || "The provider did not return a response."}
+        <div className="min-w-0 max-w-full px-4 pl-7 text-[14px] text-white/70 sm:px-6 sm:pl-9" data-testid={`response-${m.id}`} role="alert">
+          <div className="font-medium text-[#F43F5E]">{t("results.errors.providerUnavailable")}</div>
+          <div className="mt-2 break-words text-[12.5px] leading-relaxed text-white/50 [overflow-wrap:anywhere]" data-testid={`card-${m.id}-error`}>
+            {error || t("results.errors.noProviderResponse")}
           </div>
           <button
             type="button"
             onClick={onRetry}
-            className="mt-4 inline-flex items-center gap-2 rounded-full border border-[#F43F5E]/40 bg-[#F43F5E]/[0.08] px-4 py-2 text-[12px] font-medium text-[#F43F5E] hover:bg-[#F43F5E]/[0.14] transition-colors"
+            className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-full border border-[#F43F5E]/40 bg-[#F43F5E]/[0.08] px-4 py-2 text-[12px] font-medium text-[#F43F5E] transition-colors hover:bg-[#F43F5E]/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F43F5E] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120]"
             data-testid={`retry-${m.id}`}
           >
-            <RefreshCcw className="w-3.5 h-3.5" /> Retry
+            <RefreshCcw className="w-3.5 h-3.5" aria-hidden="true" /> {t("results.retry")}
           </button>
         </div>
       ) : (
-        <div className="px-6 pl-9 text-[14.5px] leading-[1.65] text-white/75 whitespace-pre-line" data-testid={`response-${m.id}`}>
-          {response}
-        </div>
+        <SafeAnswerText
+          text={response}
+          className="px-4 pl-7 text-[14.5px] leading-[1.65] text-white/75 sm:px-6 sm:pl-9"
+          testId={`response-${m.id}`}
+        />
       )}
-      <div className="px-6 pl-9 mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-mono text-white/40" data-testid={`card-${m.id}-stats`}>
+      <div className="mt-3 flex min-w-0 max-w-full flex-wrap gap-x-3 gap-y-1 px-4 pl-7 text-[11px] font-mono text-white/40 sm:px-6 sm:pl-9" data-testid={`card-${m.id}-stats`}>
         <span>{latencyMs ?? m.latencyMs}ms</span>
         <span>·</span>
-        <span>in {inputTokens ?? 0}</span>
+        <span>{t("results.stats.input")} {inputTokens ?? 0}</span>
         <span>·</span>
-        <span>out {outputTokens ?? 0}</span>
+        <span>{t("results.stats.output")} {outputTokens ?? 0}</span>
         <span>·</span>
-        <span title="Estimated cost — see /app/backend/providers/base.py for rates">~{formatCost(costUsd || 0)}</span>
+        <span title={t("results.stats.estimatedCost")}>~{formatCost(costUsd || 0)}</span>
       </div>
       {details && !isFailed && <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         data-testid={`expand-${m.id}`}
-        className="w-full mt-5 border-t border-white/[0.06] px-6 py-3 flex items-center justify-between text-[12.5px] text-white/60 hover:text-white hover:bg-white/[0.02] transition-colors rounded-b-2xl"
+        aria-expanded={open}
+        aria-controls={`details-${m.id}`}
+        className="mt-5 flex min-h-11 w-full items-center justify-between rounded-b-2xl border-t border-white/[0.06] px-4 py-3 text-[12.5px] text-white/60 transition-colors hover:bg-white/[0.02] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#00E5FF] sm:px-6"
       >
         <span className="flex items-center gap-2">
           <ScatterChart className="w-3.5 h-3.5" />
@@ -988,16 +1020,17 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
             transition={{ duration: 0.35, ease: "easeOut" }}
             className="overflow-hidden"
             data-testid={`details-${m.id}`}
+            id={`details-${m.id}`}
           >
-            <div className="px-6 pl-9 pb-6 space-y-5">
-              <ModelDetailBlock title="Main arguments" items={details.mainArguments} accent={m.accent} />
+            <div className="space-y-5 px-4 pb-5 pl-7 sm:px-6 sm:pb-6 sm:pl-9">
+              <ModelDetailBlock title={t("results.mainArguments")} items={details.mainArguments} accent={m.accent} />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <ModelDetailBlock title="Strengths"  items={details.strengths}  accent="#10B981" />
-                <ModelDetailBlock title="Weaknesses" items={details.weaknesses} accent="#F43F5E" />
+                <ModelDetailBlock title={t("results.strengths")} items={details.strengths} accent="#10B981" />
+                <ModelDetailBlock title={t("results.weaknesses")} items={details.weaknesses} accent="#F43F5E" />
               </div>
               <div className="pt-2">
                 <div className="flex items-center justify-between mb-1.5 text-[12px] text-white/60">
-                  <span className="uppercase tracking-[0.2em] text-[10.5px]">Confidence</span>
+                  <span className="uppercase tracking-[0.2em] text-[10.5px]">{t("results.confidence")}</span>
                   <span className="font-mono text-white/85">{details.confidence}%</span>
                 </div>
                 <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
@@ -1014,13 +1047,13 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
 
 function ModelDetailBlock({ title, items, accent }) {
   return (
-    <div>
-      <div className="text-[10.5px] uppercase tracking-[0.22em] text-white/45 mb-2">{title}</div>
+    <div className="min-w-0 max-w-full">
+      <div className="mb-2 break-words text-[10.5px] uppercase tracking-[0.22em] text-white/45 [overflow-wrap:anywhere]">{title}</div>
       <ul className="space-y-1.5">
         {items.map((t, i) => (
-          <li key={i} className="flex gap-2 text-[13px] text-white/75 leading-relaxed">
+          <li key={i} className="flex min-w-0 gap-2 text-[13px] leading-relaxed text-white/75">
             <span className="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: accent }} />
-            <span>{t}</span>
+            <span className="min-w-0 break-words [overflow-wrap:anywhere]">{t}</span>
           </li>
         ))}
       </ul>
@@ -1031,7 +1064,7 @@ function ModelDetailBlock({ title, items, accent }) {
 function TierCard({ accent, label, badge, whyLabel, why, testId, children }) {
   return (
     <div
-      className="relative rounded-2xl border p-6 backdrop-blur-xl"
+      className="relative min-w-0 max-w-full rounded-2xl border p-4 backdrop-blur-xl sm:p-6"
       style={{
         borderColor: `${accent}40`,
         background: `linear-gradient(180deg, ${accent}0d, rgba(11,17,32,0.75) 60%)`,
@@ -1040,18 +1073,18 @@ function TierCard({ accent, label, badge, whyLabel, why, testId, children }) {
       data-testid={testId}
     >
       <div className="flex items-start justify-between mb-4 gap-3">
-        <div className="flex items-center gap-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${accent}20`, border: `1px solid ${accent}55` }}>
             {badge}
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: accent }}>{whyLabel}</div>
-            <div className="text-[16px] font-semibold text-white tracking-tight">{label}</div>
+            <div className="break-words text-[16px] font-semibold tracking-tight text-white [overflow-wrap:anywhere]">{label}</div>
           </div>
         </div>
       </div>
       {why && (
-        <p className="text-[12.5px] text-white/50 leading-relaxed mb-4">{why}</p>
+        <p className="mb-4 break-words text-[12.5px] leading-relaxed text-white/50 [overflow-wrap:anywhere]">{why}</p>
       )}
       <div className="space-y-3">{children}</div>
     </div>
@@ -1071,8 +1104,8 @@ function FullConsensusCard({ tier }) {
     >
       {tier.items.map((it, i) => (
         <div key={i} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3" data-testid={`full-item-${i}`}>
-          <div className="text-[13.5px] text-white/85 leading-relaxed">{it.text}</div>
-          <div className="mt-1.5 text-[11.5px] text-white/40 italic">{it.why}</div>
+          <div className="break-words text-[13.5px] leading-relaxed text-white/85 [overflow-wrap:anywhere]">{it.text}</div>
+          <div className="mt-1.5 break-words text-[11.5px] italic text-white/40 [overflow-wrap:anywhere]">{it.why}</div>
         </div>
       ))}
     </TierCard>
@@ -1093,7 +1126,7 @@ function PartialConsensusCard({ tier, modelById }) {
       {tier.items.map((it, i) => (
         <div key={i} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3" data-testid={`partial-item-${i}`}>
           <div className="flex items-start justify-between gap-3 mb-2">
-            <div className="text-[13.5px] text-white/85 leading-relaxed flex-1">{it.text}</div>
+            <div className="min-w-0 flex-1 break-words text-[13.5px] leading-relaxed text-white/85 [overflow-wrap:anywhere]">{it.text}</div>
             <span className="text-[10.5px] font-mono px-1.5 py-0.5 rounded-md border border-[#00E5FF]/40 text-[#00E5FF] flex-shrink-0">{it.confidence}%</span>
           </div>
           <div className="flex flex-wrap gap-1.5 mb-2">
@@ -1104,7 +1137,7 @@ function PartialConsensusCard({ tier, modelById }) {
               <ModelChip key={mid} m={modelById[mid]} tone="disagree" />
             ))}
           </div>
-          <div className="text-[11.5px] text-white/45 italic">{it.why}</div>
+          <div className="break-words text-[11.5px] italic text-white/45 [overflow-wrap:anywhere]">{it.why}</div>
         </div>
       ))}
     </TierCard>
@@ -1133,9 +1166,9 @@ function DisagreementsCard({ tier, modelById }) {
                   <div className="w-7 h-7 rounded-md border flex-shrink-0 flex items-center justify-center text-[10.5px] font-medium mt-0.5" style={{ backgroundColor: `${m.accent}18`, borderColor: `${m.accent}55`, color: m.accent }}>
                     {m.initials}
                   </div>
-                  <div className="flex-1">
-                    <div className="text-[12px] font-medium text-white">{m.label}</div>
-                    <div className="text-[13px] text-white/75 leading-relaxed mt-0.5">“{p.stance}”</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="break-words text-[12px] font-medium text-white [overflow-wrap:anywhere]">{m.label}</div>
+                    <div className="mt-0.5 break-words text-[13px] leading-relaxed text-white/75 [overflow-wrap:anywhere]">“{p.stance}”</div>
                   </div>
                 </div>
               );
@@ -1163,15 +1196,15 @@ function UniqueInsightsCard({ tier, modelById }) {
         return (
           <div key={i} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3" data-testid={`unique-item-${i}`}>
             <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2 text-[12px] text-white/70">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 text-[12px] text-white/70">
                 <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: m.accent }} />
-                <span className="font-medium text-white">{m.label}</span>
-                <span className="text-white/40">only</span>
+                <span className="break-words font-medium text-white [overflow-wrap:anywhere]">{m.label}</span>
+                <span className="text-white/40">{t("results.only")}</span>
               </div>
               <span className="text-[10.5px] font-mono px-1.5 py-0.5 rounded-md border border-[#A78BFA]/40 text-[#A78BFA]">{it.label}</span>
             </div>
-            <div className="text-[13.5px] text-white/85 leading-relaxed">{it.text}</div>
-            <div className="mt-1.5 text-[11.5px] text-white/45 italic">Why it may still be valuable: {it.value}</div>
+            <div className="break-words text-[13.5px] leading-relaxed text-white/85 [overflow-wrap:anywhere]">{it.text}</div>
+            <div className="mt-1.5 break-words text-[11.5px] italic text-white/45 [overflow-wrap:anywhere]">{t("results.whyStillValuable")}: {it.value}</div>
           </div>
         );
       })}
@@ -1197,23 +1230,24 @@ function ModelChip({ m, tone }) {
 }
 
 function EvidenceMeterSection() {
+  const { t } = useI18n();
   return (
     <motion.section
       initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-80px" }}
       transition={{ duration: 0.6 }}
-      className="mt-14 rounded-3xl border border-white/[0.08] bg-[#0B1120]/80 backdrop-blur-xl p-6 md:p-8"
+      className="mt-14 min-w-0 max-w-full rounded-3xl border border-white/[0.08] bg-[#0B1120]/80 p-4 backdrop-blur-xl sm:p-6 md:p-8"
       data-testid="evidence-meter"
     >
       <div className="flex items-start justify-between gap-6 flex-wrap">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80 mb-2">Evidence Meter</div>
-          <h3 className="text-xl md:text-2xl font-semibold tracking-tight text-white">How defensible is this answer?</h3>
-          <p className="mt-2 text-[13.5px] text-white/55 max-w-xl leading-relaxed">{EVIDENCE_METER.note}</p>
+          <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80 mb-2">{t("results.evidenceMeter")}</div>
+          <h3 className="break-words text-xl font-semibold tracking-tight text-white [overflow-wrap:anywhere] md:text-2xl">{t("results.evidenceTitle")}</h3>
+          <p className="mt-2 max-w-xl break-words text-[13.5px] leading-relaxed text-white/55 [overflow-wrap:anywhere]">{t("results.evidenceNote")}</p>
         </div>
         <div className="text-right">
-          <div className="text-[10.5px] uppercase tracking-[0.22em] text-white/40">Total score</div>
+          <div className="text-[10.5px] uppercase tracking-[0.22em] text-white/40">{t("results.totalScore")}</div>
           <div className="text-5xl md:text-6xl font-semibold text-white leading-none mt-1" data-testid="evidence-meter-total">
             {EVIDENCE_METER.total}
             <span className="text-white/40 text-2xl font-normal ml-1">/100</span>
@@ -1244,8 +1278,8 @@ function EvidenceMeterSection() {
           <div key={c.key} data-testid={`evidence-${c.key}`}>
             <div className="flex items-center justify-between mb-1.5 text-[13px]">
               <div className="text-white/85 flex items-center gap-2">
-                <span className="font-medium">{c.label}</span>
-                <span className="text-[10.5px] text-white/40 font-mono">weight {c.weight}%</span>
+                <span className="break-words font-medium [overflow-wrap:anywhere]">{t(`results.evidenceComponents.${c.key}`)}</span>
+                <span className="text-[10.5px] text-white/40 font-mono">{t("results.weight")} {c.weight}%</span>
               </div>
               <span className="font-mono text-white/70">{c.value}</span>
             </div>
@@ -1260,7 +1294,7 @@ function EvidenceMeterSection() {
               />
             </div>
             {c.note && (
-              <div className="mt-1 text-[11.5px] text-[#A78BFA]/80 italic">{c.note}</div>
+              <div className="mt-1 break-words text-[11.5px] italic text-[#A78BFA]/80 [overflow-wrap:anywhere]">{t("results.citationLookupSoon")}</div>
             )}
           </div>
         ))}
@@ -1270,12 +1304,13 @@ function EvidenceMeterSection() {
 }
 
 function ConsensusEvolutionTimeline() {
+  const { t } = useI18n();
   return (
-    <section className="mt-16" data-testid="evolution-timeline">
+    <section className="mt-16 min-w-0 max-w-full" data-testid="evolution-timeline">
       <SectionHeader
-        eyebrow="Consensus Evolution"
-        title="How Referee arrived here"
-        body="From your question to the final verdict — five phases, each visible."
+        eyebrow={t("results.consensusEvolution")}
+        title={t("results.evolutionTitle")}
+        body={t("results.evolutionBody")}
       />
       <div className="mt-8 relative">
         {/* connector line — desktop */}
@@ -1296,8 +1331,8 @@ function ConsensusEvolutionTimeline() {
                   0{i + 1}
                 </div>
                 <div className="md:mt-4">
-                  <div className="text-[14px] font-medium text-white tracking-tight">{s.title}</div>
-                  <div className="text-[12.5px] text-white/50 leading-snug mt-1">{s.body}</div>
+                  <div className="break-words text-[14px] font-medium tracking-tight text-white [overflow-wrap:anywhere]">{t(`results.evolutionSteps.${s.id}.title`)}</div>
+                  <div className="mt-1 break-words text-[12.5px] leading-snug text-white/50 [overflow-wrap:anywhere]">{t(`results.evolutionSteps.${s.id}.body`)}</div>
                 </div>
               </div>
               {/* mobile connector */}
@@ -1319,15 +1354,15 @@ function RationaleCard({ index, title, body, testId }) {
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
       transition={{ duration: 0.5, delay: index * 0.06 }}
-      className="rounded-2xl border border-white/[0.08] bg-[#0B1120]/70 backdrop-blur p-6"
+      className="min-w-0 max-w-full rounded-2xl border border-white/[0.08] bg-[#0B1120]/70 p-4 backdrop-blur sm:p-6"
       data-testid={testId}
     >
       <div className="flex items-center gap-2 mb-3">
         <span className="text-[10px] font-mono text-[#00E5FF]/80 tracking-widest">0{index}</span>
         <span className="h-px flex-1 bg-white/[0.08]" />
       </div>
-      <div className="text-[15px] font-medium text-white tracking-tight leading-snug">{title}</div>
-      <p className="mt-2 text-[13.5px] text-white/60 leading-relaxed">{body}</p>
+      <div className="break-words text-[15px] font-medium leading-snug tracking-tight text-white [overflow-wrap:anywhere]">{title}</div>
+      <p className="mt-2 break-words text-[13.5px] leading-relaxed text-white/60 [overflow-wrap:anywhere]">{body}</p>
     </motion.div>
   );
 }
@@ -1376,10 +1411,10 @@ function AnimatedMeter({ label, value, accent, testId }) {
 
 function SectionHeader({ eyebrow, title, body, className = "" }) {
   return (
-    <div className={"max-w-2xl " + className}>
-      <div className="text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80 mb-3">{eyebrow}</div>
-      <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-white leading-tight">{title}</h2>
-      <p className="mt-3 text-[14px] text-white/55 leading-relaxed">{body}</p>
+    <div className={"min-w-0 max-w-2xl " + className}>
+      <div className="mb-3 break-words text-[11px] uppercase tracking-[0.22em] text-[#00E5FF]/80 [overflow-wrap:anywhere]">{eyebrow}</div>
+      <h2 className="break-words text-2xl font-semibold leading-tight tracking-tight text-white [overflow-wrap:anywhere] md:text-3xl">{title}</h2>
+      <p className="mt-3 break-words text-[14px] leading-relaxed text-white/55 [overflow-wrap:anywhere]">{body}</p>
     </div>
   );
 }

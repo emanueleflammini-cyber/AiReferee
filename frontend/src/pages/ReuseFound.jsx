@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
 import { useI18n } from "@/lib/i18n";
+import { translateEnum } from "@/lib/resultPresentation";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -59,14 +60,14 @@ export default function ReuseFound() {
 
   const cost = savings?.cost_saved_usd || 0;
   const timeSec = ((savings?.response_time_saved_ms || 0) / 1000).toFixed(1);
-  const metricValue = (legacyValue, qualitativeValue) => (
+  const metricValue = (legacyValue, qualitativeValue, prefix) => (
     typeof legacyValue === "number"
       ? `${legacyValue}%`
-      : (qualitativeValue ? qualitativeValue.toUpperCase() : "—")
+      : translateEnum(t, prefix, qualitativeValue)
   );
 
   return (
-    <div className="relative min-h-screen bg-[#060A14] text-white overflow-hidden" data-testid="reuse-found-page">
+    <div className="relative min-h-screen max-w-full overflow-x-hidden bg-[#060A14] text-white" data-testid="reuse-found-page">
       <div className="pointer-events-none absolute inset-0 opacity-60 grid-pattern" />
       <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full blur-3xl opacity-25"
         style={{ background: "radial-gradient(circle, rgba(0,229,255,0.25), transparent 70%)" }} />
@@ -74,9 +75,10 @@ export default function ReuseFound() {
 
       <main className="relative mx-auto max-w-3xl px-5 md:px-8 pt-10 md:pt-14 pb-24">
         <button
+          type="button"
           onClick={() => navigate("/")}
           data-testid="reuse-back"
-          className="inline-flex items-center gap-1.5 text-[13px] text-white/50 hover:text-white transition-colors"
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-lg text-[13px] text-white/50 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#060A14]"
         >
           <ArrowLeft className="w-3.5 h-3.5" /> {t("nav.back")}
         </button>
@@ -94,13 +96,13 @@ export default function ReuseFound() {
 
         <motion.section
           initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, delay: 0.1 }}
-          className="mt-8 rounded-3xl border border-white/[0.08] bg-[#0B1120]/80 backdrop-blur-xl p-6 md:p-8"
+          className="mt-8 min-w-0 max-w-full rounded-3xl border border-white/[0.08] bg-[#0B1120]/80 p-4 backdrop-blur-xl sm:p-6 md:p-8"
           data-testid="match-card"
         >
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="flex-1 min-w-0">
-              <div className="text-[11px] uppercase tracking-[0.22em] text-white/40 mb-2">Previous question</div>
-              <div className="text-lg md:text-xl text-white leading-snug tracking-tight" data-testid="match-prompt">
+              <div className="mb-2 text-[11px] uppercase tracking-[0.22em] text-white/40">{t("reuse.previousQuestion")}</div>
+              <div className="break-words text-lg leading-snug tracking-tight text-white [overflow-wrap:anywhere] md:text-xl" data-testid="match-prompt">
                 “{match.prompt}”
               </div>
             </div>
@@ -135,16 +137,16 @@ export default function ReuseFound() {
             )}
           </div>
 
-          <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
             <MetaTile icon={Clock} label={t("reuse.age")} value={`${match.age_days}${t("reuse.days")}`} testId="match-age" />
-            <MetaTile icon={Gauge} label={t("reuse.confidence")} value={metricValue(match.confidence, match.confidence_level)} testId="match-confidence" />
-            <MetaTile icon={Trophy} label={t("reuse.consensus")} value={metricValue(match.consensus, match.consensus_level)} testId="match-consensus" />
-            <MetaTile icon={ShieldCheck} label={t("reuse.trust")} value={metricValue(match.trust, match.evidence_quality)} testId="match-trust" />
+            <MetaTile icon={Gauge} label={t("reuse.confidence")} value={metricValue(match.confidence, match.confidence_level, "results.structured.level")} testId="match-confidence" />
+            <MetaTile icon={Trophy} label={t("reuse.consensus")} value={metricValue(match.consensus, match.consensus_level, "results.structured.level")} testId="match-consensus" />
+            <MetaTile icon={ShieldCheck} label={t("reuse.trust")} value={metricValue(match.trust, match.evidence_quality, "results.structured.level")} testId="match-trust" />
           </div>
 
           {/* Savings strip */}
           {savings && (
-            <div className="mt-6 grid grid-cols-3 gap-3" data-testid="savings-strip">
+            <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3" data-testid="savings-strip">
               <MetaTile icon={Zap} accent="#10B981" label={t("reuse.apiCallsAvoided")} value={savings.api_calls_avoided} testId="save-calls" />
               <MetaTile icon={Coins} accent="#00E5FF" label={t("reuse.costSaved")} value={`~$${cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`} testId="save-cost" />
               <MetaTile icon={Timer} accent="#F59E0B" label={t("reuse.timeSaved")} value={`~${timeSec}${t("reuse.seconds")}`} testId="save-time" />
@@ -153,9 +155,10 @@ export default function ReuseFound() {
 
           <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button
+              type="button"
               onClick={useExisting}
               data-testid="reuse-use-existing"
-              className="group inline-flex items-center justify-center gap-2 rounded-2xl bg-white text-[#060A14] font-medium px-5 py-3.5 text-[14px] hover:bg-white/90 transition-colors"
+              className="group inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3.5 text-[14px] font-medium text-[#060A14] transition-colors hover:bg-white/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120]"
               style={{ boxShadow: "0 20px 50px -18px rgba(0,229,255,0.6)" }}
             >
               <Recycle className="w-4 h-4" />
@@ -163,9 +166,10 @@ export default function ReuseFound() {
               <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
             </button>
             <button
+              type="button"
               onClick={refresh}
               data-testid="reuse-refresh"
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] text-white font-medium px-5 py-3.5 text-[14px] transition-colors"
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-3.5 text-[14px] font-medium text-white transition-colors hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120]"
             >
               <Sparkles className="w-4 h-4 text-[#00E5FF]" />
               {t("reuse.refresh")}
@@ -184,13 +188,13 @@ export default function ReuseFound() {
 
 function MetaTile({ icon: Icon, label, value, testId, accent = "#ffffff40" }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 flex items-center gap-2.5" data-testid={testId}>
+    <div className="flex min-w-0 max-w-full items-center gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3" data-testid={testId}>
       <div className="w-7 h-7 rounded-md bg-white/[0.03] border border-white/10 flex items-center justify-center">
         <Icon className="w-3.5 h-3.5" style={{ color: accent }} />
       </div>
-      <div className="min-w-0">
-        <div className="text-[10px] uppercase tracking-[0.22em] text-white/40 truncate">{label}</div>
-        <div className="text-[14px] text-white font-medium leading-tight mt-0.5 truncate">{value}</div>
+      <div className="min-w-0 flex-1">
+        <div className="break-words text-[10px] uppercase tracking-[0.22em] text-white/40 [overflow-wrap:anywhere]">{label}</div>
+        <div className="mt-0.5 break-words text-[14px] font-medium leading-tight text-white [overflow-wrap:anywhere]">{value}</div>
       </div>
     </div>
   );
