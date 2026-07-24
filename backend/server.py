@@ -28,7 +28,12 @@ from providers.plans import PLAN_ENTITLEMENTS, Plan  # noqa: E402
 from providers.embeddings import get_or_create_embedding, cosine, EMBED_MODEL  # noqa: E402
 from providers.language import detect_language, normalize_prompt as lang_normalize, SUPPORTED as SUPPORTED_LANGS  # noqa: E402
 from providers.translator import Translator, LANG_NAMES  # noqa: E402
-from providers.synthesizer import Synthesizer  # noqa: E402
+from providers.synthesizer import Synthesizer, SynthesisFailure  # noqa: E402
+from providers.conclusion_schema import (  # noqa: E402
+    TrustedConclusionV2,
+    eligible_synthesis_answers,
+    normalize_stored_conclusion,
+)
 from auth import IdentityContext, get_identity, require_admin, enforce_daily_compare_limit  # noqa: E402
 
 mongo_url = os.environ['MONGO_URL']
@@ -326,8 +331,10 @@ async def match_query(req: MatchRequest):
             ttl_days=ttl, thresholds=thresholds,
         )
 
-    # Trust guardrail
-    if best_doc.get("trust_score", 0) < 60:
+    # Legacy numeric guardrail. Trusted Conclusion 2.0 uses qualitative
+    # confidence and therefore does not manufacture a replacement percentage.
+    legacy_trust_score = best_doc.get("trust_score")
+    if legacy_trust_score is not None and legacy_trust_score < 60:
         return MatchResponse(
             policy="reusable", topic=topic, question_language=q_lang,
             reason="A match exists but its trust score is below the reuse floor.",
@@ -340,6 +347,11 @@ async def match_query(req: MatchRequest):
             else "weak")
     needs_translation = (best_method == "embedding") and (stored_lang != target_lang)
 
+    structured_confidence = (
+        (best_doc.get("trusted_conclusion_structured") or {}).get("confidence")
+        or {}
+    )
+    structured_factors = structured_confidence.get("factors") or {}
     match = {
         "id": best_doc["id"],
         "prompt": best_doc["prompt"],
@@ -348,9 +360,12 @@ async def match_query(req: MatchRequest):
         "similarity": round(best_score * 100),
         "similarity_tier": tier,
         "match_method": best_method,
-        "confidence": best_doc.get("confidence", 82),
-        "consensus": best_doc.get("consensus", 87),
-        "trust": best_doc.get("trust_score", 92),
+        "confidence": best_doc.get("confidence"),
+        "consensus": best_doc.get("consensus"),
+        "trust": best_doc.get("trust_score"),
+        "confidence_level": structured_confidence.get("level"),
+        "consensus_level": structured_factors.get("model_agreement"),
+        "evidence_quality": structured_factors.get("evidence_quality"),
         "topic": topic,
         "original_language": stored_lang,
         "answer_language": target_lang,
@@ -408,11 +423,32 @@ async def get_conclusion(conclusion_id: str, lang: str = "en"):
     """
     target = (lang or "en").lower()
     resp = await _translate_or_fetch(conclusion_id, target)
+    doc = await db.conclusions.find_one({"id": conclusion_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Conclusion not found")
+
+    translations = doc.get("translations") or {}
+    translated_entry = translations.get(target) or {}
+    structured_candidate = translated_entry.get("structured_conclusion")
+    if not isinstance(structured_candidate, dict):
+        stored_language = doc.get("trusted_conclusion_language")
+        if stored_language == target:
+            structured_candidate = doc.get("trusted_conclusion_structured")
+    structured, schema_version = normalize_stored_conclusion(
+        {"trusted_conclusion_structured": structured_candidate}
+    )
+    default_status = "SUCCESS" if structured else ("LEGACY" if resp.text else "FAILED")
     return {
         "id": conclusion_id,
         "language": resp.target_language,
         "source_language": resp.source_language,
         "trusted_conclusion": resp.text,
+        "trusted_conclusion_structured": structured,
+        "conclusion_schema_version": schema_version,
+        "synthesis_status": doc.get("synthesis_status") or default_status,
+        "synthesis_error": doc.get("synthesis_error"),
+        "execution_mode": doc.get("execution_mode", "LIVE"),
+        "provider_statuses": doc.get("provider_statuses") or [],
         "cache_hit": resp.cache_hit,
         "model_used": resp.model_used,
     }
@@ -422,7 +458,7 @@ async def _translate_or_fetch(conclusion_id: str, target: str) -> "TranslateResp
     doc = await db.conclusions.find_one({"id": conclusion_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Conclusion not found")
-    source_lang = doc.get("language", "en")
+    source_lang = doc.get("trusted_conclusion_language") or doc.get("language", "en")
     source_version = doc.get("version", 1)
 
     # 1) Fast paths — the conclusion is already stored in the target language.
@@ -456,44 +492,8 @@ async def _translate_or_fetch(conclusion_id: str, target: str) -> "TranslateResp
 
     # 3) Real translation call — ONLY the final conclusion body.
     if not body:
-        # Legacy row (created before synthesis was wired). If we have the raw
-        # model responses on the conclusion, synthesise the Trusted Conclusion
-        # on demand in the target language and persist it for next time.
-        responses = doc.get("responses") or []
-        answers = [
-            {"id": r.get("id"), "label": r.get("label"), "provider": r.get("provider"), "text": r.get("text")}
-            for r in responses if (r.get("text") or "").strip()
-        ]
-        if answers:
-            try:
-                synth = Synthesizer()
-                if synth.available:
-                    s = await synth.synthesize(
-                        doc.get("prompt", ""), answers, target,
-                        doc.get("audience", "professional"), doc.get("format", "paragraph"),
-                    )
-                    text_out = s["text"]
-                    now_iso = datetime.now(timezone.utc).isoformat()
-                    await db.conclusions.update_one(
-                        {"id": conclusion_id},
-                        {"$set": {
-                            "trusted_conclusion": text_out if source_lang == target else "",
-                            "trusted_conclusion_language": target,
-                            f"translations.{target}": {
-                                "text": text_out, "model": s["model_used"], "generated_at": now_iso,
-                            },
-                        }},
-                    )
-                    return TranslateResponse(
-                        conclusion_id=conclusion_id, source_language=source_lang, target_language=target,
-                        text=text_out, cache_hit=False,
-                        input_tokens=s["input_tokens"], output_tokens=s["output_tokens"],
-                        latency_ms=s["latency_ms"], cost_usd=float(s.get("cost_usd") or 0.0), model_used=s["model_used"],
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logging.getLogger(__name__).warning("On-demand synthesis failed for %s: %s", conclusion_id, exc)
-        # Truly nothing to translate — return empty conclusion so the frontend
-        # can render a graceful "conclusion not available yet" state.
+        # Never manufacture structured sections while reading a legacy row.
+        # Return an explicit empty result for records with no stored text.
         return TranslateResponse(
             conclusion_id=conclusion_id, source_language=source_lang, target_language=target,
             text="", cache_hit=False,
@@ -661,8 +661,12 @@ class CompareResponse(BaseModel):
     mock_count: int = 0
     total_cost_usd: float = 0.0
     total_latency_ms: int = 0
-    # NEW — synthesised Trusted Conclusion, always in `answer_language`.
+    # Backward-compatible text plus the validated 2.0 contract.
     trusted_conclusion: str = ""
+    trusted_conclusion_structured: Optional[TrustedConclusionV2] = None
+    conclusion_schema_version: Optional[str] = None
+    synthesis_status: str = "FAILED"
+    synthesis_error: Optional[str] = None
     answer_language: str = "en"
     synthesis_model: str = ""
     synthesis_latency_ms: int = 0
@@ -822,25 +826,50 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         target_lang = "en"
 
     synth_text = ""
+    synth_structured: Optional[dict] = None
+    synth_schema_version: Optional[str] = None
+    synthesis_status = "FAILED"
+    synthesis_error: Optional[str] = None
+    synthesis_repair_attempted = False
     synth_model_used = ""
     synth_latency_ms = 0
     synth_cost_usd = 0.0
-    try:
-        synth = Synthesizer()
-        if synth.available:
-            answers_for_synth = [
-                {"id": r.id, "label": r.label, "provider": r.provider, "text": r.text}
-                for r in responses
-                if r.provider_status in ("LIVE", "MOCK") and (r.text or "").strip()
-            ]
+    answers_for_synth = eligible_synthesis_answers(responses, execution_mode)
+    if not answers_for_synth:
+        synthesis_error = (
+            "Trusted Conclusion is unavailable because no provider returned "
+            "usable evidence."
+        )
+    else:
+        try:
+            synth = Synthesizer()
+            if not synth.available:
+                raise SynthesisFailure(
+                    "Trusted Conclusion is unavailable because the synthesis "
+                    "provider is not configured."
+                )
             if answers_for_synth:
                 s = await synth.synthesize(prompt, answers_for_synth, target_lang, audience, fmt)
                 synth_text = s["text"]
+                synth_structured = s["structured_conclusion"]
+                synth_schema_version = s["schema_version"]
+                synthesis_status = "SUCCESS"
+                synthesis_repair_attempted = bool(s.get("repair_attempted"))
                 synth_model_used = s["model_used"]
                 synth_latency_ms = s["latency_ms"]
                 synth_cost_usd = float(s.get("cost_usd") or 0.0)
-    except Exception as e:  # noqa: BLE001
-        logging.getLogger(__name__).warning("Trusted Conclusion synthesis failed: %s", e)
+        except SynthesisFailure as exc:
+            synthesis_error = str(exc)
+            logging.getLogger(__name__).warning(
+                "Trusted Conclusion synthesis failed: %s",
+                type(exc).__name__,
+            )
+        except Exception as exc:  # Defence in depth: never expose raw errors.
+            synthesis_error = "Trusted Conclusion synthesis failed unexpectedly."
+            logging.getLogger(__name__).warning(
+                "Unexpected Trusted Conclusion failure: %s",
+                type(exc).__name__,
+            )
 
     # Persist the synthesised conclusion so Smart Reuse can serve it later.
     # This is now an UPSERT — the conclusions row is created ONLY after a real
@@ -854,6 +883,14 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         vec, embed_meta = await get_or_create_embedding(db, prompt)
         q_vec = list(vec) if vec is not None else None
         q_embed_model = embed_meta.get("model")
+    provider_statuses = [
+        {
+            "id": response.id,
+            "provider_name": response.provider_name,
+            "provider_status": response.provider_status,
+        }
+        for response in responses
+    ]
     try:
         await db.conclusions.update_one(
             {"id": query_id},
@@ -861,22 +898,31 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                 "$set": {
                     "responses": [r.model_dump() for r in responses],
                     "execution_mode": execution_mode,
+                    "provider_statuses": provider_statuses,
                     "live_count": live_count,
                     "total_cost_usd": round(total_cost, 6),
                     "generated_at": now_iso,
-                    # Multilingual fields:
+                    "conclusion_created_at": now_iso,
                     "trusted_conclusion": synth_text,
+                    "trusted_conclusion_structured": synth_structured,
+                    "conclusion_schema_version": synth_schema_version,
                     "trusted_conclusion_language": target_lang,
+                    "synthesis_status": synthesis_status,
+                    "synthesis_error": synthesis_error,
+                    "synthesis_repair_attempted": synthesis_repair_attempted,
                     "synthesis_model": synth_model_used,
                     "is_public": (
                         execution_mode == "LIVE"
-                        and bool(synth_text)
+                        and synthesis_status == "SUCCESS"
+                        and bool(synth_structured)
                         and q_topic in ("technical", "stable")
                     ),
                     # Multilingual reuse cache: keyed by language so subsequent
                     # readers in the same language pay no translation cost.
                     f"translations.{target_lang}": {
                         "text": synth_text,
+                        "structured_conclusion": synth_structured,
+                        "schema_version": synth_schema_version,
                         "model": synth_model_used,
                         "generated_at": now_iso,
                     },
@@ -888,9 +934,6 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                     "prompt_tokens": list(tokens_of(prompt)),
                     "topic": q_topic,
                     "language": q_lang,
-                    "trust_score": 92,
-                    "consensus": 87,
-                    "confidence": 82,
                     # Cacheable topics only. `is_public` gates whether Smart Reuse
                     # searches this row on subsequent matches.
                     "is_time_sensitive": q_topic == "news",
@@ -918,6 +961,10 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         total_cost_usd=round(total_cost + synth_cost_usd, 6),
         total_latency_ms=total_latency + synth_latency_ms,
         trusted_conclusion=synth_text,
+        trusted_conclusion_structured=synth_structured,
+        conclusion_schema_version=synth_schema_version,
+        synthesis_status=synthesis_status,
+        synthesis_error=synthesis_error,
         answer_language=target_lang,
         synthesis_model=synth_model_used,
         synthesis_latency_ms=synth_latency_ms,

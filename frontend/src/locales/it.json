@@ -130,6 +130,7 @@
     "synthesizing": "Sto sintetizzando la Conclusione Affidabile…",
     "noConclusion": "La Conclusione Affidabile non è disponibile per questa risposta riutilizzata. Aggiorna con un nuovo confronto per generarla.",
     "synthesizedFromLive": "Sintetizzata da {n} modelli attivi",
+    "synthesizedFromMock": "Sintetizzata da {n} modelli demo",
     "transparencyEyebrow": "Trasparenza",
     "rationaleEyebrow": "Motivazione dell'arbitro",
     "rationaleBody": "Tre spiegazioni sintetiche del perché questa conclusione batte ogni alternativa considerata da Referee.",
@@ -161,7 +162,32 @@
       "news": "NOTIZIE",
       "sensitive": "SENSIBILE"
     },
-    "addKeys": "Aggiungi altre chiavi provider in"
+    "addKeys": "Aggiungi altre chiavi provider in",
+    "structured": {
+      "synthesisFailed": "Conclusione Affidabile non disponibile",
+      "legacy": "Conclusione precedente",
+      "confidence": "Affidabilità",
+      "whyVerdict": "Perché questa conclusione?",
+      "modelAgreement": "Accordo tra i modelli",
+      "evidenceQuality": "Qualità delle prove",
+      "uncertainty": "Incertezza",
+      "agreements": "Punti di accordo",
+      "disagreements": "Punti di disaccordo",
+      "strongestEvidence": "Elementi più solidi",
+      "remainingUncertainties": "Incertezze rimanenti",
+      "unsupportedClaims": "Affermazioni non supportate",
+      "whatCouldChange": "Cosa potrebbe cambiare la conclusione",
+      "level": {
+        "high": "Alta",
+        "medium": "Media",
+        "low": "Bassa"
+      },
+      "sourceStatus": {
+        "model_reasoning": "Ragionamento del provider",
+        "provider_citation_unverified": "Citazione del provider — non verificata in modo indipendente",
+        "no_source": "Nessuna fonte fornita"
+      }
+    }
   },
   "badge": {
     "live": "ATTIVO", "mocked": "SIMULATO", "fallback": "RISERVA",

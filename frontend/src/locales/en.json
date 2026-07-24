@@ -135,6 +135,7 @@
     "synthesizing": "Synthesising Trusted Conclusion…",
     "noConclusion": "The Trusted Conclusion is not available for this reused answer. Refresh with a new comparison to generate it.",
     "synthesizedFromLive": "Synthesized from {n} live models",
+    "synthesizedFromMock": "Synthesized from {n} demo models",
     "transparencyEyebrow": "Transparency",
     "rationaleEyebrow": "Referee's rationale",
     "rationaleBody": "Three concise explanations for why this conclusion beats every alternative Referee considered.",
@@ -166,7 +167,32 @@
       "news": "NEWS",
       "sensitive": "SENSITIVE"
     },
-    "addKeys": "Add more provider keys in"
+    "addKeys": "Add more provider keys in",
+    "structured": {
+      "synthesisFailed": "Trusted Conclusion unavailable",
+      "legacy": "Legacy conclusion",
+      "confidence": "Confidence",
+      "whyVerdict": "Why this conclusion?",
+      "modelAgreement": "Model agreement",
+      "evidenceQuality": "Evidence quality",
+      "uncertainty": "Uncertainty",
+      "agreements": "Agreements",
+      "disagreements": "Disagreements",
+      "strongestEvidence": "Strongest evidence",
+      "remainingUncertainties": "Remaining uncertainties",
+      "unsupportedClaims": "Unsupported claims",
+      "whatCouldChange": "What could change the conclusion",
+      "level": {
+        "high": "High",
+        "medium": "Medium",
+        "low": "Low"
+      },
+      "sourceStatus": {
+        "model_reasoning": "Provider reasoning",
+        "provider_citation_unverified": "Provider citation — not independently verified",
+        "no_source": "No source supplied"
+      }
+    }
   },
   "badge": {
     "live": "LIVE", "mocked": "MOCKED", "fallback": "FALLBACK",

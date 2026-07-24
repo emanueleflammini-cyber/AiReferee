@@ -59,6 +59,11 @@ export default function ReuseFound() {
 
   const cost = savings?.cost_saved_usd || 0;
   const timeSec = ((savings?.response_time_saved_ms || 0) / 1000).toFixed(1);
+  const metricValue = (legacyValue, qualitativeValue) => (
+    typeof legacyValue === "number"
+      ? `${legacyValue}%`
+      : (qualitativeValue ? qualitativeValue.toUpperCase() : "—")
+  );
 
   return (
     <div className="relative min-h-screen bg-[#060A14] text-white overflow-hidden" data-testid="reuse-found-page">
@@ -132,9 +137,9 @@ export default function ReuseFound() {
 
           <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-3">
             <MetaTile icon={Clock} label={t("reuse.age")} value={`${match.age_days}${t("reuse.days")}`} testId="match-age" />
-            <MetaTile icon={Gauge} label={t("reuse.confidence")} value={`${match.confidence}%`} testId="match-confidence" />
-            <MetaTile icon={Trophy} label={t("reuse.consensus")} value={`${match.consensus}%`} testId="match-consensus" />
-            <MetaTile icon={ShieldCheck} label={t("reuse.trust")} value={`${match.trust}%`} testId="match-trust" />
+            <MetaTile icon={Gauge} label={t("reuse.confidence")} value={metricValue(match.confidence, match.confidence_level)} testId="match-confidence" />
+            <MetaTile icon={Trophy} label={t("reuse.consensus")} value={metricValue(match.consensus, match.consensus_level)} testId="match-consensus" />
+            <MetaTile icon={ShieldCheck} label={t("reuse.trust")} value={metricValue(match.trust, match.evidence_quality)} testId="match-trust" />
           </div>
 
           {/* Savings strip */}

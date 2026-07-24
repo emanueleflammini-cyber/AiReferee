@@ -31,6 +31,7 @@ import {
   Share2,
 } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
+import { StructuredConclusion } from "@/components/StructuredConclusion";
 import { useQueryState } from "@/lib/QueryContext";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -52,7 +53,6 @@ import {
   EVIDENCE_METER,
   EVOLUTION_STEPS,
   WHY_CHOSE_ANSWER,
-  MODEL_DETAILS,
 } from "@/lib/mockData";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -84,6 +84,10 @@ export default function Results() {
   const [liveCount, setLiveCount] = useState(0);
   const [totalCost, setTotalCost] = useState(0);
   const [trustedConclusion, setTrustedConclusion] = useState("");
+  const [structuredConclusion, setStructuredConclusion] = useState(null);
+  const [conclusionSchemaVersion, setConclusionSchemaVersion] = useState(null);
+  const [synthesisStatus, setSynthesisStatus] = useState("");
+  const [synthesisError, setSynthesisError] = useState("");
   const [conclusionLoading, setConclusionLoading] = useState(mode !== "reused");
   const [executionMode, setExecutionMode] = useState("LIVE");
   const [retryNonce, setRetryNonce] = useState(0);
@@ -98,6 +102,10 @@ export default function Results() {
     setCompletedModels([]);
     setLiveResponses(null);
     setTrustedConclusion("");
+    setStructuredConclusion(null);
+    setConclusionSchemaVersion(null);
+    setSynthesisStatus("");
+    setSynthesisError("");
     setConclusionLoading(true);
 
     if (!queryId) {
@@ -118,6 +126,10 @@ export default function Results() {
       setLiveCount(responses.filter((response) => response.provider_status === PROVIDER_STATUS.LIVE).length);
       setTotalCost(r.data?.total_cost_usd || 0);
       setTrustedConclusion(r.data?.trusted_conclusion || "");
+      setStructuredConclusion(r.data?.trusted_conclusion_structured || null);
+      setConclusionSchemaVersion(r.data?.conclusion_schema_version || null);
+      setSynthesisStatus(r.data?.synthesis_status || "");
+      setSynthesisError(r.data?.synthesis_error || "");
       if (r.data?.prompt) setSharePrompt(r.data.prompt);
       setCompletedModels(responses.map((response) => response.id));
       setPhase("analysis");
@@ -129,6 +141,8 @@ export default function Results() {
       setExecutionMode("LIVE");
       setLiveResponses(responses);
       setLiveCount(0);
+      setSynthesisStatus("FAILED");
+      setSynthesisError(reason);
       setCompletedModels(responses.map((response) => response.id));
       setPhase("analysis");
       setConclusionLoading(false);
@@ -147,15 +161,24 @@ export default function Results() {
       .then((r) => {
         if (cancelled) return;
         setTrustedConclusion(r.data?.trusted_conclusion || "");
+        setStructuredConclusion(r.data?.trusted_conclusion_structured || null);
+        setConclusionSchemaVersion(r.data?.conclusion_schema_version || null);
+        setSynthesisStatus(r.data?.synthesis_status || "");
+        setSynthesisError(r.data?.synthesis_error || "");
+        setExecutionMode(r.data?.execution_mode === "DEMO" ? "DEMO" : "LIVE");
         setConclusionLoading(false);
       })
       .catch((e) => {
         console.warn("Fetch reused conclusion failed", e);
+        setSynthesisStatus("FAILED");
+        setSynthesisError(e?.response?.data?.detail || e?.message || "Trusted Conclusion is unavailable.");
         setConclusionLoading(false);
       });
     return () => { cancelled = true; };
   }, [mode, reuseMatch, queryId, answerLanguage]);
 
+  // The pre-2.0 demo challenge remains dormant until it can consume
+  // backend-generated structured data. It must never populate real results.
   const [challengePhase, setChallengePhase] = useState("idle");
   const [challengeStep, setChallengeStep] = useState(0);
   const [challengeOutcome, setChallengeOutcome] = useState(null);
@@ -169,21 +192,23 @@ export default function Results() {
     const t = setTimeout(() => setAnalysisStep((s) => s + 1), 550);
     return () => clearTimeout(t);
   }, [phase, analysisStep]);
+
   useEffect(() => {
     if (challengePhase !== "running") return;
     if (challengeStep >= CHALLENGE_STEPS.length) {
-      const t = setTimeout(() => {
+      const timer = setTimeout(() => {
         setChallengeOutcome(CHALLENGE_OUTCOMES.strengthened);
         setChallengePhase("done");
       }, 500);
-      return () => clearTimeout(t);
+      return () => clearTimeout(timer);
     }
-    const t = setTimeout(() => setChallengeStep((s) => s + 1), 620);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setChallengeStep((step) => step + 1), 620);
+    return () => clearTimeout(timer);
   }, [challengePhase, challengeStep]);
 
-  const currentConfidence = challengeOutcome ? challengeOutcome.newConfidence : MOCK_SCORES.confidence;
-
+  const currentConfidence = challengeOutcome
+    ? challengeOutcome.newConfidence
+    : MOCK_SCORES.confidence;
   return (
     <div className="relative min-h-screen bg-[#060A14] text-white overflow-hidden" data-testid="results-page">
       <div className="pointer-events-none absolute inset-0 opacity-60 grid-pattern" />
@@ -306,6 +331,10 @@ export default function Results() {
             liveCount={liveCount}
             totalCost={totalCost}
             trustedConclusion={trustedConclusion}
+            structuredConclusion={structuredConclusion}
+            conclusionSchemaVersion={conclusionSchemaVersion}
+            synthesisStatus={synthesisStatus}
+            synthesisError={synthesisError}
             conclusionLoading={conclusionLoading}
             answerLanguage={answerLanguage}
             executionMode={executionMode}
@@ -327,8 +356,8 @@ export default function Results() {
   );
 }
 
-function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, onRetry, liveResponses, liveCount, totalCost, trustedConclusion, conclusionLoading, answerLanguage, executionMode, showProviderResults, prompt }) {
-  const modelById = useMemo(() => Object.fromEntries(MODELS.map((m) => [m.id, m])), []);
+function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, onRetry, liveResponses, liveCount, totalCost, trustedConclusion, structuredConclusion, conclusionSchemaVersion, synthesisStatus, synthesisError, conclusionLoading, answerLanguage, executionMode, showProviderResults, prompt }) {
+  const modelById = useMemo(() => Object.fromEntries(MODELS.map((model) => [model.id, model])), []);
   const { t } = useI18n();
   const liveById = useMemo(() => {
     if (!liveResponses) return {};
@@ -337,21 +366,12 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
   const failedCount = (liveResponses || []).filter((response) => response.provider_status === PROVIDER_STATUS.FAILED).length;
   const mockCount = (liveResponses || []).filter((response) => response.provider_status === PROVIDER_STATUS.MOCK).length;
   const isDemo = executionMode === "DEMO";
+  // Kept off until these legacy demo-only widgets are backed by the 2.0 API.
+  // This prevents fixed mockData analytics from being presented as a verdict.
+  const legacyDemoAnalyticsEnabled = false;
 
   return (
     <>
-      {/* Scores strip */}
-      {isDemo && <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-3"
-      >
-        <MeterCard label={t("results.confidence")} value={currentConfidence} accent="#00E5FF" testId="score-confidence" icon={Gauge} delta={challengeOutcome ? currentConfidence - MOCK_SCORES.confidence : 0} />
-        <MeterCard label={t("results.consensusLevel")} value={MOCK_SCORES.consensus} accent="#10B981" testId="score-consensus" icon={Trophy} />
-        <MeterCard label={t("results.trust")} value={MOCK_SCORES.trust} accent="#0066FF" testId="score-trust" icon={ShieldCheck} />
-      </motion.div>}
-
       {/* Live indicator strip */}
       {liveResponses && (
         <div className="mt-6 flex flex-wrap items-center gap-2 text-[12px] text-white/60" data-testid="live-status">
@@ -409,8 +429,8 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
               model={m}
               codename={live?.codename || m.codename}
               response={live.text}
-              details={isDemo ? MODEL_DETAILS[m.id] : null}
-              contribution={isDemo ? (MOCK_CONTRIBUTIONS.find((c) => c.modelId === m.id)?.pct || 0) : null}
+              details={null}
+              contribution={null}
               latencyMs={live?.provider_latency ?? live?.latency_ms ?? 0}
               tokens={live?.total_tokens ?? 0}
               inputTokens={live?.input_tokens}
@@ -482,25 +502,28 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
             </button>
           </div>
 
-          {isDemo && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-            <AnimatedMeter label={t("results.confidenceScore")} value={currentConfidence} accent="#00E5FF" testId="meter-confidence" />
-            <AnimatedMeter label={t("results.consensusLevel")} value={MOCK_SCORES.consensus} accent="#10B981" testId="meter-consensus" />
-          </div>}
-
-          <div className="text-[15.5px] md:text-[16.5px] leading-[1.75] text-white/85 whitespace-pre-line" data-testid="trusted-conclusion-body" data-answer-language={answerLanguage}>
+          <div
+            data-testid="trusted-conclusion-body"
+            data-answer-language={answerLanguage}
+            data-conclusion-schema={conclusionSchemaVersion || (trustedConclusion ? "legacy" : "none")}
+          >
             {conclusionLoading ? (
               <span className="inline-flex items-center gap-2 text-white/50 text-[14px]" data-testid="trusted-conclusion-loading">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF] animate-pulse" />
                 {t("results.synthesizing")}
               </span>
-            ) : (trustedConclusion || (
-              <span className="text-white/50 text-[14px] italic" data-testid="trusted-conclusion-empty">
-                {t("results.noConclusion")}
-              </span>
-            ))}
+            ) : (
+              <StructuredConclusion
+                structured={structuredConclusion}
+                legacyText={trustedConclusion}
+                synthesisStatus={synthesisStatus}
+                synthesisError={synthesisError}
+                t={t}
+              />
+            )}
           </div>
 
-          {isDemo && <AnimatePresence>
+          {legacyDemoAnalyticsEnabled && isDemo && <AnimatePresence>
             {challengePhase !== "idle" && (
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
@@ -572,16 +595,19 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
           <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-6 border-t border-white/[0.08]">
             <div className="flex flex-wrap items-center gap-3 text-[12px] text-white/50">
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF]" /> {t("results.synthesizedFromLive", { n: isDemo ? mockCount : liveCount })}
+                <span className="w-1.5 h-1.5 rounded-full bg-[#00E5FF]" />
+                {isDemo
+                  ? t("results.synthesizedFromMock", { n: mockCount })
+                  : t("results.synthesizedFromLive", { n: liveCount })}
               </span>
-              {isDemo && <>
+              {legacyDemoAnalyticsEnabled && isDemo && <>
                 <span>·</span>
                 <span>{t("results.confidence")} {currentConfidence}%</span>
                 <span>·</span>
                 <span>{t("results.consensus")} {MOCK_SCORES.consensus}%</span>
               </>}
             </div>
-            {isDemo && <button
+            {legacyDemoAnalyticsEnabled && isDemo && <button
               onClick={onChallenge}
               disabled={challengePhase === "running"}
               data-testid="challenge-conclusion-button"
@@ -594,7 +620,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
         </div>
       </motion.section>
 
-      {isDemo && <>
+      {legacyDemoAnalyticsEnabled && isDemo && <>
       {/* Why this conclusion? — demo-only analytical cards */}
       <SectionHeader
         className="mt-16"
