@@ -71,6 +71,7 @@ class GeminiProvider(Provider):
         input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0) if usage else 0
         output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) if usage else 0
         total_tokens = int(getattr(usage, "total_token_count", 0) or (input_tokens + output_tokens)) if usage else 0
+        citation_metadata = _extract_grounding_metadata(resp)
 
         return ProviderResult(
             text=text,
@@ -80,4 +81,25 @@ class GeminiProvider(Provider):
             total_tokens=total_tokens,
             model_used=self.model,
             is_mock=False,
+            citation_metadata=citation_metadata,
         )
+
+
+def _extract_grounding_metadata(response) -> list[dict[str, str]]:
+    """Extract only grounding sources explicitly returned by Gemini."""
+    output: list[dict[str, str]] = []
+    candidates = getattr(response, "candidates", None) or []
+    for candidate in candidates:
+        grounding = getattr(candidate, "grounding_metadata", None)
+        chunks = getattr(grounding, "grounding_chunks", None) or []
+        for chunk in chunks:
+            web = getattr(chunk, "web", None)
+            url = getattr(web, "uri", None)
+            title = getattr(web, "title", None)
+            if not isinstance(url, str) or not url.strip():
+                continue
+            item = {"url": url.strip()}
+            if isinstance(title, str) and title.strip():
+                item["title"] = title.strip()[:300]
+            output.append(item)
+    return output

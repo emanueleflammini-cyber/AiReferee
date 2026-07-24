@@ -192,6 +192,31 @@
         "provider_citation_unverified": "Provider citation — not independently verified",
         "no_source": "No source supplied"
       }
+    },
+    "traceability": {
+      "eyebrow": "Claim traceability",
+      "title": "Why this verdict",
+      "description": "See which provider response supports each important claim and which sources the providers explicitly mentioned.",
+      "supportedTitle": "Claims supporting the conclusion",
+      "disputedTitle": "Claims under dispute",
+      "sourcesTitle": "Sources mentioned by the models",
+      "weakTitle": "Unsupported or weak claims",
+      "disputedBy": "Disputed by",
+      "showExcerpts": "Show supporting response excerpts",
+      "unnamedSource": "Unnamed provider source",
+      "analysisFailed": "Claim traceability is unavailable",
+      "verification": {
+        "unverified": "Provider-declared — not independently verified",
+        "invalid_url": "Invalid or unsafe URL — not clickable",
+        "missing_url": "Provider named the source without a URL",
+        "verified": "Independently verified"
+      },
+      "extraction": {
+        "provider_metadata": "Provider metadata",
+        "markdown_link": "Markdown link",
+        "plain_text_url": "URL in provider response",
+        "explicit_source_label": "Source explicitly named"
+      }
     }
   },
   "badge": {

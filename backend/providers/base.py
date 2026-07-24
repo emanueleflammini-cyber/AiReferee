@@ -9,8 +9,8 @@ from __future__ import annotations
 import os
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 
 PRICING: dict[str, dict[str, float]] = {
@@ -61,6 +61,9 @@ class ProviderResult:
     is_mock: bool = False
     provider_status: str = "LIVE"
     error: Optional[str] = None
+    # Provider-declared citation metadata only. It is normalized and validated
+    # later; raw SDK objects and secrets must never be stored here.
+    citation_metadata: list[dict[str, Any]] = field(default_factory=list)
 
     def with_computed_cost(self) -> "ProviderResult":
         if self.total_tokens == 0:

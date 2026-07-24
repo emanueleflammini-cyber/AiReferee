@@ -70,6 +70,9 @@ class OpenAIProvider(Provider):
         output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
         total_tokens = int(getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens))
         model_used = getattr(resp, "model", self.model) or self.model
+        citation_metadata = _extract_annotation_metadata(
+            resp.choices[0].message
+        )
 
         return ProviderResult(
             text=text,
@@ -79,4 +82,28 @@ class OpenAIProvider(Provider):
             total_tokens=total_tokens,
             model_used=model_used,
             is_mock=False,
+            citation_metadata=citation_metadata,
         )
+
+
+def _extract_annotation_metadata(message) -> list[dict[str, str]]:
+    """Keep only explicit URL citation annotations returned by OpenAI."""
+    output: list[dict[str, str]] = []
+    for annotation in getattr(message, "annotations", None) or []:
+        citation = (
+            getattr(annotation, "url_citation", None)
+            or getattr(annotation, "citation", None)
+            or annotation
+        )
+        url = getattr(citation, "url", None)
+        title = getattr(citation, "title", None)
+        if not url and isinstance(citation, dict):
+            url = citation.get("url")
+            title = citation.get("title")
+        if not isinstance(url, str) or not url.strip():
+            continue
+        item = {"url": url.strip()}
+        if isinstance(title, str) and title.strip():
+            item["title"] = title.strip()[:300]
+        output.append(item)
+    return output

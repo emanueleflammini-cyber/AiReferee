@@ -187,6 +187,31 @@
         "provider_citation_unverified": "Citazione del provider — non verificata in modo indipendente",
         "no_source": "Nessuna fonte fornita"
       }
+    },
+    "traceability": {
+      "eyebrow": "Tracciabilità delle affermazioni",
+      "title": "Perché questo verdetto",
+      "description": "Scopri quale risposta sostiene ogni affermazione importante e quali fonti sono state citate esplicitamente dai provider.",
+      "supportedTitle": "Affermazioni che sostengono la conclusione",
+      "disputedTitle": "Affermazioni controverse",
+      "sourcesTitle": "Fonti menzionate dai modelli",
+      "weakTitle": "Affermazioni deboli o non supportate",
+      "disputedBy": "Contestata da",
+      "showExcerpts": "Mostra gli estratti delle risposte",
+      "unnamedSource": "Fonte del provider senza titolo",
+      "analysisFailed": "La tracciabilità delle affermazioni non è disponibile",
+      "verification": {
+        "unverified": "Dichiarata dal provider — non verificata in modo indipendente",
+        "invalid_url": "URL non valido o non sicuro — non cliccabile",
+        "missing_url": "Il provider ha indicato la fonte senza fornire un URL",
+        "verified": "Verificata in modo indipendente"
+      },
+      "extraction": {
+        "provider_metadata": "Metadati del provider",
+        "markdown_link": "Link Markdown",
+        "plain_text_url": "URL nella risposta del provider",
+        "explicit_source_label": "Fonte indicata esplicitamente"
+      }
     }
   },
   "badge": {

@@ -44,6 +44,7 @@ class Agreement(StrictContractModel):
     supporting_models: list[ProviderKey] = Field(min_length=2)
     strength: Strength
     reason: str = Field(min_length=1)
+    supporting_claim_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_distinct_supporters(self) -> "Agreement":
@@ -62,6 +63,7 @@ class Disagreement(StrictContractModel):
     topic: str = Field(min_length=1)
     positions: list[DisagreementPosition] = Field(min_length=2)
     referee_assessment: str = Field(min_length=1)
+    disputing_claim_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_distinct_positions(self) -> "Disagreement":
@@ -76,6 +78,7 @@ class EvidenceItem(StrictContractModel):
     description: str = Field(min_length=1)
     supporting_models: list[ProviderKey] = Field(min_length=1)
     source_status: SourceStatus
+    evidence_claim_ids: list[str] = Field(default_factory=list)
 
 
 class RemainingUncertainty(StrictContractModel):
@@ -89,6 +92,7 @@ class UnsupportedClaim(StrictContractModel):
     claim: str = Field(min_length=1)
     originating_models: list[ProviderKey] = Field(min_length=1)
     reason: str = Field(min_length=1)
+    unsupported_claim_ids: list[str] = Field(default_factory=list)
 
 
 class ConfidenceFactors(StrictContractModel):
@@ -180,6 +184,9 @@ def eligible_synthesis_answers(
         answers.append(
             {
                 "id": str(_value(response, "id") or provider_key),
+                "provider_response_id": str(
+                    _value(response, "provider_response_id") or provider_key
+                ),
                 "provider_key": provider_key,
                 "label": str(_value(response, "label") or provider_key),
                 "provider": str(
@@ -189,6 +196,7 @@ def eligible_synthesis_answers(
                 ),
                 "provider_status": status,
                 "text": text,
+                "citations": list(_value(response, "citations") or []),
             }
         )
     return answers

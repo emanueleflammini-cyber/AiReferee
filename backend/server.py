@@ -34,6 +34,13 @@ from providers.conclusion_schema import (  # noqa: E402
     eligible_synthesis_answers,
     normalize_stored_conclusion,
 )
+from providers.traceability_schema import (  # noqa: E402
+    CitationRecord,
+    TraceableClaim,
+    extract_citations,
+    merge_provider_citations,
+    normalize_stored_traceability,
+)
 from auth import IdentityContext, get_identity, require_admin, enforce_daily_compare_limit  # noqa: E402
 
 mongo_url = os.environ['MONGO_URL']
@@ -437,7 +444,26 @@ async def get_conclusion(conclusion_id: str, lang: str = "en"):
     structured, schema_version = normalize_stored_conclusion(
         {"trusted_conclusion_structured": structured_candidate}
     )
+    claims: list[dict] = []
+    citations: list[dict] = []
+    claim_schema_version = "legacy"
+    stored_language = doc.get("trusted_conclusion_language")
+    if stored_language == target:
+        claims, citations, claim_schema_version = normalize_stored_traceability(doc)
     default_status = "SUCCESS" if structured else ("LEGACY" if resp.text else "FAILED")
+    stored_claim_status = str(doc.get("claim_analysis_status") or "").upper()
+    if stored_claim_status == "FAILED":
+        response_claim_status = "FAILED"
+        response_claim_error = (
+            doc.get("claim_analysis_error")
+            or "Claim traceability is unavailable."
+        )
+    elif claim_schema_version == "3.0":
+        response_claim_status = stored_claim_status or "SUCCESS"
+        response_claim_error = doc.get("claim_analysis_error")
+    else:
+        response_claim_status = "NOT_AVAILABLE"
+        response_claim_error = None
     return {
         "id": conclusion_id,
         "language": resp.target_language,
@@ -449,6 +475,11 @@ async def get_conclusion(conclusion_id: str, lang: str = "en"):
         "synthesis_error": doc.get("synthesis_error"),
         "execution_mode": doc.get("execution_mode", "LIVE"),
         "provider_statuses": doc.get("provider_statuses") or [],
+        "claims": claims,
+        "citations": citations,
+        "claim_schema_version": claim_schema_version,
+        "claim_analysis_status": response_claim_status,
+        "claim_analysis_error": response_claim_error,
         "cache_hit": resp.cache_hit,
         "model_used": resp.model_used,
     }
@@ -649,6 +680,8 @@ class ModelResponse(BaseModel):
     provider_error: Optional[str] = None
     provider_latency: int
     provider_name: str
+    provider_response_id: str
+    citations: List[CitationRecord] = Field(default_factory=list)
 
 
 class CompareResponse(BaseModel):
@@ -671,6 +704,11 @@ class CompareResponse(BaseModel):
     synthesis_model: str = ""
     synthesis_latency_ms: int = 0
     synthesis_cost_usd: float = 0.0
+    claims: List[TraceableClaim] = Field(default_factory=list)
+    citations: List[CitationRecord] = Field(default_factory=list)
+    claim_schema_version: Optional[str] = None
+    claim_analysis_status: str = "FAILED"
+    claim_analysis_error: Optional[str] = None
 
 
 @api_router.post("/queries/{query_id}/compare", response_model=CompareResponse)
@@ -767,6 +805,20 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
 
         total_cost += result.cost_usd
         total_latency += result.latency_ms
+        provider_key = "openai" if spec["id"] == "model-a" else "gemini"
+        try:
+            provider_citations = extract_citations(
+                result.text,
+                provider_key,
+                result.citation_metadata,
+            ) if status in ("LIVE", "MOCK") else []
+        except Exception as exc:  # Citation extraction must not fail compare.
+            logging.getLogger(__name__).warning(
+                "Citation extraction failed for %s: %s",
+                spec["id"],
+                type(exc).__name__,
+            )
+            provider_citations = []
         responses.append(ModelResponse(
             id=spec["id"],
             label=spec["label"],
@@ -786,6 +838,8 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
             provider_error=result.error,
             provider_latency=result.latency_ms,
             provider_name=spec["provider"],
+            provider_response_id=provider_key,
+            citations=provider_citations,
         ))
 
         # Log EVERY provider invocation to Mongo — Task #7
@@ -810,6 +864,7 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                 "provider_status": status,
                 "execution_mode": execution_mode,
                 "error": result.error,
+                "citation_count": len(provider_citations),
                 "created_at": now_iso,
             })
         except Exception as e:  # noqa: BLE001
@@ -834,12 +889,24 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
     synth_model_used = ""
     synth_latency_ms = 0
     synth_cost_usd = 0.0
+    claims: list[dict] = []
+    citations = merge_provider_citations(
+        response.citations
+        for response in responses
+        if response.provider_status == (
+            "MOCK" if execution_mode == "DEMO" else "LIVE"
+        )
+    )
+    claim_schema_version: Optional[str] = None
+    claim_analysis_status = "FAILED"
+    claim_analysis_error: Optional[str] = None
     answers_for_synth = eligible_synthesis_answers(responses, execution_mode)
     if not answers_for_synth:
         synthesis_error = (
             "Trusted Conclusion is unavailable because no provider returned "
             "usable evidence."
         )
+        claim_analysis_error = synthesis_error
     else:
         try:
             synth = Synthesizer()
@@ -849,7 +916,14 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                     "provider is not configured."
                 )
             if answers_for_synth:
-                s = await synth.synthesize(prompt, answers_for_synth, target_lang, audience, fmt)
+                s = await synth.synthesize(
+                    prompt,
+                    answers_for_synth,
+                    target_lang,
+                    audience,
+                    fmt,
+                    execution_mode,
+                )
                 synth_text = s["text"]
                 synth_structured = s["structured_conclusion"]
                 synth_schema_version = s["schema_version"]
@@ -858,14 +932,26 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                 synth_model_used = s["model_used"]
                 synth_latency_ms = s["latency_ms"]
                 synth_cost_usd = float(s.get("cost_usd") or 0.0)
+                claims = s.get("claims") or []
+                citations = s.get("citations") or citations
+                claim_schema_version = s.get("claim_schema_version")
+                claim_analysis_status = s.get(
+                    "claim_analysis_status",
+                    "FAILED",
+                )
+                claim_analysis_error = s.get("claim_analysis_error")
         except SynthesisFailure as exc:
             synthesis_error = str(exc)
+            claim_analysis_error = synthesis_error
             logging.getLogger(__name__).warning(
                 "Trusted Conclusion synthesis failed: %s",
                 type(exc).__name__,
             )
         except Exception as exc:  # Defence in depth: never expose raw errors.
             synthesis_error = "Trusted Conclusion synthesis failed unexpectedly."
+            claim_analysis_error = (
+                "Claim traceability analysis failed unexpectedly."
+            )
             logging.getLogger(__name__).warning(
                 "Unexpected Trusted Conclusion failure: %s",
                 type(exc).__name__,
@@ -911,6 +997,11 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                     "synthesis_error": synthesis_error,
                     "synthesis_repair_attempted": synthesis_repair_attempted,
                     "synthesis_model": synth_model_used,
+                    "claims": claims,
+                    "citations": citations,
+                    "claim_schema_version": claim_schema_version,
+                    "claim_analysis_status": claim_analysis_status,
+                    "claim_analysis_error": claim_analysis_error,
                     "is_public": (
                         execution_mode == "LIVE"
                         and synthesis_status == "SUCCESS"
@@ -923,6 +1014,11 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                         "text": synth_text,
                         "structured_conclusion": synth_structured,
                         "schema_version": synth_schema_version,
+                        "claims": claims,
+                        "citations": citations,
+                        "claim_schema_version": claim_schema_version,
+                        "claim_analysis_status": claim_analysis_status,
+                        "claim_analysis_error": claim_analysis_error,
                         "model": synth_model_used,
                         "generated_at": now_iso,
                     },
@@ -969,6 +1065,11 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         synthesis_model=synth_model_used,
         synthesis_latency_ms=synth_latency_ms,
         synthesis_cost_usd=round(synth_cost_usd, 6),
+        claims=claims,
+        citations=citations,
+        claim_schema_version=claim_schema_version,
+        claim_analysis_status=claim_analysis_status,
+        claim_analysis_error=claim_analysis_error,
     )
 
 

@@ -31,6 +31,7 @@ import {
   Share2,
 } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
+import { ClaimTraceability } from "@/components/ClaimTraceability";
 import { StructuredConclusion } from "@/components/StructuredConclusion";
 import { useQueryState } from "@/lib/QueryContext";
 import { useI18n } from "@/lib/i18n";
@@ -88,6 +89,12 @@ export default function Results() {
   const [conclusionSchemaVersion, setConclusionSchemaVersion] = useState(null);
   const [synthesisStatus, setSynthesisStatus] = useState("");
   const [synthesisError, setSynthesisError] = useState("");
+  const [claims, setClaims] = useState([]);
+  const [citations, setCitations] = useState([]);
+  const [claimSchemaVersion, setClaimSchemaVersion] = useState(null);
+  const [claimAnalysisStatus, setClaimAnalysisStatus] = useState("");
+  const [claimAnalysisError, setClaimAnalysisError] = useState("");
+  const [providerStatuses, setProviderStatuses] = useState([]);
   const [conclusionLoading, setConclusionLoading] = useState(mode !== "reused");
   const [executionMode, setExecutionMode] = useState("LIVE");
   const [retryNonce, setRetryNonce] = useState(0);
@@ -106,6 +113,12 @@ export default function Results() {
     setConclusionSchemaVersion(null);
     setSynthesisStatus("");
     setSynthesisError("");
+    setClaims([]);
+    setCitations([]);
+    setClaimSchemaVersion(null);
+    setClaimAnalysisStatus("");
+    setClaimAnalysisError("");
+    setProviderStatuses([]);
     setConclusionLoading(true);
 
     if (!queryId) {
@@ -130,6 +143,12 @@ export default function Results() {
       setConclusionSchemaVersion(r.data?.conclusion_schema_version || null);
       setSynthesisStatus(r.data?.synthesis_status || "");
       setSynthesisError(r.data?.synthesis_error || "");
+      setClaims(Array.isArray(r.data?.claims) ? r.data.claims : []);
+      setCitations(Array.isArray(r.data?.citations) ? r.data.citations : []);
+      setClaimSchemaVersion(r.data?.claim_schema_version || null);
+      setClaimAnalysisStatus(r.data?.claim_analysis_status || "");
+      setClaimAnalysisError(r.data?.claim_analysis_error || "");
+      setProviderStatuses(responses);
       if (r.data?.prompt) setSharePrompt(r.data.prompt);
       setCompletedModels(responses.map((response) => response.id));
       setPhase("analysis");
@@ -143,6 +162,9 @@ export default function Results() {
       setLiveCount(0);
       setSynthesisStatus("FAILED");
       setSynthesisError(reason);
+      setClaimAnalysisStatus("FAILED");
+      setClaimAnalysisError(reason);
+      setProviderStatuses(responses);
       setCompletedModels(responses.map((response) => response.id));
       setPhase("analysis");
       setConclusionLoading(false);
@@ -165,6 +187,12 @@ export default function Results() {
         setConclusionSchemaVersion(r.data?.conclusion_schema_version || null);
         setSynthesisStatus(r.data?.synthesis_status || "");
         setSynthesisError(r.data?.synthesis_error || "");
+        setClaims(Array.isArray(r.data?.claims) ? r.data.claims : []);
+        setCitations(Array.isArray(r.data?.citations) ? r.data.citations : []);
+        setClaimSchemaVersion(r.data?.claim_schema_version || null);
+        setClaimAnalysisStatus(r.data?.claim_analysis_status || "");
+        setClaimAnalysisError(r.data?.claim_analysis_error || "");
+        setProviderStatuses(Array.isArray(r.data?.provider_statuses) ? r.data.provider_statuses : []);
         setExecutionMode(r.data?.execution_mode === "DEMO" ? "DEMO" : "LIVE");
         setConclusionLoading(false);
       })
@@ -172,6 +200,8 @@ export default function Results() {
         console.warn("Fetch reused conclusion failed", e);
         setSynthesisStatus("FAILED");
         setSynthesisError(e?.response?.data?.detail || e?.message || "Trusted Conclusion is unavailable.");
+        setClaimAnalysisStatus("FAILED");
+        setClaimAnalysisError(e?.response?.data?.detail || e?.message || "Claim traceability is unavailable.");
         setConclusionLoading(false);
       });
     return () => { cancelled = true; };
@@ -335,6 +365,12 @@ export default function Results() {
             conclusionSchemaVersion={conclusionSchemaVersion}
             synthesisStatus={synthesisStatus}
             synthesisError={synthesisError}
+            claims={claims}
+            citations={citations}
+            claimSchemaVersion={claimSchemaVersion}
+            claimAnalysisStatus={claimAnalysisStatus}
+            claimAnalysisError={claimAnalysisError}
+            providerStatuses={providerStatuses}
             conclusionLoading={conclusionLoading}
             answerLanguage={answerLanguage}
             executionMode={executionMode}
@@ -356,7 +392,7 @@ export default function Results() {
   );
 }
 
-function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, onRetry, liveResponses, liveCount, totalCost, trustedConclusion, structuredConclusion, conclusionSchemaVersion, synthesisStatus, synthesisError, conclusionLoading, answerLanguage, executionMode, showProviderResults, prompt }) {
+function RevealSection({ currentConfidence, challengePhase, challengeStep, challengeOutcome, onChallenge, onSeeDebate, onRetry, liveResponses, liveCount, totalCost, trustedConclusion, structuredConclusion, conclusionSchemaVersion, synthesisStatus, synthesisError, claims, citations, claimSchemaVersion, claimAnalysisStatus, claimAnalysisError, providerStatuses, conclusionLoading, answerLanguage, executionMode, showProviderResults, prompt }) {
   const modelById = useMemo(() => Object.fromEntries(MODELS.map((model) => [model.id, model])), []);
   const { t } = useI18n();
   const liveById = useMemo(() => {
@@ -520,6 +556,19 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
                 synthesisError={synthesisError}
                 t={t}
               />
+            )}
+            {!conclusionLoading && (
+              <div data-claim-schema={claimSchemaVersion || "none"}>
+                <ClaimTraceability
+                  claims={claims}
+                  citations={citations}
+                  claimAnalysisStatus={claimAnalysisStatus}
+                  claimAnalysisError={claimAnalysisError}
+                  providerStatuses={providerStatuses}
+                  executionMode={executionMode}
+                  t={t}
+                />
+              </div>
             )}
           </div>
 

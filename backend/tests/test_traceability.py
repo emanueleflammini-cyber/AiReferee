@@ -1,0 +1,374 @@
+"""Phase 3 claim and citation traceability tests."""
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from providers.conclusion_schema import eligible_synthesis_answers  # noqa: E402
+from providers.synthesizer import Synthesizer  # noqa: E402
+from providers.traceability_schema import (  # noqa: E402
+    extract_citations,
+    merge_provider_citations,
+    normalize_safe_url,
+    normalize_stored_traceability,
+    validate_claim_analysis,
+)
+
+
+OPENAI_TEXT = "Caching reduces repeated work. The current limit is ten requests."
+GEMINI_TEXT = "Caching reduces repeated work. The current limit is twenty requests."
+
+
+def answer(provider, text, status="LIVE", citations=None):
+    return {
+        "id": "model-a" if provider == "openai" else "model-c",
+        "provider_response_id": provider,
+        "provider_key": provider,
+        "label": "ChatGPT" if provider == "openai" else "Gemini",
+        "provider": "OpenAI" if provider == "openai" else "Google",
+        "provider_status": status,
+        "text": text,
+        "citations": citations or [],
+    }
+
+
+def support(provider, excerpt):
+    return {
+        "provider": provider,
+        "response_excerpt": excerpt,
+        "response_reference": {
+            "provider_response_id": provider,
+            "start_hint": excerpt[:20],
+            "end_hint": excerpt[-20:],
+        },
+    }
+
+
+def claim_analysis(claims, execution_mode="LIVE"):
+    return {
+        "schema_version": "3.0",
+        "execution_mode": execution_mode,
+        "claims": claims,
+    }
+
+
+def supported_claim(citation_ids=None):
+    excerpt = "Caching reduces repeated work."
+    return {
+        "id": "claim_shared",
+        "text": "Caching reduces repeated work.",
+        "claim_type": "fact",
+        "originating_models": ["openai", "gemini"],
+        "supporting_models": ["openai", "gemini"],
+        "disputing_models": [],
+        "support": [
+            support("openai", excerpt),
+            support("gemini", excerpt),
+        ],
+        "citation_ids": citation_ids or [],
+        "assessment": {
+            "status": "supported",
+            "reason": "Both provider responses contain the same statement.",
+        },
+    }
+
+
+def disputed_claim():
+    return {
+        "id": "claim_limit",
+        "text": "The current request limit is ten.",
+        "claim_type": "fact",
+        "originating_models": ["openai", "gemini"],
+        "supporting_models": ["openai"],
+        "disputing_models": ["gemini"],
+        "support": [
+            support("openai", "The current limit is ten requests."),
+        ],
+        "citation_ids": [],
+        "assessment": {
+            "status": "disputed",
+            "reason": "Gemini states a different current limit.",
+        },
+    }
+
+
+def valid_conclusion():
+    return {
+        "schema_version": "2.0",
+        "final_answer": "Caching helps, but the current limit is disputed.",
+        "agreements": [
+            {
+                "id": "agreement_1",
+                "claim": "Caching reduces repeated work.",
+                "supporting_models": ["openai", "gemini"],
+                "strength": "strong",
+                "reason": "Both providers state it.",
+                "supporting_claim_ids": ["claim_shared"],
+            }
+        ],
+        "disagreements": [
+            {
+                "id": "disagreement_1",
+                "topic": "Current limit",
+                "positions": [
+                    {"model": "openai", "position": "Ten requests."},
+                    {"model": "gemini", "position": "Twenty requests."},
+                ],
+                "referee_assessment": "The supplied responses conflict.",
+                "disputing_claim_ids": ["claim_limit"],
+            }
+        ],
+        "strongest_evidence": [
+            {
+                "id": "evidence_1",
+                "claim": "Caching reduces repeated work.",
+                "description": "The same exact statement appears twice.",
+                "supporting_models": ["openai", "gemini"],
+                "source_status": "model_reasoning",
+                "evidence_claim_ids": ["claim_shared"],
+            }
+        ],
+        "remaining_uncertainties": [
+            {
+                "id": "uncertainty_1",
+                "description": "The current limit is unresolved.",
+                "impact": "medium",
+            }
+        ],
+        "unsupported_claims": [],
+        "confidence": {
+            "level": "medium",
+            "reason": "The core point is shared, while the current limit conflicts.",
+            "factors": {
+                "model_agreement": "medium",
+                "evidence_quality": "medium",
+                "uncertainty": "medium",
+            },
+        },
+        "what_could_change_the_verdict": [
+            "A genuine independently verified current limit."
+        ],
+    }
+
+
+def valid_bundle():
+    return {
+        "trusted_conclusion": valid_conclusion(),
+        "claim_analysis": claim_analysis(
+            [supported_claim(), disputed_claim()]
+        ),
+    }
+
+
+def test_shared_claim_supported_by_two_live_providers():
+    parsed = validate_claim_analysis(
+        claim_analysis([supported_claim()]),
+        [answer("openai", OPENAI_TEXT), answer("gemini", GEMINI_TEXT)],
+        [],
+        "LIVE",
+    )
+    assert parsed.claims[0].supporting_models == ["openai", "gemini"]
+    assert len(parsed.claims[0].support) == 2
+
+
+def test_disputed_claim_is_preserved():
+    parsed = validate_claim_analysis(
+        claim_analysis([disputed_claim()]),
+        [answer("openai", OPENAI_TEXT), answer("gemini", GEMINI_TEXT)],
+        [],
+        "LIVE",
+    )
+    assert parsed.claims[0].assessment.status == "disputed"
+    assert parsed.claims[0].disputing_models == ["gemini"]
+
+
+def test_one_live_and_one_failed_excludes_failed_provider():
+    eligible = eligible_synthesis_answers(
+        [
+            answer("openai", OPENAI_TEXT),
+            answer("gemini", "", status="FAILED"),
+        ],
+        "LIVE",
+    )
+    assert [item["provider_key"] for item in eligible] == ["openai"]
+    with pytest.raises(ValueError, match="FAILED or absent"):
+        validate_claim_analysis(
+            claim_analysis([supported_claim()]),
+            eligible,
+            [],
+            "LIVE",
+        )
+
+
+def test_markdown_plain_named_and_metadata_citations_are_extracted():
+    text = (
+        "Read [Official report](https://example.com/report), then compare "
+        "https://example.org/data.\nSource: Standards Handbook"
+    )
+    citations = extract_citations(
+        text,
+        "openai",
+        [{"url": "https://provider.example/source", "title": "Provider source"}],
+    )
+    assert {item["extraction_method"] for item in citations} == {
+        "provider_metadata",
+        "markdown_link",
+        "plain_text_url",
+        "explicit_source_label",
+    }
+    named = next(item for item in citations if item["extraction_method"] == "explicit_source_label")
+    assert named["url"] is None
+    assert named["verification_status"] == "missing_url"
+    assert named["title"] == "Standards Handbook"
+
+
+def test_duplicate_url_normalization_preserves_provider_provenance():
+    openai_citations = extract_citations(
+        "[Report](https://EXAMPLE.com:443/report#section)",
+        "openai",
+    )
+    gemini_citations = extract_citations(
+        "See https://example.com/report.",
+        "gemini",
+    )
+    merged = merge_provider_citations([openai_citations, gemini_citations])
+    assert len(merged) == 1
+    assert merged[0]["url"] == "https://example.com/report"
+    assert merged[0]["declared_by_models"] == ["openai", "gemini"]
+    assert {item["provider"] for item in merged[0]["provenance"]} == {
+        "openai",
+        "gemini",
+    }
+
+
+def test_unsafe_url_is_rejected_and_never_marked_verified():
+    citations = extract_citations("[bad](javascript:alert(1))", "openai")
+    assert len(citations) == 1
+    assert citations[0]["verification_status"] == "invalid_url"
+    assert citations[0]["domain"] is None
+    assert normalize_safe_url("javascript:alert(1)") == (None, None)
+
+
+def test_provider_citation_defaults_to_unverified():
+    citation = extract_citations("https://example.com/evidence", "openai")[0]
+    assert citation["verification_status"] == "unverified"
+    assert citation["verification_evidence"] is None
+
+
+def test_claim_excerpt_must_come_from_actual_provider_text():
+    invalid = supported_claim()
+    invalid["support"][0]["response_excerpt"] = "A fabricated excerpt."
+    with pytest.raises(ValueError, match="excerpt is not present"):
+        validate_claim_analysis(
+            claim_analysis([invalid]),
+            [answer("openai", OPENAI_TEXT), answer("gemini", GEMINI_TEXT)],
+            [],
+            "LIVE",
+        )
+
+
+class FakeCompletions:
+    def __init__(self, outputs):
+        self.outputs = iter(outputs)
+        self.calls = 0
+
+    async def create(self, **_kwargs):
+        self.calls += 1
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=next(self.outputs))
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=20),
+            model="test-synthesizer",
+        )
+
+
+def synthesizer_with_outputs(outputs):
+    synth = Synthesizer.__new__(Synthesizer)
+    completions = FakeCompletions(outputs)
+    synth.available = True
+    synth._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions)
+    )
+    return synth, completions
+
+
+def test_invalid_claim_json_gets_one_controlled_repair():
+    invalid = valid_bundle()
+    invalid["claim_analysis"]["claims"][0]["support"][0]["response_excerpt"] = "Invented."
+    synth, completions = synthesizer_with_outputs(
+        [json.dumps(invalid), json.dumps(valid_bundle())]
+    )
+    result = asyncio.run(
+        synth.synthesize(
+            "Does caching help?",
+            [answer("openai", OPENAI_TEXT), answer("gemini", GEMINI_TEXT)],
+            "en",
+        )
+    )
+    assert result["claim_analysis_status"] == "SUCCESS"
+    assert result["repair_attempted"] is True
+    assert completions.calls == 2
+
+
+def test_claim_failure_preserves_conclusion_without_mock_data():
+    invalid = valid_bundle()
+    invalid["claim_analysis"]["claims"][0]["support"][0]["response_excerpt"] = "Invented."
+    synth, completions = synthesizer_with_outputs(
+        [json.dumps(invalid), json.dumps(invalid)]
+    )
+    result = asyncio.run(
+        synth.synthesize(
+            "Does caching help?",
+            [answer("openai", OPENAI_TEXT), answer("gemini", GEMINI_TEXT)],
+            "en",
+        )
+    )
+    assert result["text"] == valid_conclusion()["final_answer"]
+    assert result["claim_analysis_status"] == "FAILED"
+    assert result["claims"] == []
+    assert "MOCK" not in json.dumps(result)
+    assert completions.calls == 2
+
+
+def test_phase2_and_legacy_records_remain_compatible_without_claims():
+    phase2 = {
+        "execution_mode": "LIVE",
+        "trusted_conclusion_structured": valid_conclusion(),
+    }
+    legacy = {"trusted_conclusion": "Old text-only conclusion."}
+    assert normalize_stored_traceability(phase2) == ([], [], "legacy")
+    assert normalize_stored_traceability(legacy) == ([], [], "legacy")
+
+
+def test_demo_claims_remain_separate_from_live_claims():
+    demo_answers = [
+        answer("openai", OPENAI_TEXT, status="MOCK"),
+        answer("gemini", GEMINI_TEXT, status="MOCK"),
+    ]
+    parsed = validate_claim_analysis(
+        claim_analysis([supported_claim()], execution_mode="DEMO"),
+        demo_answers,
+        [],
+        "DEMO",
+    )
+    assert parsed.execution_mode == "DEMO"
+    with pytest.raises(ValueError, match="execution mode"):
+        validate_claim_analysis(
+            claim_analysis([supported_claim()], execution_mode="DEMO"),
+            demo_answers,
+            [],
+            "LIVE",
+        )
