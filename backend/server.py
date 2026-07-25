@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import asyncio
+import certifi
 import os
 import re
 import logging
@@ -46,8 +47,12 @@ from providers.traceability_schema import (  # noqa: E402
 from auth import IdentityContext, get_identity, require_admin, enforce_daily_compare_limit  # noqa: E402
 
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+client = AsyncIOMotorClient(
+    mongo_url,
+    tls=True,
+    tlsCAFile=certifi.where(),
+    serverSelectionTimeoutMS=30000,
+)
 
 app = FastAPI(title="AI Referee API")
 api_router = APIRouter(prefix="/api")
