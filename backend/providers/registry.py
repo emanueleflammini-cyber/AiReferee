@@ -1,16 +1,15 @@
 """Provider registry for AI Referee.
 
-Design goals (Feb 2026):
-    * OpenAI + Gemini are the only providers that ever get called from the
-      compare endpoint on the FREE plan. They contribute equally to the
-      Trusted Conclusion.
+Design goals:
+    * Every implemented FREE provider is discovered from this registry and
+      contributes through the same comparison and synthesis pipeline.
     * Claude is fully implemented but gated behind ENABLE_CLAUDE and the
       Premium plan. Activating Claude at platform level requires only:
         1. `ENABLE_CLAUDE=true` in backend/.env
         2. A valid `ANTHROPIC_API_KEY`
       No code change required.
-    * Grok and Mistral are advertised as Coming Soon slots — the compare
-      engine never invokes them until their builders are wired.
+    * Grok is advertised as a Coming Soon slot and cannot be invoked until
+      its builder is wired.
     * BYOK: `selected_providers(user_id=..., plan=Plan.BYOK)` transparently
       overrides the platform API key with the user's encrypted key.
 
@@ -29,11 +28,12 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from .base import Provider
 from .openai_provider import OpenAIProvider
 from .gemini_provider import GeminiProvider
+from .mistral_provider import MistralProvider
 from .anthropic_provider import AnthropicProvider
 from .mock_provider import build_mock_providers
 from .plans import Plan, entitlements_for
@@ -54,6 +54,7 @@ class ProviderSpec:
     label: str              # user-facing name (ChatGPT, Gemini, Claude, ...)
     codename: str           # user-facing model version
     provider_name: str      # vendor (OpenAI, Google DeepMind, ...)
+    provider_key: str       # stable public key (openai, gemini, mistral, ...)
     enable_env: str         # env flag that turns the slot on
     key_env: str            # env var that holds the platform API key
     tier: str               # "free" | "premium"
@@ -74,36 +75,40 @@ def _build_claude(api_key: Optional[str] = None) -> Provider:
     return AnthropicProvider(api_key=api_key)
 
 
+def _build_mistral(api_key: Optional[str] = None) -> Provider:
+    return MistralProvider(api_key=api_key)
+
+
 PROVIDER_REGISTRY: list[ProviderSpec] = [
     ProviderSpec(
         id="model-a", label="ChatGPT", codename="GPT-5.4 mini",
-        provider_name="OpenAI",
+        provider_name="OpenAI", provider_key="openai",
         enable_env="ENABLE_OPENAI", key_env="OPENAI_API_KEY",
         tier="free", builder=_build_openai, accent="#10A37F",
     ),
     ProviderSpec(
         id="model-c", label="Gemini", codename="3.1 Pro",
-        provider_name="Google DeepMind",
+        provider_name="Google DeepMind", provider_key="gemini",
         enable_env="ENABLE_GEMINI", key_env="GEMINI_API_KEY",
         tier="free", builder=_build_gemini, accent="#4285F4",
     ),
     # --- Coming soon (free tier, disabled) ---
     ProviderSpec(
         id="model-d", label="Grok", codename="3.0",
-        provider_name="xAI",
+        provider_name="xAI", provider_key="grok",
         enable_env="ENABLE_GROK", key_env="XAI_API_KEY",
         tier="free", builder=None, accent="#F43F5E",
     ),
     ProviderSpec(
-        id="model-e", label="Mistral", codename="Large 2",
-        provider_name="Mistral AI",
+        id="model-e", label="Mistral", codename="Mistral Small",
+        provider_name="Mistral AI", provider_key="mistral",
         enable_env="ENABLE_MISTRAL", key_env="MISTRAL_API_KEY",
-        tier="free", builder=None, accent="#FF7A00",
+        tier="free", builder=_build_mistral, accent="#FF7A00",
     ),
     # --- Premium (Claude) — fully wired, disabled by default ---
     ProviderSpec(
         id="model-b", label="Claude", codename="Sonnet 4.6",
-        provider_name="Anthropic",
+        provider_name="Anthropic", provider_key="claude",
         enable_env="ENABLE_CLAUDE", key_env="ANTHROPIC_API_KEY",
         tier="premium", builder=_build_claude, accent="#D97757",
     ),
@@ -155,6 +160,7 @@ def _primary_slot_id() -> str:
     key_map = {
         "openai": "model-a",
         "gemini": "model-c", "google": "model-c",
+        "mistral": "model-e",
     }
     return key_map.get(primary_provider_id(), "model-a")
 
@@ -181,7 +187,7 @@ def selected_providers(
     live: list[Provider] = []
     for spec in PROVIDER_REGISTRY:
         if spec.builder is None:
-            continue  # slot not wired yet (Grok / Mistral)
+            continue  # slot not wired yet (currently Grok)
 
         # Default path — preserves current behaviour for the compare endpoint.
         if ents is None:
@@ -224,6 +230,7 @@ def all_provider_specs() -> list[dict]:
             "label": spec.label,
             "codename": spec.codename,
             "provider": spec.provider_name,
+            "provider_key": spec.provider_key,
             "tier": spec.tier,
             "status": status,           # live | coming_soon | premium_coming_soon
             "live": status == "live",
@@ -257,6 +264,32 @@ def core_provider_specs() -> list[dict]:
         for spec in all_provider_specs()
         if spec["id"] in CORE_PROVIDER_IDS
     ]
+
+
+def comparison_provider_specs() -> list[dict]:
+    """Metadata for every integrated FREE comparison slot."""
+    integrated_free_ids = {
+        spec.id
+        for spec in PROVIDER_REGISTRY
+        if spec.tier == "free" and spec.builder is not None
+    }
+    return [
+        spec
+        for spec in all_provider_specs()
+        if spec["id"] in integrated_free_ids
+    ]
+
+
+def provider_unavailable_status(provider_id: str) -> str:
+    """Distinguish an intentionally disabled slot from a broken configuration."""
+    spec = next((item for item in PROVIDER_REGISTRY if item.id == provider_id), None)
+    if spec is None or provider_id in CORE_PROVIDER_IDS:
+        return "FAILED"
+    if not _slot_enabled(spec):
+        return "DISABLED"
+    # An enabled, integrated provider that cannot be called (for example
+    # because its key is missing) is a real execution failure, not Coming Soon.
+    return "FAILED"
 
 
 def provider_unavailable_reason(provider_id: str) -> str:

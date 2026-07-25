@@ -1,6 +1,8 @@
 export const PROVIDER_STATUS = {
   LIVE: "LIVE",
   FAILED: "FAILED",
+  TIMEOUT: "TIMEOUT",
+  DISABLED: "DISABLED",
   MOCK: "MOCK",
 };
 
@@ -41,7 +43,11 @@ export function normalizeProviderResponses(responses, executionMode) {
       error = "Mock content was blocked in LIVE execution mode.";
       text = "";
     }
-    if (status === PROVIDER_STATUS.FAILED) {
+    if ([
+      PROVIDER_STATUS.FAILED,
+      PROVIDER_STATUS.TIMEOUT,
+      PROVIDER_STATUS.DISABLED,
+    ].includes(status)) {
       text = "";
     }
 

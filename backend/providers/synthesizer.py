@@ -318,12 +318,27 @@ def _system_prompt(
         f"{audience}. Preferred answer format: {fmt}.\n\n"
         "Rules:\n"
         "- final_answer must directly and fully answer the question.\n"
+        f"- This execution contains exactly {len(allowed_providers)} usable "
+        "provider response(s). Never claim that more providers participated "
+        "or agreed than are present in allowed_provider_keys.\n"
         "- Extract only material claims relevant to the verdict.\n"
         "- Use stable claim IDs such as claim_1, claim_2.\n"
+        "- A shared fact is a factual claim supported by at least two supplied "
+        "providers with one exact response excerpt from each.\n"
         "- Agreements require two distinct supplied providers.\n"
+        "- If only one usable provider is supplied, agreements must be empty, "
+        "confidence.factors.model_agreement must be low, and the answer must "
+        "clearly state that consensus is limited.\n"
+        "- Agreements describe shared interpretations or conclusions; do not "
+        "repeat a shared factual claim as an agreement.\n"
         "- Do not manufacture disagreements.\n"
+        "- For every real disagreement, include both provider positions, "
+        "evidence_claim_ids for each position, the referee assessment, and "
+        "the missing_information that could resolve it.\n"
         "- A response_excerpt must be a short exact excerpt copied from that "
         "provider response; never paraphrase inside response_excerpt.\n"
+        "- For a disputed claim, put exact excerpts supporting the claim in "
+        "support and exact excerpts opposing it in dispute.\n"
         "- provider_response_id must exactly match the supplied ID.\n"
         "- supporting, disputing and originating models may use only: "
         f"{', '.join(allowed_providers)}.\n"
@@ -334,8 +349,13 @@ def _system_prompt(
         "- Provider citations are unverified. Never claim independent "
         "verification or turn a citation into proof of truth.\n"
         "- FAILED providers are absent and cannot support or dispute claims.\n"
-        "- supporting_claim_ids, disputing_claim_ids, evidence_claim_ids and "
-        "unsupported_claim_ids must reference claim IDs in claim_analysis.\n"
+        "- supporting_claim_ids, disputing_claim_ids, position "
+        "evidence_claim_ids, evidence_claim_ids and unsupported_claim_ids "
+        "must reference claim IDs in claim_analysis.\n"
+        "- strongest_evidence must add evidentiary context, not repeat the "
+        "same wording already used in agreements.\n"
+        "- referee_reasoning must explain how agreements, disagreements, "
+        "evidence quality and uncertainty lead to the final answer.\n"
         "- Confidence is high, medium or low only; never output a confidence "
         "percentage.\n"
         "- State uncertainty when the evidence is limited.\n"
@@ -394,6 +414,8 @@ def _validate_conclusion_claim_references(
         references.extend(agreement.supporting_claim_ids)
     for disagreement in conclusion.disagreements:
         references.extend(disagreement.disputing_claim_ids)
+        for position in disagreement.positions:
+            references.extend(position.evidence_claim_ids)
     for evidence in conclusion.strongest_evidence:
         references.extend(evidence.evidence_claim_ids)
     for unsupported in conclusion.unsupported_claims:
@@ -404,6 +426,21 @@ def _validate_conclusion_claim_references(
             "Trusted Conclusion references unknown claim IDs: "
             + ", ".join(unknown)
         )
+    claim_by_id = {claim.id: claim for claim in analysis.claims}
+    for disagreement in conclusion.disagreements:
+        for position in disagreement.positions:
+            for claim_id in position.evidence_claim_ids:
+                claim = claim_by_id[claim_id]
+                providers = (
+                    set(claim.originating_models)
+                    | set(claim.supporting_models)
+                    | set(claim.disputing_models)
+                )
+                if position.model not in providers:
+                    raise ValueError(
+                        "Disagreement position references evidence from "
+                        "another provider"
+                    )
 
 
 def _salvage_conclusion(
@@ -420,6 +457,8 @@ def _salvage_conclusion(
             item["supporting_claim_ids"] = []
         for item in candidate.get("disagreements", []):
             item["disputing_claim_ids"] = []
+            for position in item.get("positions", []):
+                position["evidence_claim_ids"] = []
         for item in candidate.get("strongest_evidence", []):
             item["evidence_claim_ids"] = []
         for item in candidate.get("unsupported_claims", []):

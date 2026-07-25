@@ -27,6 +27,11 @@ describe("Results localization presentation", () => {
       "results.evidenceMeter",
       "results.consensusEvolution",
       "results.trustedConclusion",
+      "results.structured.finalVerdict",
+      "results.structured.sharedFacts",
+      "results.structured.disagreementWhy",
+      "results.structured.refereeReasoning",
+      "results.structured.whatCouldChange",
       "results.traceability.title",
       "results.traceability.disputedTitle",
       "results.traceability.sourcesTitle",
@@ -53,6 +58,10 @@ describe("Results localization presentation", () => {
   test("known enum labels are localized", () => {
     expect(translateEnum(itT, "results.structured.level", "high")).toBe("Alta");
     expect(translateEnum(enT, "results.structured.level", "high")).toBe("High");
+    expect(translateEnum(itT, "results.structured.strength", "strong")).toBe("Evidenza forte");
+    expect(translateEnum(itT, "results.structured.strength", "moderate")).toBe("Evidenza media");
+    expect(translateEnum(itT, "results.structured.strength", "weak")).toBe("Evidenza debole");
+    expect(translateEnum(itT, "results.structured.impact", "high")).toBe("Impatto alto");
   });
 
   test("unknown enum values use a readable safe fallback", () => {

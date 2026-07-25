@@ -3,10 +3,10 @@
 Covers:
     - Existing regressions:
         * /api/providers and /api/providers/specs contracts (5 slots)
-        * /api/queries CRUD + compare with only-OpenAI+Gemini enforcement
+        * /api/queries CRUD + three-provider compare enforcement
         * /api/queries/match Smart Reuse policy + jaccard_fallback threshold from env
         * /api/conclusions/{id}/translate
-        * Confirms disabled providers (Claude/Grok/Mistral) are NEVER invoked
+        * Confirms disabled providers (Claude/Grok) are NEVER invoked
     - NEW:
         * GET /api/plans catalog contract (free/premium/byok)
         * SMART_REUSE_THRESHOLD env value surfaced via /queries/match thresholds
@@ -19,13 +19,32 @@ import os
 import sys
 import time
 import subprocess
+from pathlib import Path
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://referee-ai-4.preview.emergentagent.com").rstrip("/")
+RUN_EXTERNAL_API_TESTS = (
+    os.environ.get("RUN_EXTERNAL_API_TESTS", "false").strip().lower() == "true"
+)
+pytestmark = pytest.mark.skipif(
+    not RUN_EXTERNAL_API_TESTS,
+    reason=(
+        "External API integration tests are opt-in; set "
+        "RUN_EXTERNAL_API_TESTS=true with a configured backend."
+    ),
+)
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+BASE_URL = os.environ.get(
+    "REACT_APP_BACKEND_URL",
+    "http://127.0.0.1:8000",
+).rstrip("/")
 API = f"{BASE_URL}/api"
 
-FORBIDDEN_IDS = {"model-b", "model-d", "model-e"}
+FORBIDDEN_IDS = {"model-b", "model-d"}
 
 
 @pytest.fixture(scope="session")
@@ -47,7 +66,8 @@ class TestProviders:
         assert by_id["model-a"]["status"] == "live" and by_id["model-a"]["live"] is True
         assert by_id["model-c"]["status"] == "live" and by_id["model-c"]["is_primary"] is True
         assert by_id["model-d"]["status"] == "coming_soon"
-        assert by_id["model-e"]["status"] == "coming_soon"
+        assert by_id["model-e"]["status"] == "live"
+        assert by_id["model-e"]["live"] is True
         assert by_id["model-b"]["tier"] == "premium"
         assert by_id["model-b"]["status"] == "premium_coming_soon"
         assert by_id["model-b"]["live"] is False
@@ -75,7 +95,9 @@ class TestPlans:
         assert by_id["premium"]["available"] is False
         assert by_id["byok"]["available"] is False
         # Allowed provider ids
-        assert set(by_id["free"]["allowed_provider_ids"]) == {"model-a", "model-c"}
+        assert set(by_id["free"]["allowed_provider_ids"]) == {
+            "model-a", "model-c", "model-e"
+        }
         assert set(by_id["premium"]["allowed_provider_ids"]) == {
             "model-a", "model-b", "model-c", "model-d", "model-e"
         }
@@ -87,7 +109,7 @@ class TestPlans:
         assert by_id["premium"]["can_use_own_keys"] is False
 
 
-# ---------------- Compare only 2 live ----------------
+# ---------------- Compare all 3 live providers ----------------
 
 class TestCompareOnlyLive:
     @pytest.fixture(scope="class")
@@ -101,15 +123,15 @@ class TestCompareOnlyLive:
         assert r.status_code == 200, r.text
         return r.json()["id"]
 
-    def test_compare_only_2_live(self, s, query_id):
+    def test_compare_all_3_live(self, s, query_id):
         r = s.post(f"{API}/queries/{query_id}/compare", timeout=180)
         assert r.status_code == 200, r.text
         data = r.json()
         responses = data["responses"]
-        assert len(responses) == 2, [x['id'] for x in responses]
-        assert data["live_count"] == 2
+        assert len(responses) == 3, [x['id'] for x in responses]
+        assert data["live_count"] == 3
         ids = {r_["id"] for r_ in responses}
-        assert ids == {"model-a", "model-c"}
+        assert ids == {"model-a", "model-c", "model-e"}
         assert not (ids & FORBIDDEN_IDS)
         for resp in responses:
             assert resp["is_mock"] is False, f"{resp['id']} mock: {resp.get('error')}"
@@ -153,7 +175,7 @@ class TestClaudeWiring:
             "import os,sys;"
             "os.environ['ENABLE_CLAUDE']='true';"
             "os.environ['ANTHROPIC_API_KEY']='sk-ant-fake-KEY-for-wiring-test';"
-            "sys.path.insert(0,'/app/backend');"
+            f"sys.path.insert(0,{str(BACKEND_DIR)!r});"
             "from providers.registry import all_provider_specs;"
             "specs={p['id']:p for p in all_provider_specs()};"
             "print('MB_STATUS:', specs['model-b']['status']);"
@@ -168,7 +190,7 @@ class TestClaudeWiring:
     def test_claude_default_disabled_reports_premium_coming_soon(self):
         code = (
             "import sys;"
-            "sys.path.insert(0,'/app/backend');"
+            f"sys.path.insert(0,{str(BACKEND_DIR)!r});"
             "from providers.registry import all_provider_specs;"
             "specs={p['id']:p for p in all_provider_specs()};"
             "print('MB_STATUS:', specs['model-b']['status']);"
@@ -185,10 +207,9 @@ class TestClaudeWiring:
 
 class TestBYOK:
     def test_resolve_platform_key_for_model_a(self):
-        # Ensure /app/backend importable and .env loaded
-        sys.path.insert(0, "/app/backend")
+        # Ensure the canonical backend is importable and its local .env is loaded.
         from dotenv import load_dotenv
-        load_dotenv("/app/backend/.env")
+        load_dotenv(BACKEND_DIR / ".env")
         from providers.key_source import resolve_api_key  # noqa
         res = resolve_api_key("model-a")
         assert res is not None, "expected platform key for model-a"
@@ -196,7 +217,6 @@ class TestBYOK:
         assert res.provider_id == "model-a"
 
     def test_resolve_model_b_none_on_free(self):
-        sys.path.insert(0, "/app/backend")
         from providers.key_source import resolve_api_key  # noqa
         # Free plan: model-b not in allowed ids -> None
         res = resolve_api_key("model-b")
@@ -210,7 +230,6 @@ class TestUserKeysEncryptionRefusal:
         # Ensure USER_KEY_ENCRYPTION_KEY unset
         prev = os.environ.pop("USER_KEY_ENCRYPTION_KEY", None)
         try:
-            sys.path.insert(0, "/app/backend")
             import asyncio
             from services.user_keys import set_user_key
             ok = asyncio.get_event_loop().run_until_complete(
@@ -222,7 +241,7 @@ class TestUserKeysEncryptionRefusal:
                 os.environ["USER_KEY_ENCRYPTION_KEY"] = prev
 
     def test_user_keys_file_never_logs_raw(self):
-        with open("/app/backend/services/user_keys.py") as f:
+        with open(BACKEND_DIR / "services" / "user_keys.py", encoding="utf-8") as f:
             src = f.read()
         # Any log line referencing api_key must wrap it in _hint(...) or _redact(...)
         for line in src.splitlines():
@@ -244,7 +263,7 @@ class TestRequirements:
         assert hasattr(m2, "Fernet")
 
     def test_requirements_pins(self):
-        with open("/app/backend/requirements.txt") as f:
+        with open(BACKEND_DIR / "requirements.txt", encoding="utf-8") as f:
             reqs = f.read().lower()
         assert "anthropic" in reqs
         assert "cryptography" in reqs

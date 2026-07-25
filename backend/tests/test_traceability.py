@@ -27,19 +27,84 @@ from providers.traceability_schema import (  # noqa: E402
 
 OPENAI_TEXT = "Caching reduces repeated work. The current limit is ten requests."
 GEMINI_TEXT = "Caching reduces repeated work. The current limit is twenty requests."
+MISTRAL_TEXT = (
+    "Caching reduces repeated work.\n"
+    "Useful details:\n"
+    "- It avoids repeated provider calls.\n"
+    "- It lowers latency for equivalent questions."
+)
 
 
 def answer(provider, text, status="LIVE", citations=None):
+    provider_ids = {
+        "openai": "model-a",
+        "gemini": "model-c",
+        "mistral": "model-e",
+    }
+    provider_labels = {
+        "openai": "ChatGPT",
+        "gemini": "Gemini",
+        "mistral": "Mistral",
+    }
+    provider_names = {
+        "openai": "OpenAI",
+        "gemini": "Google",
+        "mistral": "Mistral AI",
+    }
     return {
-        "id": "model-a" if provider == "openai" else "model-c",
+        "id": provider_ids[provider],
         "provider_response_id": provider,
         "provider_key": provider,
-        "label": "ChatGPT" if provider == "openai" else "Gemini",
-        "provider": "OpenAI" if provider == "openai" else "Google",
+        "label": provider_labels[provider],
+        "provider": provider_names[provider],
         "provider_status": status,
         "text": text,
         "citations": citations or [],
     }
+
+
+def test_mistral_citations_keep_provider_provenance():
+    citation = extract_citations(
+        "Source: https://docs.mistral.ai/",
+        "mistral",
+    )[0]
+    assert citation["provider"] == "mistral"
+    assert citation["declared_by_models"] == ["mistral"]
+
+
+def test_three_provider_claim_keeps_mistral_excerpts_and_deduplicates_equivalents():
+    claim = supported_claim()
+    claim["originating_models"].append("mistral")
+    claim["supporting_models"].append("mistral")
+    claim["support"].append(
+        support("mistral", "Caching reduces repeated work.")
+    )
+    # Same OpenAI evidence with equivalent whitespace must not be repeated.
+    claim["support"].append(
+        support("openai", "Caching  reduces repeated work.")
+    )
+
+    parsed = validate_claim_analysis(
+        claim_analysis([claim]),
+        [
+            answer("openai", OPENAI_TEXT),
+            answer("gemini", GEMINI_TEXT),
+            answer("mistral", MISTRAL_TEXT),
+        ],
+        [],
+        "LIVE",
+    )
+
+    assert parsed.claims[0].supporting_models == [
+        "openai",
+        "gemini",
+        "mistral",
+    ]
+    assert [item.provider for item in parsed.claims[0].support] == [
+        "openai",
+        "gemini",
+        "mistral",
+    ]
 
 
 def support(provider, excerpt):
@@ -94,6 +159,9 @@ def disputed_claim():
         "support": [
             support("openai", "The current limit is ten requests."),
         ],
+        "dispute": [
+            support("gemini", "The current limit is twenty requests."),
+        ],
         "citation_ids": [],
         "assessment": {
             "status": "disputed",
@@ -121,10 +189,19 @@ def valid_conclusion():
                 "id": "disagreement_1",
                 "topic": "Current limit",
                 "positions": [
-                    {"model": "openai", "position": "Ten requests."},
-                    {"model": "gemini", "position": "Twenty requests."},
+                    {
+                        "model": "openai",
+                        "position": "Ten requests.",
+                        "evidence_claim_ids": ["claim_limit"],
+                    },
+                    {
+                        "model": "gemini",
+                        "position": "Twenty requests.",
+                        "evidence_claim_ids": ["claim_limit"],
+                    },
                 ],
                 "referee_assessment": "The supplied responses conflict.",
+                "missing_information": "A current authoritative limit.",
                 "disputing_claim_ids": ["claim_limit"],
             }
         ],
@@ -155,6 +232,7 @@ def valid_conclusion():
                 "uncertainty": "medium",
             },
         },
+        "referee_reasoning": "The shared caching claim is stronger than the disputed limit.",
         "what_could_change_the_verdict": [
             "A genuine independently verified current limit."
         ],
@@ -168,6 +246,47 @@ def valid_bundle():
             [supported_claim(), disputed_claim()]
         ),
     }
+
+
+def test_three_provider_bundle_generates_conclusion_and_traceability():
+    shared = supported_claim()
+    shared["originating_models"].append("mistral")
+    shared["supporting_models"].append("mistral")
+    shared["support"].append(
+        support("mistral", "Caching reduces repeated work.")
+    )
+    bundle = valid_bundle()
+    bundle["claim_analysis"]["claims"][0] = shared
+    bundle["trusted_conclusion"]["agreements"][0]["supporting_models"] = [
+        "openai",
+        "gemini",
+        "mistral",
+    ]
+    bundle["trusted_conclusion"]["strongest_evidence"][0][
+        "supporting_models"
+    ] = ["openai", "gemini", "mistral"]
+
+    synth, completions = synthesizer_with_outputs([json.dumps(bundle)])
+    result = asyncio.run(
+        synth.synthesize(
+            "Does caching help?",
+            [
+                answer("openai", OPENAI_TEXT),
+                answer("gemini", GEMINI_TEXT),
+                answer("mistral", MISTRAL_TEXT),
+            ],
+            "en",
+        )
+    )
+
+    assert result["text"] == valid_conclusion()["final_answer"]
+    assert result["claim_analysis_status"] == "SUCCESS"
+    assert result["claims"][0]["supporting_models"] == [
+        "openai",
+        "gemini",
+        "mistral",
+    ]
+    assert completions.calls == 1
 
 
 def test_shared_claim_supported_by_two_live_providers():
@@ -190,6 +309,44 @@ def test_disputed_claim_is_preserved():
     )
     assert parsed.claims[0].assessment.status == "disputed"
     assert parsed.claims[0].disputing_models == ["gemini"]
+    assert parsed.claims[0].dispute[0].provider == "gemini"
+
+
+def test_mistral_can_oppose_a_claim_with_a_real_excerpt():
+    claim = {
+        "id": "claim_limit_mistral",
+        "text": "The current limit is ten requests.",
+        "claim_type": "fact",
+        "originating_models": ["openai", "mistral"],
+        "supporting_models": ["openai"],
+        "disputing_models": ["mistral"],
+        "support": [
+            support("openai", "The current limit is ten requests."),
+        ],
+        "dispute": [
+            support("mistral", "The current limit is twenty requests."),
+        ],
+        "citation_ids": [],
+        "assessment": {
+            "status": "disputed",
+            "reason": "Mistral states a different current limit.",
+        },
+    }
+    parsed = validate_claim_analysis(
+        claim_analysis([claim]),
+        [
+            answer("openai", OPENAI_TEXT),
+            answer(
+                "mistral",
+                "Caching reduces repeated work. "
+                "The current limit is twenty requests.",
+            ),
+        ],
+        [],
+        "LIVE",
+    )
+    assert parsed.claims[0].disputing_models == ["mistral"]
+    assert parsed.claims[0].dispute[0].provider == "mistral"
 
 
 def test_one_live_and_one_failed_excludes_failed_provider():
@@ -277,6 +434,18 @@ def test_claim_excerpt_must_come_from_actual_provider_text():
         )
 
 
+def test_dispute_excerpt_must_come_from_actual_provider_text():
+    invalid = disputed_claim()
+    invalid["dispute"][0]["response_excerpt"] = "A fabricated contrary excerpt."
+    with pytest.raises(ValueError, match="dispute excerpt is not present"):
+        validate_claim_analysis(
+            claim_analysis([invalid]),
+            [answer("openai", OPENAI_TEXT), answer("gemini", GEMINI_TEXT)],
+            [],
+            "LIVE",
+        )
+
+
 class FakeCompletions:
     def __init__(self, outputs):
         self.outputs = iter(outputs)
@@ -351,6 +520,21 @@ def test_phase2_and_legacy_records_remain_compatible_without_claims():
     legacy = {"trusted_conclusion": "Old text-only conclusion."}
     assert normalize_stored_traceability(phase2) == ([], [], "legacy")
     assert normalize_stored_traceability(legacy) == ([], [], "legacy")
+
+
+def test_pre_phase5_traceability_without_dispute_excerpts_remains_compatible():
+    old_claim = disputed_claim()
+    old_claim.pop("dispute")
+    record = {
+        "claim_schema_version": "3.0",
+        "execution_mode": "LIVE",
+        "claims": [old_claim],
+        "citations": [],
+    }
+    claims, citations, schema_version = normalize_stored_traceability(record)
+    assert schema_version == "3.0"
+    assert citations == []
+    assert claims[0]["dispute"] == []
 
 
 def test_demo_claims_remain_separate_from_live_claims():

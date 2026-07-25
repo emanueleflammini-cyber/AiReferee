@@ -51,6 +51,7 @@ describe("claim traceability", () => {
       supporting_models: ["openai"],
       disputing_models: ["gemini"],
       support: [support("openai")],
+      dispute: [support("gemini", "The exact contrary sentence.")],
       assessment: { status: "disputed", reason: "Gemini gives a competing position." },
     });
     const html = renderToStaticMarkup(
@@ -58,6 +59,8 @@ describe("claim traceability", () => {
     );
     expect(html).toContain("data-testid=\"trace-disputed\"");
     expect(html).toContain("The models disagree.");
+    expect(html).toContain("The exact contrary sentence.");
+    expect(html).toContain("results.traceability.contraryExcerpt");
   });
 
   test("labels provider citations as unverified and opens safe links safely", () => {
@@ -141,6 +144,22 @@ describe("claim traceability", () => {
       claimAnalysisStatus: "SUCCESS",
       providerStatuses: { openai: "MOCK", gemini: "MOCK" },
       executionMode: "LIVE",
+    });
+    expect(view.supported).toEqual([]);
+  });
+
+  test("excludes claims already explained by the structured conclusion", () => {
+    const html = renderToStaticMarkup(
+      <ClaimTraceability {...props({ excludeClaimIds: ["claim_1"] })} />
+    );
+    expect(html).toBe("");
+    const view = traceabilityViewModel({
+      claims: [claim()],
+      citations: [],
+      claimAnalysisStatus: "SUCCESS",
+      providerStatuses: liveStatuses,
+      executionMode: "LIVE",
+      excludeClaimIds: ["claim_1"],
     });
     expect(view.supported).toEqual([]);
   });

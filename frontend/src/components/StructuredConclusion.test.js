@@ -5,8 +5,12 @@ import {
   normalizeStructuredConclusion,
   populatedStructuredSections,
 } from "../lib/structuredConclusion";
+import en from "../locales/en.json";
+import it from "../locales/it.json";
 
 const t = (key) => key;
+const get = (bundle, path) => path.split(".").reduce((value, key) => value?.[key], bundle);
+const itT = (key) => get(it, key) ?? get(en, key) ?? key;
 
 const baseConclusion = {
   schema_version: "2.0",
@@ -80,7 +84,7 @@ describe("Trusted Conclusion 2.0 rendering", () => {
       />
     );
     expect(html).toContain("data-conclusion-schema=\"failed\"");
-    expect(html).toContain("No usable provider evidence.");
+    expect(html).toContain("results.errors.conclusionUnavailable");
   });
 
   test("does not invent numeric confidence percentages", () => {
@@ -90,5 +94,95 @@ describe("Trusted Conclusion 2.0 rendering", () => {
     expect(html).not.toMatch(/\b\d{1,3}\s*%/);
     expect(html).not.toContain(">92%<");
     expect(html).not.toContain(">87%<");
+  });
+
+  test("maps evidence strength in Italian without exposing the raw enum", () => {
+    const structured = {
+      ...baseConclusion,
+      agreements: [
+        {
+          id: "a1",
+          claim: "Affermazione condivisa",
+          supporting_models: ["openai", "gemini"],
+          strength: "strong",
+          reason: "Entrambi i provider la sostengono.",
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <StructuredConclusion structured={structured} t={itT} />
+    );
+    expect(html).toContain("Evidenza forte");
+    expect(html).not.toContain("VALORE NON RICONOSCIUTO");
+    expect(html).not.toMatch(/>STRONG</);
+  });
+
+  test("renders shared facts with providers, consensus and exact excerpts", () => {
+    const claims = [
+      {
+        id: "claim_shared",
+        text: "La cache riduce il lavoro ripetuto.",
+        claim_type: "fact",
+        originating_models: ["openai", "gemini"],
+        supporting_models: ["openai", "gemini"],
+        disputing_models: [],
+        support: [
+          { provider: "openai", response_excerpt: "La cache riduce il lavoro ripetuto." },
+          { provider: "gemini", response_excerpt: "La cache riduce il lavoro ripetuto." },
+        ],
+        assessment: { status: "supported", reason: "Confermato da entrambi." },
+      },
+    ];
+    const html = renderToStaticMarkup(
+      <StructuredConclusion structured={baseConclusion} claims={claims} t={itT} />
+    );
+    expect(html).toContain("data-testid=\"structured-shared-facts\"");
+    expect(html).toContain("Fatti condivisi");
+    expect(html).toContain("ChatGPT");
+    expect(html).toContain("Gemini");
+    expect(html).toContain("Livello di consenso");
+    expect(html).toContain("La cache riduce il lavoro ripetuto.");
+  });
+
+  test("shows disagreement explanation only for genuinely different positions", () => {
+    const real = {
+      ...baseConclusion,
+      disagreements: [
+        {
+          id: "d1",
+          topic: "Limite attuale",
+          positions: [
+            { model: "openai", position: "Il limite è dieci." },
+            { model: "gemini", position: "Il limite è venti." },
+          ],
+          referee_assessment: "Le risposte confliggono.",
+          missing_information: "Una fonte ufficiale aggiornata.",
+        },
+      ],
+    };
+    const fake = {
+      ...baseConclusion,
+      disagreements: [
+        {
+          id: "d2",
+          topic: "Nessun conflitto reale",
+          positions: [
+            { model: "openai", position: "Stessa posizione." },
+            { model: "gemini", position: "Stessa posizione." },
+          ],
+          referee_assessment: "Le risposte coincidono.",
+        },
+      ],
+    };
+    const realHtml = renderToStaticMarkup(
+      <StructuredConclusion structured={real} t={itT} />
+    );
+    const fakeHtml = renderToStaticMarkup(
+      <StructuredConclusion structured={fake} t={itT} />
+    );
+    expect(realHtml).toContain("Punti di disaccordo");
+    expect(realHtml).toContain("Perché i modelli non sono d&#x27;accordo?");
+    expect(realHtml).toContain("Una fonte ufficiale aggiornata.");
+    expect(fakeHtml).not.toContain("data-testid=\"structured-disagreements\"");
   });
 });

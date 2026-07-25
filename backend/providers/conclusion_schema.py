@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 Strength = Literal["strong", "moderate", "weak"]
 Impact = Literal["high", "medium", "low"]
 ConfidenceLevel = Literal["high", "medium", "low"]
-ProviderKey = Literal["openai", "gemini"]
+ProviderKey = Literal["openai", "gemini", "mistral"]
 SourceStatus = Literal[
     "model_reasoning",
     "provider_citation_unverified",
@@ -25,6 +25,7 @@ SourceStatus = Literal[
 PROVIDER_KEYS_BY_ID = {
     "model-a": "openai",
     "model-c": "gemini",
+    "model-e": "mistral",
 }
 
 _URL_RE = re.compile(r"(?i)\b(?:https?://|www\.)")
@@ -56,6 +57,7 @@ class Agreement(StrictContractModel):
 class DisagreementPosition(StrictContractModel):
     model: ProviderKey
     position: str = Field(min_length=1)
+    evidence_claim_ids: list[str] = Field(default_factory=list)
 
 
 class Disagreement(StrictContractModel):
@@ -63,6 +65,7 @@ class Disagreement(StrictContractModel):
     topic: str = Field(min_length=1)
     positions: list[DisagreementPosition] = Field(min_length=2)
     referee_assessment: str = Field(min_length=1)
+    missing_information: str = ""
     disputing_claim_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -122,6 +125,7 @@ class TrustedConclusionV2(StrictContractModel):
     remaining_uncertainties: list[RemainingUncertainty] = Field(default_factory=list)
     unsupported_claims: list[UnsupportedClaim] = Field(default_factory=list)
     confidence: ConclusionConfidence
+    referee_reasoning: str = ""
     what_could_change_the_verdict: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -160,6 +164,8 @@ def provider_key_for_response(response: Any) -> str:
         return "gemini"
     if "openai" in haystack or "chatgpt" in haystack:
         return "openai"
+    if "mistral" in haystack:
+        return "mistral"
     return str(response_id or "unknown").strip().lower()
 
 
@@ -221,6 +227,13 @@ def parse_structured_conclusion(
         raise ValueError(
             "Conclusion references providers outside the current execution: "
             + ", ".join(unknown)
+        )
+    if (
+        len(allowed) == 1
+        and conclusion.confidence.factors.model_agreement != "low"
+    ):
+        raise ValueError(
+            "a single-provider conclusion must report low model agreement"
         )
     return conclusion
 

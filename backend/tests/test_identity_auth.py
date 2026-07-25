@@ -4,21 +4,41 @@ Covers:
     - GET /api/me anonymous vs identified
     - Auto-create in users collection + last_seen_at updates
     - Admin surface: fail-closed / 401 wrong token / 200 correct token / 400 unknown plan
-    - Compare endpoint identity-aware: anon 2 responses, free 2 responses+usage counter,
-      premium still 2 (ENABLE_CLAUDE=false), 429 on rate-limit exhaustion
+    - Compare endpoint identity-aware: three-provider responses and usage counter,
+      premium still excludes Claude when disabled, 429 on rate-limit exhaustion
     - /api/providers still 5 slots, /api/plans still FREE available true, others false
     - Smart Reuse jaccard_fallback threshold from env unchanged
-    - No outbound calls to anthropic/xai/mistral
+    - No outbound calls to disabled Anthropic/xAI providers
     - services/user_keys.set_user_key refuses when USER_KEY_ENCRYPTION_KEY unset
 """
 import os
+import sys
 import uuid
 import time
+from pathlib import Path
 import pytest
 import requests
 from pymongo import MongoClient
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://referee-ai-4.preview.emergentagent.com").rstrip("/")
+RUN_EXTERNAL_API_TESTS = (
+    os.environ.get("RUN_EXTERNAL_API_TESTS", "false").strip().lower() == "true"
+)
+pytestmark = pytest.mark.skipif(
+    not RUN_EXTERNAL_API_TESTS,
+    reason=(
+        "External API integration tests are opt-in; set "
+        "RUN_EXTERNAL_API_TESTS=true with a configured backend."
+    ),
+)
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+BASE_URL = os.environ.get(
+    "REACT_APP_BACKEND_URL",
+    "http://127.0.0.1:8000",
+).rstrip("/")
 API = f"{BASE_URL}/api"
 ADMIN_TOKEN = "test-admin-token-DO-NOT-USE-IN-PROD"
 
@@ -50,7 +70,9 @@ class TestMe:
         assert data["is_anonymous"] is True
         assert data["plan"] == "free"
         ents = data["entitlements"]
-        assert sorted(ents["allowed_provider_ids"]) == ["model-a", "model-c"]
+        assert sorted(ents["allowed_provider_ids"]) == [
+            "model-a", "model-c", "model-e"
+        ]
         assert ents["daily_compare_limit"] == 20
         assert ents["can_use_own_keys"] is False
         assert ents["priority"] == 0
@@ -140,14 +162,14 @@ def _create_query(s, prompt="Explain database transactions briefly"):
 
 
 class TestCompareIdentity:
-    def test_compare_anonymous_two_responses(self, s):
+    def test_compare_anonymous_three_responses(self, s):
         qid = _create_query(s, "TEST_anon compare simple math sum 2 plus 2")
         r = s.post(f"{API}/queries/{qid}/compare", timeout=120)
         assert r.status_code == 200, r.text
         data = r.json()
-        assert len(data["responses"]) == 2
+        assert len(data["responses"]) == 3
         ids = {resp["id"] for resp in data["responses"]}
-        assert ids == {"model-a", "model-c"}, f"unexpected providers: {ids}"
+        assert ids == {"model-a", "model-c", "model-e"}, f"unexpected providers: {ids}"
         for resp in data["responses"]:
             assert resp["is_mock"] is False, f"{resp['id']} returned mock"
 
@@ -159,9 +181,9 @@ class TestCompareIdentity:
                        headers={"X-User-Id": uid}, timeout=120)
             assert r.status_code == 200, r.text
             data = r.json()
-            assert len(data["responses"]) == 2
+            assert len(data["responses"]) == 3
             ids = {resp["id"] for resp in data["responses"]}
-            assert ids == {"model-a", "model-c"}
+            assert ids == {"model-a", "model-c", "model-e"}
 
             # usage_events increments
             from datetime import datetime, timezone
@@ -173,7 +195,7 @@ class TestCompareIdentity:
             mongo["users"].delete_one({"id": uid})
             mongo["usage_events"].delete_many({"user_id": uid})
 
-    def test_compare_premium_still_two_because_claude_disabled(self, s, mongo):
+    def test_compare_premium_still_three_because_claude_disabled(self, s, mongo):
         uid = f"TEST_prem_{uuid.uuid4()}"
         try:
             # Promote
@@ -187,11 +209,11 @@ class TestCompareIdentity:
                        headers={"X-User-Id": uid}, timeout=120)
             assert r.status_code == 200, r.text
             data = r.json()
-            # Premium is entitled to Claude but ENABLE_CLAUDE=false → still 2
-            assert len(data["responses"]) == 2, f"got {len(data['responses'])} responses"
+            # Premium is entitled to Claude but ENABLE_CLAUDE=false -> still 3.
+            assert len(data["responses"]) == 3, f"got {len(data['responses'])} responses"
             ids = {resp["id"] for resp in data["responses"]}
             assert "model-b" not in ids, "Claude was called but should be gated by ENABLE_CLAUDE"
-            assert ids == {"model-a", "model-c"}
+            assert ids == {"model-a", "model-c", "model-e"}
         finally:
             mongo["users"].delete_one({"id": uid})
             mongo["usage_events"].delete_many({"user_id": uid})
@@ -266,8 +288,7 @@ class TestEncryptionRefusal:
     def test_user_keys_refuses_without_env(self):
         # Ensure module reads env at call time; make sure it's unset for this test
         os.environ.pop("USER_KEY_ENCRYPTION_KEY", None)
-        import importlib, sys
-        sys.path.insert(0, "/app/backend")
+        import importlib
         mod = importlib.import_module("services.user_keys")
         importlib.reload(mod)
         # Try to store — should refuse (return False) since key is unset

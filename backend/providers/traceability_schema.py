@@ -15,7 +15,7 @@ from urllib.parse import urlsplit, urlunsplit
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-ProviderKey = Literal["openai", "gemini"]
+ProviderKey = Literal["openai", "gemini", "mistral"]
 ClaimType = Literal[
     "fact",
     "interpretation",
@@ -129,6 +129,7 @@ class TraceableClaim(StrictModel):
     supporting_models: list[ProviderKey] = Field(default_factory=list)
     disputing_models: list[ProviderKey] = Field(default_factory=list)
     support: list[ClaimSupport] = Field(default_factory=list)
+    dispute: list[ClaimSupport] = Field(default_factory=list)
     citation_ids: list[str] = Field(default_factory=list)
     assessment: ClaimAssessment
 
@@ -141,6 +142,9 @@ class TraceableClaim(StrictModel):
         support_providers = {item.provider for item in self.support}
         if not support_providers.issubset(supporters):
             raise ValueError("support excerpts require a supporting provider")
+        dispute_providers = {item.provider for item in self.dispute}
+        if not dispute_providers.issubset(disputers):
+            raise ValueError("dispute excerpts require a disputing provider")
         if self.assessment.status == "supported" and not self.support:
             raise ValueError("supported claim requires at least one real excerpt")
         if self.assessment.status == "disputed" and not disputers:
@@ -371,6 +375,7 @@ def validate_claim_analysis(
             | set(claim.supporting_models)
             | set(claim.disputing_models)
             | {support.provider for support in claim.support}
+            | {dispute.provider for dispute in claim.dispute}
         )
         if not referenced.issubset(allowed):
             raise ValueError("claim references a FAILED or absent provider")
@@ -387,6 +392,25 @@ def validate_claim_analysis(
             ):
                 if hint and not _excerpt_in_response(hint, response):
                     raise ValueError("claim response hint is not present in response")
+        for dispute in claim.dispute:
+            response = response_by_provider[dispute.provider]
+            if not _excerpt_in_response(dispute.response_excerpt, response):
+                raise ValueError(
+                    "claim dispute excerpt is not present in provider response"
+                )
+            expected_id = response_id_by_provider[dispute.provider]
+            if dispute.response_reference.provider_response_id != expected_id:
+                raise ValueError(
+                    "claim dispute response reference does not match provider"
+                )
+            for hint in (
+                dispute.response_reference.start_hint,
+                dispute.response_reference.end_hint,
+            ):
+                if hint and not _excerpt_in_response(hint, response):
+                    raise ValueError(
+                        "claim dispute response hint is not present in response"
+                    )
         for citation_id in claim.citation_ids:
             citation = citation_by_id.get(citation_id)
             if not citation:
@@ -396,6 +420,11 @@ def validate_claim_analysis(
                 set(claim.originating_models) | set(claim.supporting_models)
             ):
                 raise ValueError("citation provenance does not match claim providers")
+        # Preserve one exact excerpt per provider and semantic excerpt. The
+        # synthesizer can occasionally repeat the same quotation with different
+        # whitespace; exposing duplicates adds no provenance and clutters the UI.
+        claim.support = _deduplicate_claim_excerpts(claim.support)
+        claim.dispute = _deduplicate_claim_excerpts(claim.dispute)
     return analysis
 
 
@@ -491,6 +520,8 @@ def _provider_key(value: str) -> ProviderKey:
         return "openai"
     if normalized in ("model-c", "gemini", "google", "google deepmind"):
         return "gemini"
+    if normalized in ("model-e", "mistral", "mistral ai"):
+        return "mistral"
     raise ValueError("unsupported provider for traceability")
 
 
@@ -503,6 +534,24 @@ def _string_or_none(value: Any) -> Optional[str]:
 
 def _ordered_unique(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(values))
+
+
+def _deduplicate_claim_excerpts(
+    excerpts: Iterable[ClaimSupport],
+) -> list[ClaimSupport]:
+    unique: list[ClaimSupport] = []
+    seen: set[tuple[str, str]] = set()
+    for excerpt in excerpts:
+        normalized = _WHITESPACE_RE.sub(
+            " ",
+            excerpt.response_excerpt,
+        ).strip().casefold()
+        key = (excerpt.provider, normalized)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(excerpt)
+    return unique
 
 
 def _excerpt_in_response(excerpt: str, response: str) -> bool:

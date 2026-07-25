@@ -13,6 +13,7 @@ import { translateEnum } from "../lib/resultPresentation";
 const PROVIDER_LABELS = {
   openai: "ChatGPT",
   gemini: "Gemini",
+  mistral: "Mistral",
 };
 
 export function ClaimTraceability({
@@ -22,6 +23,7 @@ export function ClaimTraceability({
   claimAnalysisError,
   providerStatuses,
   executionMode,
+  excludeClaimIds = [],
   t,
 }) {
   const view = traceabilityViewModel({
@@ -31,6 +33,7 @@ export function ClaimTraceability({
     claimAnalysisError,
     providerStatuses,
     executionMode,
+    excludeClaimIds,
   });
 
   if (view.kind === "not_available") return null;
@@ -45,7 +48,9 @@ export function ClaimTraceability({
             <AlertTriangle className="h-4 w-4" aria-hidden="true" />
             {t("results.traceability.analysisFailed")}
           </div>
-          <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/55 [overflow-wrap:anywhere]">{view.error}</p>
+          <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/55 [overflow-wrap:anywhere]">
+            {t("results.errors.traceabilityUnavailable")}
+          </p>
         </div>
       </section>
     );
@@ -170,16 +175,29 @@ function ClaimCard({ claim, t, disputed = false }) {
       <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/50 [overflow-wrap:anywhere]">
         {claim.assessment.reason}
       </p>
-      {claim.support.length > 0 && (
+      {(claim.support.length > 0 || claim.dispute.length > 0) && (
         <details className="group mt-3 min-w-0 max-w-full rounded-xl border border-white/[0.06] bg-black/10">
           <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-xl px-3 py-2.5 text-[12px] text-white/55 hover:text-white/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120]">
             <Quote className="h-3.5 w-3.5 flex-shrink-0 text-[#00E5FF]/70" aria-hidden="true" />
             {t("results.traceability.showExcerpts")}
           </summary>
           <div className="space-y-3 border-t border-white/[0.06] px-3 py-3">
-            {claim.support.map((support, index) => (
-              <blockquote key={`${support.provider}-${index}`} className="min-w-0 max-w-full border-l-2 border-[#00E5FF]/30 pl-3">
+            {[
+              ...claim.support.map((item) => ({ ...item, stance: "support" })),
+              ...claim.dispute.map((item) => ({ ...item, stance: "dispute" })),
+            ].map((support, index) => (
+              <blockquote
+                key={`${support.provider}-${support.excerpt}-${index}`}
+                className={`min-w-0 max-w-full border-l-2 pl-3 ${
+                  support.stance === "dispute" ? "border-[#F59E0B]/45" : "border-[#00E5FF]/30"
+                }`}
+              >
                 <ProviderChips providers={[support.provider]} compact />
+                {support.stance === "dispute" && (
+                  <div className="mt-1 text-[10.5px] text-[#F59E0B]/80">
+                    {t("results.traceability.contraryExcerpt")}
+                  </div>
+                )}
                 <p className="mt-2 whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-white/60 [overflow-wrap:anywhere]">
                   “{support.excerpt}”
                 </p>

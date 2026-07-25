@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { StructuredConclusion } from "../components/StructuredConclusion";
+import { MODELS, MODEL_STATUS } from "../lib/mockData";
 
 const source = (relativePath) => fs.readFileSync(path.join(__dirname, "..", relativePath), "utf8");
 const t = (key) => key;
@@ -38,6 +39,21 @@ describe("Phase 4 responsive and compatibility safeguards", () => {
     const results = source("pages/Results.jsx");
     expect(results).toContain('data-testid="share-verdict-button"');
     expect(results).toContain('aria-label={t("results.shareVerdict")}');
+  });
+
+  test("Mistral is an active card while Grok and Claude remain upcoming", () => {
+    const mistral = MODELS.find((model) => model.id === "model-e");
+    const grok = MODELS.find((model) => model.id === "model-d");
+    const claude = MODELS.find((model) => model.id === "model-b");
+    expect(mistral.status).toBe(MODEL_STATUS.LIVE);
+    expect(grok.status).toBe(MODEL_STATUS.COMING_SOON);
+    expect(claude.status).toBe(MODEL_STATUS.PREMIUM_COMING_SOON);
+  });
+
+  test("Results uses the backend model name for active provider cards", () => {
+    const results = source("pages/Results.jsx");
+    expect(results).toContain("codename={live?.codename || m.codename}");
+    expect(results).toContain("modelUsed={live?.model_used}");
   });
 
   test("legacy generated content is not translated or replaced on the client", () => {

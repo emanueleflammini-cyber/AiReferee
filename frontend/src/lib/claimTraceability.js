@@ -1,5 +1,5 @@
 const CLAIM_STATUSES = new Set(["supported", "disputed", "weak", "unsupported"]);
-const PROVIDER_STATUSES = new Set(["LIVE", "FAILED", "MOCK"]);
+const PROVIDER_STATUSES = new Set(["LIVE", "FAILED", "TIMEOUT", "DISABLED", "MOCK"]);
 
 export function safeHttpUrl(value) {
   if (typeof value !== "string" || !value.trim()) return null;
@@ -29,6 +29,7 @@ export function traceabilityViewModel({
   claimAnalysisError,
   providerStatuses,
   executionMode = "LIVE",
+  excludeClaimIds = [],
 }) {
   const status = String(claimAnalysisStatus || "").toUpperCase();
   if (status === "FAILED") {
@@ -59,10 +60,15 @@ export function traceabilityViewModel({
     if (!Object.keys(statusMap).length) return true;
     return statusMap[provider] === expectedStatus;
   };
+  const excluded = new Set(
+    (Array.isArray(excludeClaimIds) ? excludeClaimIds : [])
+      .map(cleanText)
+      .filter(Boolean)
+  );
 
   const normalizedClaims = claims
     .map((claim) => normalizeClaim(claim, providerIsEligible))
-    .filter(Boolean);
+    .filter((claim) => claim && !excluded.has(claim.id));
   const knownClaimIds = new Set(normalizedClaims.map((claim) => claim.id));
   const normalizedCitations = (Array.isArray(citations) ? citations : [])
     .map((citation) => normalizeCitation(citation, providerIsEligible, knownClaimIds))
@@ -92,6 +98,9 @@ function normalizeClaim(value, providerIsEligible) {
   const support = (Array.isArray(value.support) ? value.support : [])
     .map((item) => normalizeSupport(item, providerIsEligible))
     .filter(Boolean);
+  const dispute = (Array.isArray(value.dispute) ? value.dispute : [])
+    .map((item) => normalizeSupport(item, providerIsEligible))
+    .filter(Boolean);
 
   if (
     assessmentStatus === "supported"
@@ -110,6 +119,7 @@ function normalizeClaim(value, providerIsEligible) {
     supportingModels,
     disputingModels,
     support,
+    dispute,
     citationIds: Array.isArray(value.citation_ids)
       ? value.citation_ids.map(cleanText).filter(Boolean)
       : [],
@@ -180,6 +190,7 @@ function providerKey(value) {
   const normalized = String(value || "").trim().toLowerCase();
   if (["model-a", "openai", "chatgpt"].includes(normalized)) return "openai";
   if (["model-c", "gemini", "google"].includes(normalized)) return "gemini";
+  if (["model-e", "mistral", "mistral ai"].includes(normalized)) return "mistral";
   return normalized;
 }
 

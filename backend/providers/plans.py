@@ -3,7 +3,7 @@
 Three business plans are prepared here so the rest of the codebase can query
 entitlements without knowing anything about billing:
 
-  * FREE     — platform API, only enabled providers (OpenAI + Gemini), daily
+  * FREE     — platform API, only enabled FREE providers, daily
                usage limits, Smart Reuse.
   * PREMIUM  — future subscription: Claude enabled, three-model consensus,
                higher limits, priority processing. Not yet activated.
@@ -41,14 +41,14 @@ class Entitlements:
 PLAN_ENTITLEMENTS: dict[Plan, Entitlements] = {
     Plan.FREE: Entitlements(
         plan=Plan.FREE,
-        allowed_provider_ids=frozenset({"model-a", "model-c"}),
+        allowed_provider_ids=frozenset({"model-a", "model-c", "model-e"}),
         daily_compare_limit=20,
         can_use_own_keys=False,
         priority=0,
     ),
     Plan.PREMIUM: Entitlements(
         plan=Plan.PREMIUM,
-        # Claude joins on Premium. Grok/Mistral remain gated by ENABLE_X flags.
+        # Claude joins on Premium. Grok remains gated by its future builder.
         allowed_provider_ids=frozenset({"model-a", "model-b", "model-c", "model-d", "model-e"}),
         daily_compare_limit=200,
         can_use_own_keys=False,

@@ -37,6 +37,7 @@ import { StructuredConclusion } from "@/components/StructuredConclusion";
 import { useQueryState } from "@/lib/QueryContext";
 import { useI18n } from "@/lib/i18n";
 import { translateEnum } from "@/lib/resultPresentation";
+import { coveredClaimIdsForConclusion } from "@/lib/structuredConclusion";
 import {
   PROVIDER_STATUS,
   failedProviderResponses,
@@ -418,9 +419,13 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
     if (!liveResponses) return {};
     return Object.fromEntries(liveResponses.map((r) => [r.id, r]));
   }, [liveResponses]);
-  const failedCount = (liveResponses || []).filter((response) => response.provider_status === PROVIDER_STATUS.FAILED).length;
+  const failedCount = (liveResponses || []).filter((response) => [
+    PROVIDER_STATUS.FAILED,
+    PROVIDER_STATUS.TIMEOUT,
+  ].includes(response.provider_status)).length;
   const mockCount = (liveResponses || []).filter((response) => response.provider_status === PROVIDER_STATUS.MOCK).length;
   const isDemo = executionMode === "DEMO";
+  const conclusionClaimIds = coveredClaimIdsForConclusion(structuredConclusion, claims);
   // Kept off until these legacy demo-only widgets are backed by the 2.0 API.
   // This prevents fixed mockData analytics from being presented as a verdict.
   const legacyDemoAnalyticsEnabled = false;
@@ -474,7 +479,9 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
           }
           const live = liveById[m.id] || {
             id: m.id,
-            provider_status: PROVIDER_STATUS.FAILED,
+            provider_status: m.id === "model-e"
+              ? PROVIDER_STATUS.DISABLED
+              : PROVIDER_STATUS.FAILED,
             provider_error: t("results.errors.providerResultUnavailable"),
             text: "",
           };
@@ -573,6 +580,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
                 legacyText={trustedConclusion}
                 synthesisStatus={synthesisStatus}
                 synthesisError={synthesisError}
+                claims={claims}
                 t={t}
               />
             )}
@@ -585,6 +593,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
                   claimAnalysisError={claimAnalysisError}
                   providerStatuses={providerStatuses}
                   executionMode={executionMode}
+                  excludeClaimIds={conclusionClaimIds}
                   t={t}
                 />
               </div>
@@ -916,6 +925,9 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
   const status = providerStatus || PROVIDER_STATUS.FAILED;
   const showLive = status === PROVIDER_STATUS.LIVE;
   const isFailed = status === PROVIDER_STATUS.FAILED;
+  const isTimeout = status === PROVIDER_STATUS.TIMEOUT;
+  const isDisabled = status === PROVIDER_STATUS.DISABLED;
+  const isUnavailable = isFailed || isTimeout || isDisabled;
   const showMock = status === PROVIDER_STATUS.MOCK && executionMode === "DEMO";
 
   let badge;
@@ -926,6 +938,14 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
   } else if (isFailed) {
     badge = (
       <span className="flex-shrink-0 rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.1] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-[#F43F5E]" title={error} data-testid={`card-${m.id}-failed`}>{t("results.status.failed")}</span>
+    );
+  } else if (isTimeout) {
+    badge = (
+      <span className="flex-shrink-0 rounded-full border border-[#F59E0B]/50 bg-[#F59E0B]/[0.1] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-[#F59E0B]" title={error} data-testid={`card-${m.id}-timeout`}>{t("results.status.timeout")}</span>
+    );
+  } else if (isDisabled) {
+    badge = (
+      <span className="flex-shrink-0 rounded-full border border-white/20 bg-white/[0.05] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-white/50" title={error} data-testid={`card-${m.id}-disabled`}>{t("results.status.disabled")}</span>
     );
   } else {
     badge = (
@@ -966,20 +986,26 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
           <span data-testid={`card-${m.id}-contribution`}>{t("results.stats.contributionShort")} {contribution}%</span>
         </div>}
       </header>
-      {isFailed ? (
+      {isUnavailable ? (
         <div className="min-w-0 max-w-full px-4 pl-7 text-[14px] text-white/70 sm:px-6 sm:pl-9" data-testid={`response-${m.id}`} role="alert">
-          <div className="font-medium text-[#F43F5E]">{t("results.errors.providerUnavailable")}</div>
+          <div className="font-medium text-[#F43F5E]">
+            {isTimeout
+              ? t("results.errors.providerTimeout")
+              : isDisabled
+                ? t("results.errors.providerDisabled")
+                : t("results.errors.providerUnavailable")}
+          </div>
           <div className="mt-2 break-words text-[12.5px] leading-relaxed text-white/50 [overflow-wrap:anywhere]" data-testid={`card-${m.id}-error`}>
             {error || t("results.errors.noProviderResponse")}
           </div>
-          <button
+          {!isDisabled && <button
             type="button"
             onClick={onRetry}
             className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-full border border-[#F43F5E]/40 bg-[#F43F5E]/[0.08] px-4 py-2 text-[12px] font-medium text-[#F43F5E] transition-colors hover:bg-[#F43F5E]/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F43F5E] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120]"
             data-testid={`retry-${m.id}`}
           >
             <RefreshCcw className="w-3.5 h-3.5" aria-hidden="true" /> {t("results.retry")}
-          </button>
+          </button>}
         </div>
       ) : (
         <SafeAnswerText
@@ -997,7 +1023,7 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
         <span>·</span>
         <span title={t("results.stats.estimatedCost")}>~{formatCost(costUsd || 0)}</span>
       </div>
-      {details && !isFailed && <button
+      {details && !isUnavailable && <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         data-testid={`expand-${m.id}`}
@@ -1012,7 +1038,7 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
         <ChevronDown className={"w-4 h-4 transition-transform " + (open ? "rotate-180" : "")} />
       </button>}
       <AnimatePresence initial={false}>
-        {open && details && !isFailed && (
+        {open && details && !isUnavailable && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}

@@ -6,7 +6,21 @@ import uuid
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://referee-ai-4.preview.emergentagent.com").rstrip("/")
+RUN_EXTERNAL_API_TESTS = (
+    os.environ.get("RUN_EXTERNAL_API_TESTS", "false").strip().lower() == "true"
+)
+pytestmark = pytest.mark.skipif(
+    not RUN_EXTERNAL_API_TESTS,
+    reason=(
+        "External multilingual API tests are opt-in because they require a "
+        "configured backend and real synthesis provider."
+    ),
+)
+
+BASE_URL = os.environ.get(
+    "REACT_APP_BACKEND_URL",
+    "http://127.0.0.1:8000",
+).rstrip("/")
 API = f"{BASE_URL}/api"
 
 ITALIAN_HINTS = re.compile(r"[àèéìòù]|\b(il|la|un|una|di|che|per|con|sono|questo|questa|essere)\b", re.IGNORECASE)
@@ -98,13 +112,13 @@ def test_compare_italian_conclusion(s):
     assert "synthesis_model" in data and data["synthesis_model"]
     assert "synthesis_latency_ms" in data
     assert "synthesis_cost_usd" in data
-    # only OpenAI + Gemini panellists
+    # OpenAI, Gemini and Mistral panellists.
     providers = {(r.get("provider") or "").lower() for r in data.get("responses", [])}
-    # provider label may be "OpenAI" / "Google DeepMind" — assert only these two families
-    assert len(providers) == 2
+    assert len(providers) == 3
     assert any("openai" in p for p in providers)
     assert any("google" in p or "gemini" in p or "deepmind" in p for p in providers)
-    assert len(data.get("responses", [])) == 2
+    assert any("mistral" in p for p in providers)
+    assert len(data.get("responses", [])) == 3
 
 
 def test_compare_english_conclusion(s):

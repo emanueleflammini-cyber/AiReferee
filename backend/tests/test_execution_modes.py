@@ -10,9 +10,17 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from providers.base import Provider, ProviderResult  # noqa: E402
+from providers.base import (  # noqa: E402
+    Provider,
+    ProviderResult,
+    billable_provider_cost,
+)
 from providers.mock_provider import build_mock_providers  # noqa: E402
-from providers.registry import execution_mode, providers_for_execution  # noqa: E402
+from providers.registry import (  # noqa: E402
+    execution_mode,
+    provider_unavailable_status,
+    providers_for_execution,
+)
 
 
 class SuccessfulProvider(Provider):
@@ -40,11 +48,11 @@ def test_use_mock_requires_explicit_true(monkeypatch):
     assert execution_mode() == "DEMO"
 
 
-def test_demo_panel_contains_only_current_mock_slots(monkeypatch):
+def test_demo_panel_contains_only_integrated_mock_slots(monkeypatch):
     monkeypatch.setenv("USE_MOCK", "true")
     mode, providers = providers_for_execution()
     assert mode == "DEMO"
-    assert [provider.id for provider in providers] == ["model-a", "model-c"]
+    assert [provider.id for provider in providers] == ["model-a", "model-c", "model-e"]
 
     results = [
         asyncio.run(provider.timed_generate("question", "system"))
@@ -91,6 +99,7 @@ def test_mock_builders_are_not_selected_when_flag_is_false(monkeypatch):
     monkeypatch.setenv("USE_MOCK", "false")
     monkeypatch.setenv("ENABLE_OPENAI", "false")
     monkeypatch.setenv("ENABLE_GEMINI", "false")
+    monkeypatch.setenv("ENABLE_MISTRAL", "false")
     mode, providers = providers_for_execution()
     assert mode == "LIVE"
     assert providers == []
@@ -101,6 +110,7 @@ def test_openai_disabled_keeps_only_gemini(monkeypatch):
     monkeypatch.setenv("ENABLE_OPENAI", "false")
     monkeypatch.setenv("ENABLE_GEMINI", "true")
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setenv("ENABLE_MISTRAL", "false")
     mode, providers = providers_for_execution()
     assert mode == "LIVE"
     assert [provider.id for provider in providers] == ["model-c"]
@@ -111,10 +121,44 @@ def test_gemini_disabled_keeps_only_openai(monkeypatch):
     monkeypatch.setenv("ENABLE_OPENAI", "true")
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("ENABLE_GEMINI", "false")
+    monkeypatch.setenv("ENABLE_MISTRAL", "false")
     mode, providers = providers_for_execution()
     assert mode == "LIVE"
     assert [provider.id for provider in providers] == ["model-a"]
 
 
 def test_mock_utility_remains_available_for_tests():
-    assert len(build_mock_providers()) == 2
+    assert len(build_mock_providers()) == 3
+
+
+def test_failed_and_empty_provider_results_never_add_cost():
+    failed = ProviderResult(
+        text="stale text",
+        provider_status="FAILED",
+        cost_usd=1.25,
+    )
+    empty_live = ProviderResult(
+        text="",
+        provider_status="LIVE",
+        cost_usd=1.25,
+    )
+    live = ProviderResult(
+        text="usable evidence",
+        provider_status="LIVE",
+        cost_usd=0.125,
+    )
+
+    assert billable_provider_cost(failed, failed.provider_status) == 0.0
+    assert billable_provider_cost(empty_live, empty_live.provider_status) == 0.0
+    assert billable_provider_cost(live, live.provider_status) == 0.125
+
+
+def test_enabled_mistral_missing_key_is_failed_but_disabled_is_explicit(
+    monkeypatch,
+):
+    monkeypatch.setenv("ENABLE_MISTRAL", "true")
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    assert provider_unavailable_status("model-e") == "FAILED"
+
+    monkeypatch.setenv("ENABLE_MISTRAL", "false")
+    assert provider_unavailable_status("model-e") == "DISABLED"

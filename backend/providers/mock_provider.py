@@ -94,7 +94,7 @@ class MockProvider(Provider):
 
 
 def build_mock_providers() -> list[Provider]:
-    """Build the two providers in the current explicit demo panel."""
+    """Build every integrated provider in the explicit demo panel."""
     return [
         MockProvider(
             id="model-a",
@@ -111,5 +111,13 @@ def build_mock_providers() -> list[Provider]:
             provider_name="Google DeepMind",
             template_key="gemini",
             env_var="GEMINI_API_KEY",
+        ),
+        MockProvider(
+            id="model-e",
+            label="Mistral",
+            codename="Mistral Small (Demo)",
+            provider_name="Mistral AI",
+            template_key="mistral",
+            env_var="MISTRAL_API_KEY",
         ),
     ]

@@ -36,7 +36,7 @@
     "modelsBody": "Referee sends your question to each in parallel — and only shows you what they agree on.",
     "workflow": {
       "question":   { "title": "Question",             "body": "You ask anything." },
-      "models":     { "title": "Multiple AI Models",   "body": "Two leading models answer independently." },
+      "models":     { "title": "Multiple AI Models",   "body": "Three leading models answer independently." },
       "consensus":  { "title": "Consensus Analysis",   "body": "We compare their reasoning side-by-side." },
       "evidence":   { "title": "Evidence Review",      "body": "Claims are checked for logical consistency." },
       "conclusion": { "title": "Trusted Conclusion",   "body": "One transparent, explainable answer." },
@@ -44,19 +44,19 @@
       "updated":    { "title": "Updated Conclusion",   "body": "The conclusion evolves as evidence changes." }
     },
     "moreModels": "More models coming soon.",
-    "featureA": "Multiple minds, one verdict", "featureAbody": "GPT and Gemini reason on your question in parallel. Claude, Grok and Mistral are on the roadmap.",
+    "featureA": "Multiple minds, one verdict", "featureAbody": "GPT, Gemini and Mistral reason on your question in parallel. Claude and Grok are on the roadmap.",
     "featureB": "Consensus + confidence", "featureBbody": "Every conclusion ships with a consensus level and a defensible confidence score.",
     "featureC": "Challenge, don't accept", "featureCbody": "One click asks every model to try to refute the conclusion — and update it.",
     "footer": "The AI Consensus Platform",
     "pricingEyebrow": "Plans",
     "pricingTitle": "Simple plans, transparent trade-offs",
-    "pricingBody": "Start free with OpenAI + Gemini. Upgrade to add Claude, priority processing and higher limits — or bring your own keys.",
+    "pricingBody": "Start free with OpenAI, Gemini and Mistral. Upgrade to add Claude, priority processing and higher limits — or bring your own keys.",
     "plans": {
       "free": {
         "name": "Free",
         "price": "$0",
-        "tagline": "Everything you need to compare OpenAI + Gemini with Smart Reuse and full transparency.",
-        "f1": "Trusted Conclusion from GPT + Gemini",
+        "tagline": "Everything you need to compare OpenAI, Gemini and Mistral with Smart Reuse and full transparency.",
+        "f1": "Trusted Conclusion from GPT + Gemini + Mistral",
         "f2": "Smart Reuse — cached answers in your language",
         "f3": "20 comparisons per day",
         "f4": "Full transparency: agreements, disagreements, evidence"
@@ -64,11 +64,11 @@
       "premium": {
         "name": "Premium",
         "price": "Coming soon",
-        "tagline": "Three-model consensus with Claude, higher confidence, priority processing and 200 daily comparisons.",
-        "f1": "Adds Claude → three-model consensus (GPT + Gemini + Claude)",
+        "tagline": "Four-model consensus with Claude, higher confidence, priority processing and 200 daily comparisons.",
+        "f1": "Adds Claude → four-model consensus",
         "f2": "Higher confidence scoring + priority queue",
         "f3": "200 comparisons per day",
-        "f4": "Early access to Grok, Mistral and future providers"
+        "f4": "Early access to Grok and future providers"
       },
       "byok": {
         "name": "Bring Your Own Keys",
@@ -180,7 +180,7 @@
     "retry": "Retry",
     "only": "only",
     "whyStillValuable": "Why it may still be valuable",
-    "roadmapProviders": "Claude, Grok and Mistral are planned for future releases.",
+    "roadmapProviders": "Claude and Grok are planned for future releases.",
     "transparencyNote": "This conclusion is generated from the strongest consensus among the available model responses. It supports decision-making and does not replace human judgment.",
     "totalScore": "Total score",
     "weight": "weight",
@@ -208,6 +208,8 @@
       "demo": "DEMO",
       "live": "LIVE · Active",
       "failed": "FAILED · Unavailable",
+      "timeout": "TIMEOUT · Timed out",
+      "disabled": "DISABLED",
       "mock": "MOCK · Simulated",
       "liveCount": "LIVE providers: {n}",
       "failedCount": "FAILED providers: {n}",
@@ -216,6 +218,8 @@
     "errors": {
       "requestNotCreated": "The comparison request could not be created.",
       "providerUnavailable": "Provider unavailable",
+      "providerTimeout": "Provider request timed out",
+      "providerDisabled": "Provider disabled",
       "conclusionUnavailable": "Trusted Conclusion is unavailable.",
       "traceabilityUnavailable": "Claim traceability is unavailable.",
       "providerResultUnavailable": "Provider result unavailable.",
@@ -289,13 +293,26 @@
     "structured": {
       "synthesisFailed": "Trusted Conclusion unavailable",
       "legacy": "Legacy conclusion",
+      "finalVerdict": "Final verdict",
       "confidence": "Confidence",
       "whyVerdict": "Why this conclusion?",
       "modelAgreement": "Model agreement",
       "evidenceQuality": "Evidence quality",
       "uncertainty": "Uncertainty",
+      "sharedFacts": "Shared facts",
       "agreements": "Agreements",
       "disagreements": "Disagreements",
+      "disagreementWhy": "Why do the models disagree?",
+      "disagreementDescription": "This section appears only when providers support genuinely different positions.",
+      "contestedPoint": "Contested point",
+      "evidenceUsed": "Evidence used by the provider",
+      "refereeReasoning": "Referee reasoning",
+      "missingInformation": "Missing information that could resolve the disagreement",
+      "supportedBy": "Supported by",
+      "disputedBy": "Disputed by",
+      "consensusLevel": "Consensus level",
+      "relevantExcerpts": "Show relevant response excerpts",
+      "contraryExcerpt": "Contrary excerpt",
       "strongestEvidence": "Strongest evidence",
       "remainingUncertainties": "Remaining uncertainties",
       "unsupportedClaims": "Unsupported claims",
@@ -304,6 +321,16 @@
         "high": "High",
         "medium": "Medium",
         "low": "Low"
+      },
+      "strength": {
+        "strong": "Strong evidence",
+        "moderate": "Moderate evidence",
+        "weak": "Weak evidence"
+      },
+      "impact": {
+        "high": "High impact",
+        "medium": "Medium impact",
+        "low": "Low impact"
       },
       "sourceStatus": {
         "model_reasoning": "Provider reasoning",
@@ -321,6 +348,7 @@
       "weakTitle": "Unsupported or weak claims",
       "disputedBy": "Disputed by",
       "showExcerpts": "Show supporting response excerpts",
+      "contraryExcerpt": "Contrary excerpt",
       "unnamedSource": "Unnamed provider source",
                          "analysisFailed": "Claim traceability is unavailable",
                          "openSource": "Open source: {source}",

@@ -1,8 +1,9 @@
 """Shared provider types and execution safety for AI Referee.
 
 Every provider implements ``generate``. ``timed_generate`` records latency and
-returns one explicit state: LIVE, FAILED, or MOCK. A failed live provider never
-receives replacement text from another provider or from a demo template.
+returns one explicit state: LIVE, FAILED, TIMEOUT, or MOCK. A failed live
+provider never receives replacement text from another provider or from a demo
+template.
 """
 from __future__ import annotations
 
@@ -23,6 +24,9 @@ PRICING: dict[str, dict[str, float]] = {
     "gemini-2.5-pro": {"input": 1.25, "output": 5.00},
     "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+    # Mistral Small standard API list price in USD per 1M tokens
+    # (input/output, checked against Mistral's official pricing page).
+    "mistral-small-latest": {"input": 0.15, "output": 0.60},
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
     "grok-3": {"input": 2.00, "output": 10.00},
 }
@@ -47,6 +51,21 @@ def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
         + (output_tokens / 1_000_000) * pricing["output"],
         6,
     )
+
+
+def billable_provider_cost(result: "ProviderResult", status: str) -> float:
+    """Return a displayable cost only for a usable provider response.
+
+    A failed, timed-out, disabled, or empty response must not contribute a
+    fabricated amount to the comparison total. DEMO responses remain eligible
+    for backwards compatibility, although the bundled mocks report zero cost.
+    """
+    normalized_status = str(status or "").upper()
+    if normalized_status not in {"LIVE", "MOCK"}:
+        return 0.0
+    if not (result.text or "").strip():
+        return 0.0
+    return max(0.0, float(result.cost_usd or 0.0))
 
 
 @dataclass
@@ -75,6 +94,10 @@ class ProviderResult:
                 self.output_tokens,
             )
         return self
+
+
+class ProviderTimeoutError(TimeoutError):
+    """A provider exhausted its own request timeout and retry budget."""
 
 
 class Provider(ABC):
@@ -107,6 +130,14 @@ class Provider(ABC):
                 raise RuntimeError("Provider returned an empty response")
             result.provider_status = "MOCK" if result.is_mock else "LIVE"
             return result.with_computed_cost()
+        except ProviderTimeoutError as exc:
+            return ProviderResult(
+                text="",
+                latency_ms=int((time.perf_counter() - start) * 1000),
+                is_mock=False,
+                provider_status="TIMEOUT",
+                error=_safe_error_message(exc),
+            )
         except Exception as exc:  # noqa: BLE001
             return ProviderResult(
                 text="",

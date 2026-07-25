@@ -18,11 +18,13 @@ load_dotenv(ROOT_DIR / '.env')
 
 from providers import (  # noqa: E402
     ProviderResult,
+    billable_provider_cost,
     provider_status,
     all_provider_specs,
-    core_provider_specs,
+    comparison_provider_specs,
     providers_for_execution,
     provider_unavailable_reason,
+    provider_unavailable_status,
 )
 from providers.plans import PLAN_ENTITLEMENTS, Plan  # noqa: E402
 from providers.embeddings import get_or_create_embedding, cosine, EMBED_MODEL  # noqa: E402
@@ -740,9 +742,9 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
             plan=identity.plan,
         )
 
-    # Phase 1 intentionally exposes only the two current production slots.
-    # Missing/disabled slots become FAILED records instead of disappearing.
-    expected_specs = core_provider_specs()
+    # Every integrated FREE provider is discovered from the registry. Missing
+    # optional providers remain visible as DISABLED records.
+    expected_specs = comparison_provider_specs()
     providers_by_id = {
         provider.id: provider
         for provider in providers
@@ -776,7 +778,7 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         if result is None:
             result = ProviderResult(
                 text="",
-                provider_status="FAILED",
+                provider_status=provider_unavailable_status(spec["id"]),
                 error=provider_unavailable_reason(spec["id"]),
             )
 
@@ -797,15 +799,26 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
             live_count += 1
         elif status == "MOCK":
             mock_count += 1
+        elif status == "TIMEOUT":
+            failed_count += 1
+            result.text = ""
+            result.is_mock = False
+        elif status == "DISABLED":
+            result.text = ""
+            result.is_mock = False
         else:
             status = "FAILED"
             failed_count += 1
             result.text = ""
             result.is_mock = False
 
+        # Only a usable LIVE/DEMO answer contributes to the displayed total.
+        # Failed, timed-out and disabled providers expose zero cost even if a
+        # malformed adapter result accidentally carried a stale value.
+        result.cost_usd = billable_provider_cost(result, status)
         total_cost += result.cost_usd
         total_latency += result.latency_ms
-        provider_key = "openai" if spec["id"] == "model-a" else "gemini"
+        provider_key = spec["provider_key"]
         try:
             provider_citations = extract_citations(
                 result.text,
