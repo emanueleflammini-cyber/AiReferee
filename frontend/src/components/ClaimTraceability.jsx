@@ -24,6 +24,7 @@ export function ClaimTraceability({
   providerStatuses,
   executionMode,
   excludeClaimIds = [],
+  hideSources = false,
   t,
 }) {
   const view = traceabilityViewModel({
@@ -60,7 +61,7 @@ export function ClaimTraceability({
     view.supported.length
     || view.disputed.length
     || view.weak.length
-    || view.citations.length
+    || (!hideSources && view.citations.length)
   );
   if (!hasContent) return null;
 
@@ -107,7 +108,7 @@ export function ClaimTraceability({
         </TraceSection>
       )}
 
-      {view.citations.length > 0 && (
+      {!hideSources && view.citations.length > 0 && (
         <TraceSection
           title={t("results.traceability.sourcesTitle")}
           icon={Link2}

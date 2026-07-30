@@ -600,6 +600,10 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
                   providerStatuses={providerStatuses}
                   executionMode={executionMode}
                   excludeClaimIds={conclusionClaimIds}
+                  hideSources={Boolean(
+                    structuredConclusion?.schema_version === "2.1"
+                    && structuredConclusion?.source_summary?.length
+                  )}
                   t={t}
                 />
               </div>

@@ -320,10 +320,36 @@
       "remainingUncertainties": "Incertezze rimanenti",
       "unsupportedClaims": "Affermazioni non supportate",
       "whatCouldChange": "Cosa potrebbe cambiare la conclusione",
+      "keyFindings": "Affermazioni principali",
+      "keyFindingsDescription": "Ogni affermazione è collegata alle risposte dei provider e alle fonti che la sostengono o la contestano.",
+      "associatedSources": "Riferimenti associati",
+      "providerAssessment": "Valutazione dei provider",
+      "providerAssessmentDescription": "Questa valutazione considera solo le risposte fornite. Non è una verifica esterna dell'accuratezza.",
+      "perceivedAccuracy": "Accuratezza percepita",
+      "coherence": "Coerenza",
+      "usefulContributions": "Contributi utili",
+      "providerWeaknesses": "Limiti della risposta",
+      "sources": "Fonti indicate dai modelli",
+      "sourcesNotice": "Le fonti sono state indicate dai modelli e non sono state verificate esternamente da AI Referee.",
+      "unnamedSource": "Riferimento senza titolo",
+      "openSource": "Apri la fonte: {source}",
       "level": {
         "high": "Alta",
         "medium": "Media",
         "low": "Bassa"
+      },
+      "assessmentLevel": {
+        "high": "Alta",
+        "medium": "Media",
+        "low": "Bassa",
+        "not_assessed": "Non valutata esternamente"
+      },
+      "findingStatus": {
+        "verified": "Verificata",
+        "probable": "Probabile",
+        "disputed": "Contestata",
+        "uncertain": "Incerta",
+        "unsupported": "Non supportata"
       },
       "strength": {
         "strong": "Evidenza forte",
@@ -339,6 +365,12 @@
         "model_reasoning": "Ragionamento del provider",
         "provider_citation_unverified": "Citazione del provider — non verificata in modo indipendente",
         "no_source": "Nessuna fonte fornita"
+      },
+      "sourceVerification": {
+        "provided_by_model": "Fonte indicata dal modello",
+        "shared_by_multiple_models": "Fonte condivisa da più modelli",
+        "unverified": "Fonte non verificata esternamente",
+        "malformed": "Collegamento non valido o incompleto"
       }
     },
     "traceability": {

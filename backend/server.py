@@ -33,7 +33,7 @@ from providers.language import detect_language, normalize_prompt as lang_normali
 from providers.translator import Translator, LANG_NAMES  # noqa: E402
 from providers.synthesizer import Synthesizer, SynthesisFailure  # noqa: E402
 from providers.conclusion_schema import (  # noqa: E402
-    TrustedConclusionV2,
+    TrustedConclusion,
     eligible_synthesis_answers,
     normalize_stored_conclusion,
 )
@@ -704,7 +704,7 @@ class CompareResponse(BaseModel):
     total_latency_ms: int = 0
     # Backward-compatible text plus the validated 2.0 contract.
     trusted_conclusion: str = ""
-    trusted_conclusion_structured: Optional[TrustedConclusionV2] = None
+    trusted_conclusion_structured: Optional[TrustedConclusion] = None
     conclusion_schema_version: Optional[str] = None
     synthesis_status: str = "FAILED"
     synthesis_error: Optional[str] = None

@@ -1,8 +1,10 @@
 import {
   AlertTriangle,
   Check,
+  ExternalLink,
   GitCompareArrows,
   HelpCircle,
+  Link2,
   Quote,
   Scale,
   ShieldAlert,
@@ -73,12 +75,15 @@ export function StructuredConclusion({
   const evidenceView = conclusionEvidenceViewModel({ structured, claims });
   const conclusion = evidenceView.conclusion;
   return (
-    <div data-testid="trusted-conclusion-structured" data-conclusion-schema="2.0">
+    <div
+      data-testid="trusted-conclusion-structured"
+      data-conclusion-schema={conclusion.schema_version}
+    >
       <div className="mb-3 text-[11px] uppercase tracking-[0.2em] text-[#00E5FF]/80">
         {t("results.structured.finalVerdict")}
       </div>
       <SafeAnswerText
-        text={conclusion.final_answer}
+        text={conclusion.final_verdict}
         className="text-[15.5px] md:text-[16.5px] leading-[1.75] text-white/90"
         testId="structured-final-answer"
       />
@@ -123,6 +128,20 @@ export function StructuredConclusion({
           </div>
         </div>
       </div>
+
+      {evidenceView.keyFindings.length > 0 && (
+        <ConclusionSection
+          title={t("results.structured.keyFindings")}
+          subtitle={t("results.structured.keyFindingsDescription")}
+          icon={ShieldCheck}
+          accent="#00E5FF"
+          testId="structured-key-findings"
+        >
+          {evidenceView.keyFindings.map((finding) => (
+            <KeyFindingCard key={finding.id} finding={finding} t={t} />
+          ))}
+        </ConclusionSection>
+      )}
 
       {evidenceView.sharedFacts.length > 0 && (
         <ConclusionSection
@@ -248,14 +267,14 @@ export function StructuredConclusion({
         </ConclusionSection>
       )}
 
-      {conclusion.remaining_uncertainties.length > 0 && (
+      {conclusion.uncertainties.length > 0 && (
         <ConclusionSection
           title={t("results.structured.remainingUncertainties")}
           icon={HelpCircle}
           accent="#A78BFA"
           testId="structured-uncertainties"
         >
-          {conclusion.remaining_uncertainties.map((uncertainty) => (
+          {conclusion.uncertainties.map((uncertainty) => (
             <article key={uncertainty.id} className="flex min-w-0 max-w-full flex-col items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 sm:flex-row sm:justify-between">
               <p className="min-w-0 break-words text-[13.5px] leading-relaxed text-white/75 [overflow-wrap:anywhere]">{uncertainty.description}</p>
               <ImpactBadge value={uncertainty.impact} t={t} />
@@ -294,7 +313,39 @@ export function StructuredConclusion({
         </ConclusionSection>
       )}
 
-      {conclusion.what_could_change_the_verdict.length > 0 && (
+      {conclusion.provider_assessment.length > 0 && (
+        <ConclusionSection
+          title={t("results.structured.providerAssessment")}
+          subtitle={t("results.structured.providerAssessmentDescription")}
+          icon={Scale}
+          accent="#A78BFA"
+          testId="structured-provider-assessment"
+        >
+          {conclusion.provider_assessment.map((assessment) => (
+            <ProviderAssessmentCard
+              key={assessment.provider}
+              assessment={assessment}
+              t={t}
+            />
+          ))}
+        </ConclusionSection>
+      )}
+
+      {conclusion.source_summary.length > 0 && (
+        <ConclusionSection
+          title={t("results.structured.sources")}
+          subtitle={t("results.structured.sourcesNotice")}
+          icon={Link2}
+          accent="#00E5FF"
+          testId="structured-sources"
+        >
+          {conclusion.source_summary.map((source) => (
+            <SourceSummaryCard key={source.id} source={source} t={t} />
+          ))}
+        </ConclusionSection>
+      )}
+
+      {conclusion.what_could_change.length > 0 && (
         <ConclusionSection
           title={t("results.structured.whatCouldChange")}
           icon={Scale}
@@ -302,7 +353,7 @@ export function StructuredConclusion({
           testId="structured-change-factors"
         >
           <ul className="space-y-2">
-            {conclusion.what_could_change_the_verdict.map((item, index) => (
+            {conclusion.what_could_change.map((item, index) => (
               <li key={index} className="flex min-w-0 gap-2 text-[13.5px] leading-relaxed text-white/70">
                 <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-[#0066FF]" />
                 <span className="min-w-0 break-words [overflow-wrap:anywhere]">{item}</span>
@@ -311,6 +362,166 @@ export function StructuredConclusion({
           </ul>
         </ConclusionSection>
       )}
+    </div>
+  );
+}
+
+function KeyFindingCard({ finding, t }) {
+  return (
+    <article
+      className="min-w-0 max-w-full rounded-xl border border-white/[0.06] bg-white/[0.02] p-4"
+      data-testid={`structured-finding-${finding.id}`}
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <FindingStatusBadge value={finding.status} t={t} />
+        <StrengthBadge value={finding.evidenceStrength} t={t} />
+      </div>
+      <p className="mt-3 break-words text-[14px] leading-relaxed text-white/85 [overflow-wrap:anywhere]">
+        {finding.claim}
+      </p>
+      {finding.explanation && (
+        <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/50 [overflow-wrap:anywhere]">
+          {finding.explanation}
+        </p>
+      )}
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+        {finding.supportingProviders.length > 0 && (
+          <ProviderMeta
+            label={t("results.structured.supportedBy")}
+            providers={finding.supportingProviders}
+          />
+        )}
+        {finding.dissentingProviders.length > 0 && (
+          <ProviderMeta
+            label={t("results.structured.disputedBy")}
+            providers={finding.dissentingProviders}
+          />
+        )}
+      </div>
+      {finding.relevantExcerpts.length > 0 && (
+        <ExcerptList excerpts={finding.relevantExcerpts} t={t} />
+      )}
+      {finding.sources.length > 0 && (
+        <div className="mt-3 border-t border-white/[0.06] pt-3">
+          <div className="mb-2 text-[10.5px] uppercase tracking-[0.14em] text-white/40">
+            {t("results.structured.associatedSources")}
+          </div>
+          <div className="flex min-w-0 flex-wrap gap-2">
+            {finding.sources.map((source) => (
+              <SourceInlineLink key={source.id} source={source} t={t} />
+            ))}
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ProviderAssessmentCard({ assessment, t }) {
+  return (
+    <article className="min-w-0 max-w-full rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <ProviderChip provider={assessment.provider} />
+        <FactorBadge
+          label={t("results.structured.perceivedAccuracy")}
+          value={assessment.perceivedAccuracy}
+          prefix="results.structured.assessmentLevel"
+          t={t}
+        />
+        <FactorBadge
+          label={t("results.structured.coherence")}
+          value={assessment.coherence}
+          prefix="results.structured.assessmentLevel"
+          t={t}
+        />
+      </div>
+      {assessment.usefulContributions.length > 0 && (
+        <TextList
+          title={t("results.structured.usefulContributions")}
+          values={assessment.usefulContributions}
+          accent="#10B981"
+        />
+      )}
+      {assessment.weaknesses.length > 0 && (
+        <TextList
+          title={t("results.structured.providerWeaknesses")}
+          values={assessment.weaknesses}
+          accent="#F59E0B"
+        />
+      )}
+    </article>
+  );
+}
+
+function SourceSummaryCard({ source, t }) {
+  return (
+    <article
+      className="min-w-0 max-w-full rounded-xl border border-white/[0.06] bg-white/[0.02] p-4"
+      data-testid={`structured-source-${source.id}`}
+    >
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <SourceInlineLink source={source} t={t} />
+          {source.rawUrl && source.title && (
+            <div className="mt-1 max-w-full truncate text-[10.5px] text-white/35" title={source.rawUrl}>
+              {source.rawUrl}
+            </div>
+          )}
+        </div>
+        <ProviderChips providers={source.citedBy} compact />
+      </div>
+      <div className="mt-3">
+        <span className="inline-flex max-w-full break-words rounded-full border border-[#FBBF24]/25 bg-[#FBBF24]/[0.06] px-2 py-0.5 text-[10.5px] text-[#FBBF24]/85 [overflow-wrap:anywhere]">
+          {translateEnum(
+            t,
+            "results.structured.sourceVerification",
+            source.verificationStatus
+          )}
+        </span>
+      </div>
+    </article>
+  );
+}
+
+function SourceInlineLink({ source, t }) {
+  const displayName = source.title
+    || source.publisher
+    || source.domain
+    || source.rawUrl
+    || t("results.structured.unnamedSource");
+  if (!source.clickableUrl) {
+    return (
+      <span className="max-w-full break-words text-[12.5px] text-white/65 [overflow-wrap:anywhere]">
+        {displayName}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={source.clickableUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex max-w-full items-start gap-1.5 break-words text-[12.5px] text-[#00E5FF] hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120] [overflow-wrap:anywhere]"
+      aria-label={t("results.structured.openSource", { source: displayName })}
+    >
+      <span className="min-w-0 break-words [overflow-wrap:anywhere]">{displayName}</span>
+      <ExternalLink className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+    </a>
+  );
+}
+
+function TextList({ title, values, accent }) {
+  return (
+    <div className="mt-3 border-t border-white/[0.06] pt-3">
+      <div className="text-[10.5px] uppercase tracking-[0.14em] text-white/40">{title}</div>
+      <ul className="mt-2 space-y-1.5">
+        {values.map((value, index) => (
+          <li key={`${value}-${index}`} className="flex min-w-0 gap-2 text-[12.5px] leading-relaxed text-white/60">
+            <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ backgroundColor: accent }} />
+            <span className="min-w-0 break-words [overflow-wrap:anywhere]">{value}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -500,10 +711,37 @@ function ProviderChip({ provider }) {
   );
 }
 
-function FactorBadge({ label, value, t }) {
+function FactorBadge({
+  label,
+  value,
+  t,
+  prefix = "results.structured.level",
+}) {
   return (
     <span className="max-w-full break-words rounded-full border border-white/10 bg-white/[0.025] px-2.5 py-1 text-[10.5px] text-white/55 [overflow-wrap:anywhere]">
-      {label}: <strong className="font-medium text-white/80">{translateEnum(t, "results.structured.level", value)}</strong>
+      {label}: <strong className="font-medium text-white/80">{translateEnum(t, prefix, value)}</strong>
+    </span>
+  );
+}
+
+function FindingStatusBadge({ value, t }) {
+  const color = value === "probable" || value === "verified"
+    ? "#10B981"
+    : value === "disputed"
+      ? "#F59E0B"
+      : value === "unsupported"
+        ? "#F43F5E"
+        : "#A78BFA";
+  return (
+    <span
+      className="flex-shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide"
+      style={{
+        color,
+        borderColor: `${color}45`,
+        backgroundColor: `${color}12`,
+      }}
+    >
+      {translateEnum(t, "results.structured.findingStatus", value)}
     </span>
   );
 }

@@ -325,10 +325,36 @@
       "remainingUncertainties": "Remaining uncertainties",
       "unsupportedClaims": "Unsupported claims",
       "whatCouldChange": "What could change the conclusion",
+      "keyFindings": "Key findings",
+      "keyFindingsDescription": "Each finding is linked to the provider responses and source references that support or challenge it.",
+      "associatedSources": "Associated source references",
+      "providerAssessment": "Provider assessment",
+      "providerAssessmentDescription": "This assessment reflects only the supplied responses. It is not an external accuracy audit.",
+      "perceivedAccuracy": "Perceived accuracy",
+      "coherence": "Coherence",
+      "usefulContributions": "Useful contributions",
+      "providerWeaknesses": "Limitations in this response",
+      "sources": "Sources indicated by the models",
+      "sourcesNotice": "These sources were indicated by the models and were not externally verified by AI Referee.",
+      "unnamedSource": "Unnamed source reference",
+      "openSource": "Open source: {source}",
       "level": {
         "high": "High",
         "medium": "Medium",
         "low": "Low"
+      },
+      "assessmentLevel": {
+        "high": "High",
+        "medium": "Medium",
+        "low": "Low",
+        "not_assessed": "Not externally assessed"
+      },
+      "findingStatus": {
+        "verified": "Verified",
+        "probable": "Probable",
+        "disputed": "Disputed",
+        "uncertain": "Uncertain",
+        "unsupported": "Unsupported"
       },
       "strength": {
         "strong": "Strong evidence",
@@ -344,6 +370,12 @@
         "model_reasoning": "Provider reasoning",
         "provider_citation_unverified": "Provider citation — not independently verified",
         "no_source": "No source supplied"
+      },
+      "sourceVerification": {
+        "provided_by_model": "Source indicated by a model",
+        "shared_by_multiple_models": "Source shared by multiple models",
+        "unverified": "Source not externally verified",
+        "malformed": "Invalid or incomplete link"
       }
     },
     "traceability": {

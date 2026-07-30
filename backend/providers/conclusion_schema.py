@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Iterable, Literal, Optional
+from typing import Any, Iterable, Literal, Optional, Union
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -15,7 +16,22 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 Strength = Literal["strong", "moderate", "weak"]
 Impact = Literal["high", "medium", "low"]
 ConfidenceLevel = Literal["high", "medium", "low"]
+AssessmentLevel = Literal["high", "medium", "low", "not_assessed"]
 ProviderKey = Literal["openai", "gemini", "mistral"]
+FindingStatus = Literal[
+    "verified",
+    "probable",
+    "disputed",
+    "uncertain",
+    "unsupported",
+]
+FindingStance = Literal["support", "dissent"]
+SourceVerificationStatus = Literal[
+    "provided_by_model",
+    "shared_by_multiple_models",
+    "unverified",
+    "malformed",
+]
 SourceStatus = Literal[
     "model_reasoning",
     "provider_citation_unverified",
@@ -116,6 +132,74 @@ class ConclusionConfidence(StrictContractModel):
         return self
 
 
+class FindingExcerpt(StrictContractModel):
+    provider: ProviderKey
+    text: str = Field(min_length=1, max_length=500)
+    stance: FindingStance
+    provider_response_id: str = Field(min_length=1, max_length=100)
+
+
+class KeyFinding(StrictContractModel):
+    id: str = Field(pattern=r"^claim_[A-Za-z0-9_-]{1,80}$")
+    claim: str = Field(min_length=1, max_length=1200)
+    status: FindingStatus
+    explanation: str = Field(min_length=1, max_length=1000)
+    supporting_providers: list[ProviderKey] = Field(default_factory=list)
+    dissenting_providers: list[ProviderKey] = Field(default_factory=list)
+    evidence_strength: Strength
+    source_references: list[str] = Field(default_factory=list)
+    relevant_excerpts: list[FindingExcerpt] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_provider_stances(self) -> "KeyFinding":
+        supporters = set(self.supporting_providers)
+        dissenters = set(self.dissenting_providers)
+        if supporters & dissenters:
+            raise ValueError(
+                "a provider cannot both support and dissent from one key finding"
+            )
+        for excerpt in self.relevant_excerpts:
+            expected = supporters if excerpt.stance == "support" else dissenters
+            if excerpt.provider not in expected:
+                raise ValueError(
+                    "key finding excerpt does not match its provider stance"
+                )
+        return self
+
+
+class ProviderAssessment(StrictContractModel):
+    provider: ProviderKey
+    useful_contributions: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    perceived_accuracy: AssessmentLevel = "not_assessed"
+    coherence: AssessmentLevel = "not_assessed"
+    usable_citation_ids: list[str] = Field(default_factory=list)
+
+
+class SourceSummaryItem(StrictContractModel):
+    id: str = Field(pattern=r"^citation_[a-f0-9]{12}$")
+    title: Optional[str] = Field(default=None, max_length=300)
+    url: Optional[str] = Field(default=None, max_length=2048)
+    publisher: Optional[str] = Field(default=None, max_length=253)
+    domain: Optional[str] = Field(default=None, max_length=253)
+    cited_by: list[ProviderKey] = Field(min_length=1)
+    supports_claim_ids: list[str] = Field(default_factory=list)
+    verification_status: SourceVerificationStatus
+
+    @model_validator(mode="after")
+    def validate_source_state(self) -> "SourceSummaryItem":
+        if self.url:
+            try:
+                parsed = urlsplit(self.url)
+            except ValueError as exc:
+                raise ValueError("source summary URL is malformed") from exc
+            if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+                raise ValueError("source summary URL must be HTTP(S)")
+        if self.verification_status == "malformed" and self.url:
+            raise ValueError("malformed source must not expose a clickable URL")
+        return self
+
+
 class TrustedConclusionV2(StrictContractModel):
     schema_version: Literal["2.0"] = "2.0"
     final_answer: str = Field(min_length=1)
@@ -130,24 +214,72 @@ class TrustedConclusionV2(StrictContractModel):
 
     @model_validator(mode="after")
     def reject_urls(self) -> "TrustedConclusionV2":
-        for value in _iter_strings(self.model_dump()):
+        for value in _iter_strings(
+            self.model_dump(),
+            ignored_keys={"source_summary"},
+        ):
             if _URL_RE.search(value):
                 raise ValueError(
-                    "Trusted Conclusion 2.0 must not contain source URLs; "
-                    "independent citation verification is not enabled"
+                    "Trusted Conclusion narrative fields must not contain source "
+                    "URLs; sources belong in the deterministic source summary"
                 )
         return self
 
 
-def _iter_strings(value: Any) -> Iterable[str]:
+class TrustedConclusionV21(TrustedConclusionV2):
+    """Backward-compatible 2.1 result enriched from validated claim evidence."""
+
+    schema_version: Literal["2.1"] = "2.1"
+    final_verdict: str = Field(min_length=1)
+    confidence_reason: str = Field(min_length=1)
+    key_findings: list[KeyFinding] = Field(default_factory=list)
+    uncertainties: list[RemainingUncertainty] = Field(default_factory=list)
+    strongest_shared_evidence: Optional[EvidenceItem] = None
+    what_could_change: list[str] = Field(default_factory=list)
+    provider_assessment: list[ProviderAssessment] = Field(default_factory=list)
+    source_summary: list[SourceSummaryItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_compatibility_aliases(self) -> "TrustedConclusionV21":
+        if self.final_verdict != self.final_answer:
+            raise ValueError("final_verdict must match the legacy final_answer")
+        if self.confidence_reason != self.confidence.reason:
+            raise ValueError(
+                "confidence_reason must match the structured confidence reason"
+            )
+        citation_ids = {source.id for source in self.source_summary}
+        finding_ids = {finding.id for finding in self.key_findings}
+        for finding in self.key_findings:
+            if not set(finding.source_references).issubset(citation_ids):
+                raise ValueError("key finding references an unknown source")
+        for source in self.source_summary:
+            if not set(source.supports_claim_ids).issubset(finding_ids):
+                raise ValueError("source summary references an unknown finding")
+        for assessment in self.provider_assessment:
+            if not set(assessment.usable_citation_ids).issubset(citation_ids):
+                raise ValueError(
+                    "provider assessment references an unknown source"
+                )
+        return self
+
+
+TrustedConclusion = Union[TrustedConclusionV2, TrustedConclusionV21]
+
+
+def _iter_strings(
+    value: Any,
+    ignored_keys: Optional[set[str]] = None,
+) -> Iterable[str]:
     if isinstance(value, str):
         yield value
     elif isinstance(value, dict):
-        for item in value.values():
-            yield from _iter_strings(item)
+        for key, item in value.items():
+            if ignored_keys and key in ignored_keys:
+                continue
+            yield from _iter_strings(item, ignored_keys)
     elif isinstance(value, list):
         for item in value:
-            yield from _iter_strings(item)
+            yield from _iter_strings(item, ignored_keys)
 
 
 def provider_key_for_response(response: Any) -> str:
@@ -211,7 +343,7 @@ def eligible_synthesis_answers(
 def parse_structured_conclusion(
     raw: str | dict[str, Any],
     allowed_providers: Iterable[str],
-) -> TrustedConclusionV2:
+) -> TrustedConclusion:
     """Parse strict JSON and reject references to providers outside the panel."""
     payload: Any
     if isinstance(raw, dict):
@@ -219,7 +351,12 @@ def parse_structured_conclusion(
     else:
         payload = json.loads(_extract_json_object(raw))
 
-    conclusion = TrustedConclusionV2.model_validate(payload)
+    model = (
+        TrustedConclusionV21
+        if payload.get("schema_version") == "2.1"
+        else TrustedConclusionV2
+    )
+    conclusion = model.model_validate(payload)
     allowed = {str(provider).strip().lower() for provider in allowed_providers}
     referenced = set(_provider_references(conclusion))
     unknown = sorted(reference for reference in referenced if reference not in allowed)
@@ -246,13 +383,16 @@ def normalize_stored_conclusion(
     if not isinstance(raw, dict):
         return None, "legacy"
     try:
-        conclusion = TrustedConclusionV2.model_validate(raw)
+        conclusion = parse_structured_conclusion(
+            raw,
+            allowed_providers=ProviderKey.__args__,
+        )
     except Exception:  # Corrupt/partial stored data must not crash old results.
         return None, "legacy"
-    return conclusion.model_dump(), "2.0"
+    return conclusion.model_dump(), conclusion.schema_version
 
 
-def _provider_references(conclusion: TrustedConclusionV2) -> Iterable[str]:
+def _provider_references(conclusion: TrustedConclusion) -> Iterable[str]:
     for agreement in conclusion.agreements:
         yield from (model.lower() for model in agreement.supporting_models)
     for disagreement in conclusion.disagreements:
@@ -261,6 +401,19 @@ def _provider_references(conclusion: TrustedConclusionV2) -> Iterable[str]:
         yield from (model.lower() for model in evidence.supporting_models)
     for claim in conclusion.unsupported_claims:
         yield from (model.lower() for model in claim.originating_models)
+    if isinstance(conclusion, TrustedConclusionV21):
+        for finding in conclusion.key_findings:
+            yield from (
+                model.lower()
+                for model in (
+                    finding.supporting_providers
+                    + finding.dissenting_providers
+                )
+            )
+        for assessment in conclusion.provider_assessment:
+            yield assessment.provider.lower()
+        for source in conclusion.source_summary:
+            yield from (model.lower() for model in source.cited_by)
 
 
 def _extract_json_object(raw: str) -> str:

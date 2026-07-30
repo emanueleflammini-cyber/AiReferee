@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from .base import estimate_cost
 from .conclusion_schema import (
     TrustedConclusionV2,
+    TrustedConclusionV21,
     parse_structured_conclusion,
 )
 from .traceability_schema import (
@@ -318,6 +319,10 @@ def _system_prompt(
         f"{audience}. Preferred answer format: {fmt}.\n\n"
         "Rules:\n"
         "- final_answer must directly and fully answer the question.\n"
+        "- final_answer must be specific to the supplied evidence. Avoid a "
+        "generic summary that could apply to a different question.\n"
+        "- Distinguish facts, interpretations, recommendations and predictions "
+        "using claim_type. Agreement between models is consensus, not proof.\n"
         f"- This execution contains exactly {len(allowed_providers)} usable "
         "provider response(s). Never claim that more providers participated "
         "or agreed than are present in allowed_provider_keys.\n"
@@ -348,6 +353,9 @@ def _system_prompt(
         "- Do not create URLs, citation IDs, source titles or publications.\n"
         "- Provider citations are unverified. Never claim independent "
         "verification or turn a citation into proof of truth.\n"
+        "- If no citations are supplied, every citation_ids array must be empty "
+        "and referee_reasoning must explicitly say that the provider responses "
+        "contain no usable source references.\n"
         "- FAILED providers are absent and cannot support or dispute claims.\n"
         "- supporting_claim_ids, disputing_claim_ids, position "
         "evidence_claim_ids, evidence_claim_ids and unsupported_claim_ids "
@@ -395,12 +403,19 @@ def _parse_bundle(
         execution_mode,
     )
     _validate_conclusion_claim_references(conclusion, analysis)
+    associated_citations = associate_citations_with_claims(citations, analysis)
+    conclusion = _enrich_conclusion(
+        conclusion,
+        analysis,
+        associated_citations,
+        answers,
+    )
     return {
         "conclusion": conclusion,
         "claim_analysis": analysis,
         "claim_analysis_status": "SUCCESS",
         "claim_analysis_error": None,
-        "citations": associate_citations_with_claims(citations, analysis),
+        "citations": associated_citations,
     }
 
 
@@ -466,6 +481,216 @@ def _salvage_conclusion(
         return parse_structured_conclusion(candidate, allowed_providers)
     except Exception:
         return None
+
+
+def _enrich_conclusion(
+    conclusion: TrustedConclusionV2,
+    analysis: ClaimAnalysisV3,
+    citations: list[dict[str, Any]],
+    answers: list[dict[str, Any]],
+) -> TrustedConclusionV21:
+    """Build the 2.1 evidence view only from already validated local data.
+
+    The synthesizer does not get to create source-summary records, provider
+    scores or excerpts. Those values are derived here from exact provider
+    responses, validated claims and deterministic citation extraction.
+    """
+    source_summary = [_source_summary_item(item) for item in citations]
+    known_source_ids = {item["id"] for item in source_summary}
+
+    key_findings = []
+    for claim in analysis.claims:
+        supporters = list(dict.fromkeys(claim.supporting_models))
+        dissenters = list(dict.fromkeys(claim.disputing_models))
+        finding_status = _finding_status(claim.assessment.status)
+        source_references = [
+            citation_id
+            for citation_id in claim.citation_ids
+            if citation_id in known_source_ids
+        ]
+        relevant_excerpts = [
+            {
+                "provider": excerpt.provider,
+                "text": excerpt.response_excerpt,
+                "stance": stance,
+                "provider_response_id": (
+                    excerpt.response_reference.provider_response_id
+                ),
+            }
+            for stance, excerpts in (
+                ("support", claim.support),
+                ("dissent", claim.dispute),
+            )
+            for excerpt in excerpts
+        ]
+        key_findings.append(
+            {
+                "id": claim.id,
+                "claim": claim.text,
+                "status": finding_status,
+                "explanation": claim.assessment.reason,
+                "supporting_providers": supporters,
+                "dissenting_providers": dissenters,
+                "evidence_strength": _evidence_strength(
+                    supporters,
+                    dissenters,
+                    claim.assessment.status,
+                ),
+                "source_references": source_references,
+                "relevant_excerpts": relevant_excerpts,
+            }
+        )
+
+    provider_assessment = _provider_assessments(
+        analysis,
+        citations,
+        answers,
+    )
+    strongest_shared = next(
+        (
+            item.model_dump()
+            for item in conclusion.strongest_evidence
+            if len(set(item.supporting_models)) >= 2
+        ),
+        None,
+    )
+    payload = conclusion.model_dump()
+    payload.update(
+        {
+            "schema_version": "2.1",
+            "final_verdict": conclusion.final_answer,
+            "confidence_reason": conclusion.confidence.reason,
+            "key_findings": key_findings,
+            "uncertainties": [
+                item.model_dump()
+                for item in conclusion.remaining_uncertainties
+            ],
+            "strongest_shared_evidence": strongest_shared,
+            "what_could_change": list(
+                conclusion.what_could_change_the_verdict
+            ),
+            "provider_assessment": provider_assessment,
+            "source_summary": source_summary,
+        }
+    )
+    return TrustedConclusionV21.model_validate(payload)
+
+
+def _source_summary_item(citation: dict[str, Any]) -> dict[str, Any]:
+    declared_by = list(dict.fromkeys(citation.get("declared_by_models") or []))
+    citation_status = str(citation.get("verification_status") or "")
+    if citation_status == "invalid_url":
+        status = "malformed"
+        safe_url = None
+    elif len(declared_by) >= 2:
+        status = "shared_by_multiple_models"
+        safe_url = citation.get("url")
+    elif citation.get("url") or citation.get("title"):
+        status = "provided_by_model"
+        safe_url = citation.get("url")
+    else:
+        status = "unverified"
+        safe_url = None
+    return {
+        "id": citation["id"],
+        "title": citation.get("title"),
+        "url": safe_url,
+        "publisher": citation.get("domain"),
+        "domain": citation.get("domain"),
+        "cited_by": declared_by,
+        "supports_claim_ids": list(
+            dict.fromkeys(citation.get("associated_claim_ids") or [])
+        ),
+        "verification_status": status,
+    }
+
+
+def _finding_status(value: str) -> str:
+    # "verified" is intentionally reserved for a future independent
+    # verification layer. Agreement between providers is not external proof.
+    return {
+        "supported": "probable",
+        "disputed": "disputed",
+        "weak": "uncertain",
+        "unsupported": "unsupported",
+    }.get(value, "uncertain")
+
+
+def _evidence_strength(
+    supporters: list[str],
+    dissenters: list[str],
+    assessment_status: str,
+) -> str:
+    if assessment_status in ("weak", "unsupported") or dissenters:
+        return "weak"
+    if len(set(supporters)) >= 2:
+        return "strong"
+    if supporters:
+        return "moderate"
+    return "weak"
+
+
+def _provider_assessments(
+    analysis: ClaimAnalysisV3,
+    citations: list[dict[str, Any]],
+    answers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    assessments = []
+    for answer in answers:
+        provider = str(answer.get("provider_key") or "").strip().lower()
+        if not provider:
+            continue
+        contributions: list[str] = []
+        weaknesses: list[str] = []
+        related_claims = []
+        for claim in analysis.claims:
+            involved = provider in (
+                set(claim.originating_models)
+                | set(claim.supporting_models)
+                | set(claim.disputing_models)
+            )
+            if not involved:
+                continue
+            related_claims.append(claim)
+            if (
+                provider in claim.supporting_models
+                and claim.assessment.status == "supported"
+            ):
+                contributions.append(claim.text)
+            if (
+                provider in claim.originating_models
+                and claim.assessment.status in ("weak", "unsupported")
+            ):
+                weaknesses.append(claim.text)
+            elif (
+                provider in claim.supporting_models
+                and claim.assessment.status == "disputed"
+            ):
+                weaknesses.append(claim.text)
+        if not related_claims:
+            coherence = "not_assessed"
+        elif weaknesses:
+            coherence = "medium"
+        else:
+            coherence = "high"
+        usable_citations = [
+            citation["id"]
+            for citation in citations
+            if provider in (citation.get("declared_by_models") or [])
+            and citation.get("verification_status") != "invalid_url"
+        ]
+        assessments.append(
+            {
+                "provider": provider,
+                "useful_contributions": list(dict.fromkeys(contributions)),
+                "weaknesses": list(dict.fromkeys(weaknesses)),
+                # No independent source verification happens in this phase.
+                "perceived_accuracy": "not_assessed",
+                "coherence": coherence,
+                "usable_citation_ids": list(dict.fromkeys(usable_citations)),
+            }
+        )
+    return assessments
 
 
 def _extract_json_object(raw: str) -> str:

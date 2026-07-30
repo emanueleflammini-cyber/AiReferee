@@ -1,3 +1,5 @@
+import { safeHttpUrl } from "./claimTraceability";
+
 const ARRAY_FIELDS = [
   "agreements",
   "disagreements",
@@ -9,13 +11,17 @@ const ARRAY_FIELDS = [
 
 export function normalizeStructuredConclusion(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  if (value.schema_version !== "2.0") return null;
-  if (typeof value.final_answer !== "string" || !value.final_answer.trim()) return null;
+  if (!["2.0", "2.1"].includes(value.schema_version)) return null;
+  const finalAnswer = cleanText(value.final_answer || value.final_verdict);
+  if (!finalAnswer) return null;
   if (!value.confidence || typeof value.confidence !== "object") return null;
 
   const normalized = {
     ...value,
-    final_answer: value.final_answer.trim(),
+    final_answer: finalAnswer,
+    final_verdict: cleanText(value.final_verdict) || finalAnswer,
+    confidence_reason: cleanText(value.confidence_reason)
+      || cleanText(value.confidence.reason),
     referee_reasoning: cleanText(value.referee_reasoning),
     confidence: {
       ...value.confidence,
@@ -29,6 +35,23 @@ export function normalizeStructuredConclusion(value) {
         uncertainty: normalizeLevel(value.confidence.factors?.uncertainty),
       },
     },
+    key_findings: normalizeKeyFindings(value.key_findings),
+    uncertainties: normalizeUncertainties(
+      value.uncertainties,
+      value.remaining_uncertainties
+    ),
+    strongest_shared_evidence: normalizeEvidence(
+      value.strongest_shared_evidence
+    ),
+    what_could_change: uniqueStrings(
+      Array.isArray(value.what_could_change)
+        ? value.what_could_change
+        : value.what_could_change_the_verdict
+    ),
+    provider_assessment: normalizeProviderAssessments(
+      value.provider_assessment
+    ),
+    source_summary: normalizeSourceSummary(value.source_summary),
   };
 
   ARRAY_FIELDS.forEach((field) => {
@@ -42,6 +65,7 @@ export function conclusionEvidenceViewModel({ structured, claims = [] }) {
   if (!conclusion) {
     return {
       conclusion: null,
+      keyFindings: [],
       sharedFacts: [],
       agreements: [],
       disagreements: [],
@@ -54,15 +78,26 @@ export function conclusionEvidenceViewModel({ structured, claims = [] }) {
     .map(normalizeTraceableClaim)
     .filter(Boolean);
   const claimById = new Map(normalizedClaims.map((claim) => [claim.id, claim]));
+  const sourceById = new Map(
+    conclusion.source_summary.map((source) => [source.id, source])
+  );
   const resolveClaims = (ids) => uniqueStrings(ids)
     .map((id) => claimById.get(id))
     .filter(Boolean);
+  const keyFindings = conclusion.key_findings.map((finding) => ({
+    ...finding,
+    sources: finding.sourceReferences
+      .map((id) => sourceById.get(id))
+      .filter(Boolean),
+  }));
 
-  const sharedFacts = normalizedClaims.filter((claim) => (
-    claim.claimType === "fact"
-    && claim.assessmentStatus === "supported"
-    && claim.supportingModels.length >= 2
-  ));
+  const sharedFacts = keyFindings.length
+    ? []
+    : normalizedClaims.filter((claim) => (
+      claim.claimType === "fact"
+      && claim.assessmentStatus === "supported"
+      && claim.supportingModels.length >= 2
+    ));
   const covered = new Set(sharedFacts.map((claim) => claim.id));
   const shownText = new Set(sharedFacts.map((claim) => comparableText(claim.text)));
 
@@ -113,12 +148,17 @@ export function conclusionEvidenceViewModel({ structured, claims = [] }) {
       return true;
     });
 
-  const strongestEvidence = conclusion.strongest_evidence
+  const explicitStrongestShared = Boolean(conclusion.strongest_shared_evidence);
+  const strongestEvidenceInput = explicitStrongestShared
+    ? [conclusion.strongest_shared_evidence]
+    : conclusion.strongest_evidence;
+  const strongestEvidence = strongestEvidenceInput
     .map((evidence) => ({
       ...evidence,
       linkedClaims: resolveClaims(evidence.evidence_claim_ids),
     }))
     .filter((evidence) => {
+      if (explicitStrongestShared) return true;
       const key = comparableText(evidence.claim);
       const ids = evidence.linkedClaims.map((claim) => claim.id);
       const repeatsKnownClaim = ids.length > 0 && ids.every((id) => covered.has(id));
@@ -131,9 +171,11 @@ export function conclusionEvidenceViewModel({ structured, claims = [] }) {
   conclusion.unsupported_claims.forEach((item) => {
     uniqueStrings(item.unsupported_claim_ids).forEach((id) => covered.add(id));
   });
+  keyFindings.forEach((finding) => covered.add(finding.id));
 
   return {
     conclusion,
+    keyFindings,
     sharedFacts,
     agreements,
     disagreements,
@@ -208,6 +250,119 @@ function normalizeTraceableClaim(value) {
     support: normalizeExcerpts(value.support),
     dispute: normalizeExcerpts(value.dispute),
   };
+}
+
+function normalizeKeyFindings(values) {
+  const statuses = new Set([
+    "verified",
+    "probable",
+    "disputed",
+    "uncertain",
+    "unsupported",
+  ]);
+  const strengths = new Set(["strong", "moderate", "weak"]);
+  return (Array.isArray(values) ? values : [])
+    .map((item) => {
+      const id = cleanText(item?.id);
+      const claim = cleanText(item?.claim);
+      const status = cleanText(item?.status).toLowerCase();
+      const evidenceStrength = cleanText(item?.evidence_strength).toLowerCase();
+      if (!id || !claim || !statuses.has(status)) return null;
+      return {
+        id,
+        claim,
+        status,
+        explanation: cleanText(item?.explanation),
+        supportingProviders: uniqueStrings(item?.supporting_providers),
+        dissentingProviders: uniqueStrings(item?.dissenting_providers),
+        evidenceStrength: strengths.has(evidenceStrength)
+          ? evidenceStrength
+          : "weak",
+        sourceReferences: uniqueStrings(item?.source_references),
+        relevantExcerpts: (Array.isArray(item?.relevant_excerpts)
+          ? item.relevant_excerpts
+          : []
+        )
+          .map((excerpt) => ({
+            provider: cleanText(excerpt?.provider),
+            excerpt: cleanText(excerpt?.text),
+            stance: excerpt?.stance === "dissent" ? "dispute" : "support",
+            responseId: cleanText(excerpt?.provider_response_id),
+          }))
+          .filter((excerpt) => excerpt.provider && excerpt.excerpt),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeUncertainties(primary, fallback) {
+  const values = Array.isArray(primary)
+    ? primary
+    : (Array.isArray(fallback) ? fallback : []);
+  return values
+    .map((item) => ({
+      id: cleanText(item?.id),
+      description: cleanText(item?.description),
+      impact: normalizeLevel(item?.impact),
+    }))
+    .filter((item) => item.id && item.description);
+}
+
+function normalizeEvidence(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const id = cleanText(value.id);
+  const claim = cleanText(value.claim);
+  if (!id || !claim) return null;
+  return {
+    ...value,
+    id,
+    claim,
+    description: cleanText(value.description),
+    supporting_models: uniqueStrings(value.supporting_models),
+    source_status: cleanText(value.source_status),
+    evidence_claim_ids: uniqueStrings(value.evidence_claim_ids),
+  };
+}
+
+function normalizeProviderAssessments(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((item) => ({
+      provider: cleanText(item?.provider),
+      usefulContributions: uniqueStrings(item?.useful_contributions),
+      weaknesses: uniqueStrings(item?.weaknesses),
+      perceivedAccuracy: cleanText(item?.perceived_accuracy) || "not_assessed",
+      coherence: cleanText(item?.coherence) || "not_assessed",
+      usableCitationIds: uniqueStrings(item?.usable_citation_ids),
+    }))
+    .filter((item) => item.provider);
+}
+
+function normalizeSourceSummary(values) {
+  const statuses = new Set([
+    "provided_by_model",
+    "shared_by_multiple_models",
+    "unverified",
+    "malformed",
+  ]);
+  return (Array.isArray(values) ? values : [])
+    .map((item) => {
+      const id = cleanText(item?.id);
+      const status = cleanText(item?.verification_status).toLowerCase();
+      if (!id || !statuses.has(status)) return null;
+      const rawUrl = cleanText(item?.url);
+      return {
+        id,
+        title: cleanText(item?.title),
+        rawUrl,
+        clickableUrl: status === "malformed" ? null : safeHttpUrl(rawUrl),
+        publisher: cleanText(item?.publisher),
+        domain: cleanText(item?.domain),
+        citedBy: uniqueStrings(item?.cited_by),
+        supportsClaimIds: uniqueStrings(item?.supports_claim_ids),
+        verificationStatus: status,
+      };
+    })
+    .filter(Boolean);
 }
 
 function normalizeExcerpts(values) {

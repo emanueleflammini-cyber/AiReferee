@@ -84,6 +84,29 @@ describe("claim traceability", () => {
     expect(html).toContain("rel=\"noopener noreferrer nofollow\"");
   });
 
+  test("hides the legacy source list when the 2.1 conclusion renders it", () => {
+    const citation = {
+      id: "citation_123456789abc",
+      provider: "openai",
+      declared_by_models: ["openai"],
+      title: "Provider source",
+      url: "https://example.com/source",
+      domain: "example.com",
+      source_type: "provider_inline_url",
+      verification_status: "unverified",
+      associated_claim_ids: [],
+      extraction_method: "plain_text_url",
+    };
+    const html = renderToStaticMarkup(
+      <ClaimTraceability
+        {...props({ claims: [], citations: [citation] })}
+        hideSources
+      />
+    );
+    expect(html).not.toContain("data-testid=\"trace-sources\"");
+    expect(html).not.toContain("data-testid=\"claim-traceability\"");
+  });
+
   test("does not make unsafe URLs clickable", () => {
     const citation = {
       id: "citation_abcdef123456",
