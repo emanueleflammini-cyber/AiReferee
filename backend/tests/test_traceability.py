@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -556,3 +557,183 @@ def test_demo_claims_remain_separate_from_live_claims():
             [],
             "LIVE",
         )
+
+
+def test_empty_claim_analysis_with_existing_agreement_uses_safe_fallback():
+    empty = valid_bundle()
+    empty["claim_analysis"]["claims"] = []
+    synth, completions = synthesizer_with_outputs(
+        [json.dumps(empty), json.dumps(empty)]
+    )
+
+    result = asyncio.run(
+        synth.synthesize(
+            "Does caching help?",
+            [answer("openai", OPENAI_TEXT), answer("gemini", GEMINI_TEXT)],
+            "en",
+        )
+    )
+
+    structured = result["structured_conclusion"]
+    assert completions.calls == 2
+    assert result["claim_analysis_status"] == "FAILED"
+    assert structured["schema_version"] == "2.1"
+    assert structured["key_findings"][0]["claim"] == (
+        empty["trusted_conclusion"]["agreements"][0]["claim"]
+    )
+    assert structured["key_findings"][0]["supporting_providers"] == [
+        "openai",
+        "gemini",
+    ]
+    assert structured["key_findings"][0]["relevant_excerpts"] == []
+    assert structured["key_findings"][0]["source_references"] == []
+
+
+def test_empty_claim_analysis_without_evidence_does_not_create_fallback():
+    empty = valid_bundle()
+    empty["trusted_conclusion"]["agreements"] = []
+    empty["trusted_conclusion"]["disagreements"] = []
+    empty["trusted_conclusion"]["strongest_evidence"] = []
+    empty["claim_analysis"]["claims"] = []
+    synth, completions = synthesizer_with_outputs([json.dumps(empty)])
+
+    result = asyncio.run(
+        synth.synthesize(
+            "Does caching help?",
+            [answer("openai", OPENAI_TEXT), answer("gemini", GEMINI_TEXT)],
+            "en",
+        )
+    )
+
+    assert completions.calls == 1
+    assert result["claim_analysis_status"] == "SUCCESS"
+    assert result["structured_conclusion"]["schema_version"] == "2.1"
+    assert result["structured_conclusion"]["key_findings"] == []
+    assert result["structured_conclusion"]["source_summary"] == []
+
+
+def test_provider_labels_are_normalized_only_in_provider_key_fields():
+    aliased = valid_bundle()
+    conclusion = aliased["trusted_conclusion"]
+    conclusion["agreements"][0]["supporting_models"][1] = "Google DeepMind"
+    conclusion["disagreements"][0]["positions"][1]["model"] = (
+        "Google DeepMind"
+    )
+    conclusion["strongest_evidence"][0]["supporting_models"][1] = (
+        "Google DeepMind"
+    )
+    for claim in aliased["claim_analysis"]["claims"]:
+        for field in (
+            "originating_models",
+            "supporting_models",
+            "disputing_models",
+        ):
+            claim[field] = [
+                "Google DeepMind" if value == "gemini" else value
+                for value in claim.get(field, [])
+            ]
+        for excerpt in claim.get("support", []) + claim.get("dispute", []):
+            if excerpt["provider"] == "gemini":
+                excerpt["provider"] = "Google DeepMind"
+    synth, completions = synthesizer_with_outputs([json.dumps(aliased)])
+
+    result = asyncio.run(
+        synth.synthesize(
+            "Does caching help?",
+            [answer("openai", OPENAI_TEXT), answer("gemini", GEMINI_TEXT)],
+            "en",
+        )
+    )
+
+    assert completions.calls == 1
+    assert result["claim_analysis_status"] == "SUCCESS"
+    finding = result["structured_conclusion"]["key_findings"][0]
+    assert finding["supporting_providers"] == ["openai", "gemini"]
+    assert all(
+        excerpt["provider"] in ("openai", "gemini")
+        for excerpt in finding["relevant_excerpts"]
+    )
+
+
+def test_conclusion_trace_diagnostics_are_disabled_by_default(
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.delenv("AI_REFEREE_TRACE_CONCLUSION", raising=False)
+    synth, _ = synthesizer_with_outputs([json.dumps(valid_bundle())])
+    with caplog.at_level(logging.INFO):
+        asyncio.run(
+            synth.synthesize(
+                "Private diagnostic prompt",
+                [
+                    answer("openai", OPENAI_TEXT),
+                    answer("gemini", GEMINI_TEXT),
+                ],
+                "en",
+            )
+        )
+    assert "Structured conclusion trace:" not in caplog.text
+
+
+def test_conclusion_trace_diagnostics_log_shape_without_content(
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.setenv("AI_REFEREE_TRACE_CONCLUSION", "true")
+    synth, _ = synthesizer_with_outputs([json.dumps(valid_bundle())])
+    with caplog.at_level(logging.INFO):
+        asyncio.run(
+            synth.synthesize(
+                "Private diagnostic prompt",
+                [
+                    answer("openai", OPENAI_TEXT),
+                    answer("gemini", GEMINI_TEXT),
+                ],
+                "en",
+            )
+        )
+    trace = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if "Structured conclusion trace:" in record.getMessage()
+    )
+    assert '"schema_version": "2.1"' in trace
+    assert '"key_findings_count": 2' in trace
+    assert '"claim_count": 2' in trace
+    assert '"normalized_providers": ["gemini", "openai"]' in trace
+    assert "Private diagnostic prompt" not in trace
+    assert "Caching reduces repeated work." not in trace
+    assert "https://" not in trace
+
+
+def test_conclusion_trace_validation_errors_do_not_log_sensitive_content(
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.setenv("AI_REFEREE_TRACE_CONCLUSION", "true")
+    invalid = valid_bundle()
+    invalid["claim_analysis"]["claims"] = []
+    synth, _ = synthesizer_with_outputs(
+        [json.dumps(invalid), json.dumps(invalid)]
+    )
+    with caplog.at_level(logging.INFO):
+        asyncio.run(
+            synth.synthesize(
+                "Sensitive user question",
+                [
+                    answer("openai", OPENAI_TEXT),
+                    answer("gemini", GEMINI_TEXT),
+                ],
+                "en",
+            )
+        )
+    trace = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if "Structured conclusion trace:" in record.getMessage()
+    )
+    assert '"parse_status": "failed"' in trace
+    assert '"validation_errors":' in trace
+    assert "Sensitive user question" not in trace
+    assert "Caching reduces repeated work." not in trace
+    assert "https://" not in trace
