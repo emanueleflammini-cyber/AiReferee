@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
 import { ClaimTraceability } from "@/components/ClaimTraceability";
+import { ProviderLogo } from "@/components/ProviderLogo";
 import { SafeAnswerText } from "@/components/SafeAnswerText";
 import { StructuredConclusion } from "@/components/StructuredConclusion";
 import { useQueryState } from "@/lib/QueryContext";
@@ -308,7 +309,12 @@ export default function Results() {
                       <div className="flex min-w-0 flex-col items-start gap-3 pl-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex min-w-0 items-center gap-3">
                           <div className="w-9 h-9 rounded-xl border flex items-center justify-center text-[12px] font-medium" style={{ backgroundColor: `${m.accent}18`, borderColor: `${m.accent}55`, color: m.accent }}>
-                            {m.initials}
+                            <ProviderLogo
+                              modelId={m.id}
+                              provider={m.provider}
+                              label={m.label}
+                              initials={m.initials}
+                            />
                           </div>
                           <div className="min-w-0">
                             <div className="break-words text-[14.5px] font-medium text-white [overflow-wrap:anywhere]">{m.label}</div>
@@ -890,7 +896,12 @@ function ComingSoonModelCard({ model: m }) {
             className="w-9 h-9 rounded-xl border flex items-center justify-center text-[12px] font-medium flex-shrink-0"
             style={{ backgroundColor: `${m.accent}12`, borderColor: `${m.accent}40`, color: m.accent }}
           >
-            {m.initials}
+            <ProviderLogo
+              modelId={m.id}
+              provider={m.provider}
+              label={m.label}
+              initials={m.initials}
+            />
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -971,7 +982,12 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
       <header className="flex min-w-0 flex-col items-start gap-3 p-4 pl-7 sm:flex-row sm:justify-between sm:p-6 sm:pl-9">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-9 h-9 rounded-xl border flex items-center justify-center text-[12px] font-medium flex-shrink-0" style={{ backgroundColor: `${m.accent}18`, borderColor: `${m.accent}55`, color: m.accent }}>
-            {m.initials}
+            <ProviderLogo
+              modelId={m.id}
+              provider={m.provider}
+              label={m.label}
+              initials={m.initials}
+            />
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -1191,7 +1207,12 @@ function DisagreementsCard({ tier, modelById }) {
               return (
                 <div key={pi} className="flex gap-2.5">
                   <div className="w-7 h-7 rounded-md border flex-shrink-0 flex items-center justify-center text-[10.5px] font-medium mt-0.5" style={{ backgroundColor: `${m.accent}18`, borderColor: `${m.accent}55`, color: m.accent }}>
-                    {m.initials}
+                    <ProviderLogo
+                      modelId={m.id}
+                      provider={m.provider}
+                      label={m.label}
+                      initials={m.initials}
+                    />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="break-words text-[12px] font-medium text-white [overflow-wrap:anywhere]">{m.label}</div>

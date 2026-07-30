@@ -21,6 +21,7 @@ import {
   Rocket,
 } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
+import { ProviderLogo } from "@/components/ProviderLogo";
 import { Slider } from "@/components/ui/slider";
 import { useQueryState } from "@/lib/QueryContext";
 import { useI18n } from "@/lib/i18n";
@@ -405,7 +406,12 @@ export default function Home() {
                         color: m.accent,
                       }}
                     >
-                      {m.initials}
+                      <ProviderLogo
+                        modelId={m.id}
+                        provider={m.provider}
+                        label={m.name}
+                        initials={m.initials}
+                      />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
