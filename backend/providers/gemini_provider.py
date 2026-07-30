@@ -11,6 +11,7 @@ Uses the official `google-generativeai` SDK.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 import logging
@@ -63,7 +64,10 @@ class GeminiProvider(Provider):
         try:
             resp = await gmodel.generate_content_async(prompt)  # type: ignore[attr-defined]
         except AttributeError:
-            resp = gmodel.generate_content(prompt)
+            # Keep the deprecated SDK's synchronous compatibility path off the
+            # event loop so Provider.timed_generate can still enforce its
+            # independent deadline.
+            resp = await asyncio.to_thread(gmodel.generate_content, prompt)
         latency_ms = int((time.perf_counter() - start) * 1000)
 
         text = (getattr(resp, "text", "") or "").strip()

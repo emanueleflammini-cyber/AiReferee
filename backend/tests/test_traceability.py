@@ -737,3 +737,48 @@ def test_conclusion_trace_validation_errors_do_not_log_sensitive_content(
     assert "Sensitive user question" not in trace
     assert "Caching reduces repeated work." not in trace
     assert "https://" not in trace
+
+
+def test_conclusion_is_generated_from_openai_and_mistral_when_gemini_failed():
+    bundle = valid_bundle()
+    conclusion = bundle["trusted_conclusion"]
+    conclusion["disagreements"] = []
+    bundle["claim_analysis"]["claims"] = [supported_claim()]
+    for collection, field in (
+        (conclusion["agreements"], "supporting_models"),
+        (conclusion["strongest_evidence"], "supporting_models"),
+    ):
+        for item in collection:
+            item[field] = [
+                "mistral" if provider == "gemini" else provider
+                for provider in item[field]
+            ]
+    claim = bundle["claim_analysis"]["claims"][0]
+    for field in ("originating_models", "supporting_models"):
+        claim[field] = [
+            "mistral" if provider == "gemini" else provider
+            for provider in claim[field]
+        ]
+    for excerpt in claim["support"]:
+        if excerpt["provider"] == "gemini":
+            excerpt["provider"] = "mistral"
+            excerpt["response_reference"]["provider_response_id"] = "mistral"
+
+    synth, completions = synthesizer_with_outputs([json.dumps(bundle)])
+    result = asyncio.run(
+        synth.synthesize(
+            "Does caching help?",
+            [
+                answer("openai", OPENAI_TEXT),
+                answer("gemini", "", status="FAILED"),
+                answer("mistral", MISTRAL_TEXT),
+            ],
+            "en",
+        )
+    )
+
+    assert completions.calls == 1
+    assert result["text"] == conclusion["final_answer"]
+    assert result["claim_analysis_status"] == "SUCCESS"
+    finding = result["structured_conclusion"]["key_findings"][0]
+    assert finding["supporting_providers"] == ["openai", "mistral"]

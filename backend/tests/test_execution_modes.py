@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
+import time
 from pathlib import Path
 
 
@@ -15,6 +17,10 @@ from providers.base import (  # noqa: E402
     ProviderResult,
     billable_provider_cost,
 )
+from providers.conclusion_schema import (  # noqa: E402
+    eligible_synthesis_answers,
+)
+from providers.gemini_provider import GeminiProvider  # noqa: E402
 from providers.mock_provider import build_mock_providers  # noqa: E402
 from providers.registry import (  # noqa: E402
     execution_mode,
@@ -35,6 +41,17 @@ class FailingProvider(Provider):
 
     async def generate(self, prompt: str, system: str) -> ProviderResult:
         raise RuntimeError("provider unavailable")
+
+
+class QuickLiveProvider(Provider):
+    def __init__(self, provider_id: str, provider_name: str, text: str):
+        self.id = provider_id
+        self.provider_name = provider_name
+        self._text = text
+        super().__init__(execution_timeout_seconds=0.1)
+
+    async def generate(self, prompt: str, system: str) -> ProviderResult:
+        return ProviderResult(text=self._text, model_used="test-live")
 
 
 def test_use_mock_requires_explicit_true(monkeypatch):
@@ -162,3 +179,147 @@ def test_enabled_mistral_missing_key_is_failed_but_disabled_is_explicit(
 
     monkeypatch.setenv("ENABLE_MISTRAL", "false")
     assert provider_unavailable_status("model-e") == "DISABLED"
+
+
+def test_provider_that_never_finishes_is_bounded_and_logged(caplog):
+    class HangingProvider(Provider):
+        id = "model-c"
+        label = "Gemini"
+        provider_name = "Google DeepMind"
+
+        def __init__(self):
+            super().__init__(execution_timeout_seconds=0.02)
+
+        async def generate(self, prompt: str, system: str) -> ProviderResult:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    started = time.perf_counter()
+    with caplog.at_level(logging.INFO):
+        result = asyncio.run(
+            HangingProvider().timed_generate(
+                "sensitive prompt",
+                "sensitive system",
+            )
+        )
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.5
+    assert result.provider_status == "FAILED"
+    assert result.text == ""
+    assert result.is_mock is False
+    assert result.error == "Provider request timed out after 0.02 seconds."
+    assert "provider_started" in caplog.text
+    assert "provider_timeout" in caplog.text
+    assert "sensitive prompt" not in caplog.text
+    assert "sensitive system" not in caplog.text
+
+
+def test_gemini_uses_its_independent_timeout_without_api_call(
+    monkeypatch,
+):
+    monkeypatch.setenv("PROVIDER_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("GEMINI_PROVIDER_TIMEOUT_SECONDS", "0.02")
+    provider = GeminiProvider(api_key="fixture-only-key")
+
+    async def never_returns(prompt: str, system: str) -> ProviderResult:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(provider, "generate", never_returns)
+    result = asyncio.run(provider.timed_generate("question", "system"))
+
+    assert provider.execution_timeout_seconds == 0.02
+    assert result.provider_status == "FAILED"
+    assert result.text == ""
+    assert result.is_mock is False
+
+
+def test_openai_and_mistral_complete_when_gemini_times_out():
+    class HangingGemini(Provider):
+        id = "model-c"
+        label = "Gemini"
+        provider_name = "Google DeepMind"
+
+        def __init__(self):
+            super().__init__(execution_timeout_seconds=0.02)
+
+        async def generate(self, prompt: str, system: str) -> ProviderResult:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    providers = [
+        QuickLiveProvider("model-a", "OpenAI", "OpenAI answer"),
+        HangingGemini(),
+        QuickLiveProvider("model-e", "Mistral AI", "Mistral answer"),
+    ]
+
+    async def run_panel():
+        return await asyncio.gather(
+            *(
+                provider.timed_generate("question", "system")
+                for provider in providers
+            )
+        )
+
+    started = time.perf_counter()
+    results = asyncio.run(run_panel())
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.5
+    assert [result.provider_status for result in results] == [
+        "LIVE",
+        "FAILED",
+        "LIVE",
+    ]
+    assert results[1].text == ""
+    assert results[1].is_mock is False
+
+    synthesis_candidates = eligible_synthesis_answers(
+        [
+            {
+                "id": provider.id,
+                "provider_response_id": provider.id,
+                "provider_key": {
+                    "model-a": "openai",
+                    "model-c": "gemini",
+                    "model-e": "mistral",
+                }[provider.id],
+                "provider_status": result.provider_status,
+                "execution_mode": "LIVE",
+                "text": result.text,
+            }
+            for provider, result in zip(providers, results)
+        ],
+        "LIVE",
+    )
+    assert [item["provider_key"] for item in synthesis_candidates] == [
+        "openai",
+        "mistral",
+    ]
+
+
+def test_provider_lifecycle_logs_never_include_request_content(caplog):
+    with caplog.at_level(logging.INFO):
+        success = asyncio.run(
+            SuccessfulProvider().timed_generate(
+                "private success prompt",
+                "private success system",
+            )
+        )
+        failed = asyncio.run(
+            FailingProvider().timed_generate(
+                "private failure prompt",
+                "private failure system",
+            )
+        )
+
+    assert success.provider_status == "LIVE"
+    assert failed.provider_status == "FAILED"
+    assert "provider_started" in caplog.text
+    assert "provider_completed" in caplog.text
+    assert "provider_failed" in caplog.text
+    assert "private success prompt" not in caplog.text
+    assert "private success system" not in caplog.text
+    assert "private failure prompt" not in caplog.text
+    assert "private failure system" not in caplog.text

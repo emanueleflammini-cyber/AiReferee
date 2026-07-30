@@ -1,17 +1,30 @@
 """Shared provider types and execution safety for AI Referee.
 
 Every provider implements ``generate``. ``timed_generate`` records latency and
-returns one explicit state: LIVE, FAILED, TIMEOUT, or MOCK. A failed live
-provider never receives replacement text from another provider or from a demo
-template.
+returns LIVE, FAILED, or MOCK. Timeouts are explicit FAILED results with a
+safe timeout reason. A failed live provider never receives replacement text
+from another provider or from a demo template.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+
+log = logging.getLogger(__name__)
+
+DEFAULT_PROVIDER_TIMEOUT_SECONDS = 60.0
+PROVIDER_TIMEOUT_ENV_BY_ID = {
+    "model-a": "OPENAI_PROVIDER_TIMEOUT_SECONDS",
+    "model-c": "GEMINI_PROVIDER_TIMEOUT_SECONDS",
+    "model-e": "MISTRAL_PROVIDER_TIMEOUT_SECONDS",
+    "model-b": "ANTHROPIC_PROVIDER_TIMEOUT_SECONDS",
+}
 
 
 PRICING: dict[str, dict[str, float]] = {
@@ -108,8 +121,15 @@ class Provider(ABC):
     codename: str = ""
     provider_name: str = ""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        execution_timeout_seconds: float | None = None,
+    ) -> None:
         self.available: bool = False
+        self.execution_timeout_seconds = _provider_timeout_seconds(
+            self.id,
+            execution_timeout_seconds,
+        )
 
     @abstractmethod
     async def generate(
@@ -120,32 +140,116 @@ class Provider(ABC):
         raise NotImplementedError
 
     async def timed_generate(self, prompt: str, system: str) -> ProviderResult:
-        """Run the provider without ever substituting fallback content."""
+        """Run one provider within its deadline, without fake fallback."""
         start = time.perf_counter()
+        timeout_seconds = self.execution_timeout_seconds
+        log.info(
+            "provider_started provider_id=%s provider_name=%s "
+            "timeout_seconds=%g",
+            self.id or "unknown",
+            self.provider_name or self.label or "unknown",
+            timeout_seconds,
+        )
         try:
-            result = await self.generate(prompt, system)
+            result = await asyncio.wait_for(
+                self.generate(prompt, system),
+                timeout=timeout_seconds,
+            )
             if result.latency_ms <= 0:
                 result.latency_ms = int((time.perf_counter() - start) * 1000)
             if not (result.text or "").strip():
                 raise RuntimeError("Provider returned an empty response")
             result.provider_status = "MOCK" if result.is_mock else "LIVE"
+            log.info(
+                "provider_completed provider_id=%s provider_name=%s "
+                "status=%s duration_ms=%d",
+                self.id or "unknown",
+                self.provider_name or self.label or "unknown",
+                result.provider_status,
+                result.latency_ms,
+            )
             return result.with_computed_cost()
         except ProviderTimeoutError as exc:
-            return ProviderResult(
-                text="",
-                latency_ms=int((time.perf_counter() - start) * 1000),
-                is_mock=False,
-                provider_status="TIMEOUT",
-                error=_safe_error_message(exc),
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            log.warning(
+                "provider_timeout provider_id=%s provider_name=%s "
+                "duration_ms=%d timeout_scope=provider",
+                self.id or "unknown",
+                self.provider_name or self.label or "unknown",
+                duration_ms,
             )
-        except Exception as exc:  # noqa: BLE001
             return ProviderResult(
                 text="",
-                latency_ms=int((time.perf_counter() - start) * 1000),
+                latency_ms=duration_ms,
                 is_mock=False,
                 provider_status="FAILED",
                 error=_safe_error_message(exc),
             )
+        except asyncio.TimeoutError:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            log.warning(
+                "provider_timeout provider_id=%s provider_name=%s "
+                "duration_ms=%d timeout_seconds=%g",
+                self.id or "unknown",
+                self.provider_name or self.label or "unknown",
+                duration_ms,
+                timeout_seconds,
+            )
+            return ProviderResult(
+                text="",
+                latency_ms=duration_ms,
+                is_mock=False,
+                provider_status="FAILED",
+                error=(
+                    "Provider request timed out after "
+                    f"{timeout_seconds:g} seconds."
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            log.warning(
+                "provider_failed provider_id=%s provider_name=%s "
+                "duration_ms=%d error_type=%s",
+                self.id or "unknown",
+                self.provider_name or self.label or "unknown",
+                duration_ms,
+                type(exc).__name__,
+            )
+            return ProviderResult(
+                text="",
+                latency_ms=duration_ms,
+                is_mock=False,
+                provider_status="FAILED",
+                error=_safe_error_message(exc),
+            )
+
+
+def _provider_timeout_seconds(
+    provider_id: str,
+    explicit: float | None,
+) -> float:
+    if explicit is not None:
+        return _positive_timeout(explicit, DEFAULT_PROVIDER_TIMEOUT_SECONDS)
+    provider_env = PROVIDER_TIMEOUT_ENV_BY_ID.get(provider_id)
+    configured = (
+        os.environ.get(provider_env, "").strip()
+        if provider_env
+        else ""
+    )
+    if not configured:
+        configured = os.environ.get(
+            "PROVIDER_TIMEOUT_SECONDS",
+            str(DEFAULT_PROVIDER_TIMEOUT_SECONDS),
+        ).strip()
+    return _positive_timeout(configured, DEFAULT_PROVIDER_TIMEOUT_SECONDS)
+
+
+def _positive_timeout(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _safe_error_message(exc: Exception) -> str:

@@ -95,7 +95,7 @@ def test_mistral_timeout_has_explicit_status():
 
     result = asyncio.run(provider.timed_generate("question", "system"))
 
-    assert result.provider_status == "TIMEOUT"
+    assert result.provider_status == "FAILED"
     assert result.text == ""
     assert "timeout" in (result.error or "").lower()
 
