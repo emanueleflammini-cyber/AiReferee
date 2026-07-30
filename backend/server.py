@@ -53,6 +53,7 @@ client = AsyncIOMotorClient(
     tlsCAFile=certifi.where(),
     serverSelectionTimeoutMS=30000,
 )
+db = client[os.environ["DB_NAME"]]
 
 app = FastAPI(title="AI Referee API")
 api_router = APIRouter(prefix="/api")
