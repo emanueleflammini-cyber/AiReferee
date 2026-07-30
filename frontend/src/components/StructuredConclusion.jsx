@@ -1,15 +1,20 @@
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
+  ChevronRight,
+  CircleMinus,
   ExternalLink,
   GitCompareArrows,
   HelpCircle,
+  Info,
   Link2,
   Quote,
   Scale,
   ShieldAlert,
   ShieldCheck,
 } from "lucide-react";
+import { useId, useState } from "react";
 import {
   conclusionEvidenceViewModel,
   conclusionViewModel,
@@ -29,6 +34,7 @@ export function StructuredConclusion({
   synthesisStatus,
   synthesisError,
   claims = [],
+  providerStatuses = [],
   t,
 }) {
   const view = conclusionViewModel({
@@ -74,6 +80,12 @@ export function StructuredConclusion({
 
   const evidenceView = conclusionEvidenceViewModel({ structured, claims });
   const conclusion = evidenceView.conclusion;
+  const metrics = conclusionMetrics({
+    conclusion,
+    evidenceView,
+    claims,
+    providerStatuses,
+  });
   return (
     <div
       data-testid="trusted-conclusion-structured"
@@ -88,46 +100,39 @@ export function StructuredConclusion({
         testId="structured-final-answer"
       />
 
-      <div className="mt-7 grid grid-cols-1 md:grid-cols-[180px_1fr] gap-4">
-        <div
-          className="min-w-0 rounded-2xl border p-4"
-          style={confidenceStyle(conclusion.confidence.level)}
-          data-testid="structured-confidence"
-        >
-          <div className="text-[10.5px] uppercase tracking-[0.2em] text-white/45">
-            {t("results.structured.confidence")}
-          </div>
-          <div className="mt-2 text-xl font-semibold capitalize text-white">
-            {translateEnum(t, "results.structured.level", conclusion.confidence.level)}
-          </div>
+      <ExecutiveSummary
+        conclusion={conclusion}
+        metrics={metrics}
+        t={t}
+      />
+
+      <ConclusionSection
+        title={t("results.structured.whyVerdict")}
+        icon={Scale}
+        accent="#00E5FF"
+        testId="structured-why-verdict"
+      >
+        <p className="break-words text-[13.5px] leading-relaxed text-white/75 [overflow-wrap:anywhere]">
+          {conclusion.confidence.reason}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <FactorBadge
+            label={t("results.structured.modelAgreement")}
+            value={conclusion.confidence.factors.model_agreement}
+            t={t}
+          />
+          <FactorBadge
+            label={t("results.structured.evidenceQuality")}
+            value={conclusion.confidence.factors.evidence_quality}
+            t={t}
+          />
+          <FactorBadge
+            label={t("results.structured.uncertainty")}
+            value={conclusion.confidence.factors.uncertainty}
+            t={t}
+          />
         </div>
-        <div className="min-w-0 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
-          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-[#00E5FF]/80">
-            <Scale className="w-3.5 h-3.5" />
-            {t("results.structured.whyVerdict")}
-          </div>
-          <p className="mt-2 break-words text-[13.5px] leading-relaxed text-white/75 [overflow-wrap:anywhere]">
-            {conclusion.confidence.reason}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <FactorBadge
-              label={t("results.structured.modelAgreement")}
-              value={conclusion.confidence.factors.model_agreement}
-              t={t}
-            />
-            <FactorBadge
-              label={t("results.structured.evidenceQuality")}
-              value={conclusion.confidence.factors.evidence_quality}
-              t={t}
-            />
-            <FactorBadge
-              label={t("results.structured.uncertainty")}
-              value={conclusion.confidence.factors.uncertainty}
-              t={t}
-            />
-          </div>
-        </div>
-      </div>
+      </ConclusionSection>
 
       {conclusion.claimMatrix.length > 0 && (
         <ConclusionSection
@@ -136,6 +141,7 @@ export function StructuredConclusion({
           icon={GitCompareArrows}
           accent="#00E5FF"
           testId="structured-claim-matrix"
+          defaultOpen
         >
           {conclusion.claimMatrix.map((claim) => (
             <ClaimMatrixCard key={claim.claimId} claim={claim} t={t} />
@@ -500,8 +506,161 @@ export function StructuredConclusion({
           </ul>
         </ConclusionSection>
       )}
+
+      <CompletionSummary metrics={metrics} conclusion={conclusion} t={t} />
     </div>
   );
+}
+
+function ExecutiveSummary({ conclusion, metrics, t }) {
+  return (
+    <section
+      className="mt-6 min-w-0 max-w-full rounded-2xl border border-[#00E5FF]/20 bg-[#00E5FF]/[0.035] p-4 sm:p-5"
+      data-testid="structured-executive-summary"
+      aria-labelledby="structured-executive-summary-title"
+    >
+      <div
+        id="structured-executive-summary-title"
+        className="text-[11px] uppercase tracking-[0.2em] text-[#00E5FF]/80"
+      >
+        {t("results.structured.executiveSummary")}
+      </div>
+      <div className="mt-3 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <SummaryMetric
+          label={t("results.structured.summaryVerdict")}
+          value={conclusion.final_verdict}
+          wide
+          testId="summary-verdict"
+        />
+        <SummaryMetric
+          label={t("results.structured.confidence")}
+          value={translateEnum(t, "results.structured.level", conclusion.confidence.level)}
+          testId="summary-confidence"
+        />
+        <SummaryMetric
+          label={t("results.structured.claimCount")}
+          value={metrics.claimCount}
+          testId="summary-claim-count"
+        />
+        <SummaryMetric
+          label={t("results.structured.agreementCount")}
+          value={metrics.agreementCount}
+          testId="summary-agreement-count"
+        />
+        <SummaryMetric
+          label={t("results.structured.disagreementCount")}
+          value={metrics.disagreementCount}
+          testId="summary-disagreement-count"
+        />
+        <SummaryMetric
+          label={t("results.structured.liveProvidersUsed")}
+          value={`${metrics.liveProviders}/${metrics.totalProviders}`}
+          testId="summary-provider-count"
+        />
+      </div>
+    </section>
+  );
+}
+
+function SummaryMetric({ label, value, wide = false, testId }) {
+  return (
+    <div
+      className={`min-w-0 rounded-xl border border-white/[0.07] bg-black/10 px-3 py-3 ${
+        wide ? "sm:col-span-2 lg:col-span-3" : ""
+      }`}
+      data-testid={testId}
+    >
+      <div className="text-[10px] uppercase tracking-[0.16em] text-white/40">
+        {label}
+      </div>
+      <div
+        className={`mt-1 min-w-0 break-words text-white/85 [overflow-wrap:anywhere] ${
+          wide ? "line-clamp-2 text-[13px] leading-relaxed" : "text-[17px] font-semibold"
+        }`}
+        title={typeof value === "string" ? value : undefined}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function CompletionSummary({ metrics, conclusion, t }) {
+  return (
+    <section
+      className="mt-10 min-w-0 max-w-full rounded-2xl border border-[#10B981]/20 bg-[#10B981]/[0.035] p-4 sm:p-5"
+      data-testid="structured-completion-summary"
+      aria-labelledby="structured-completion-summary-title"
+    >
+      <div className="flex min-w-0 items-center gap-2 text-[#10B981]">
+        <ShieldCheck className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+        <h3 id="structured-completion-summary-title" className="text-[13px] font-semibold">
+          {t("results.structured.comparisonComplete")}
+        </h3>
+      </div>
+      <dl className="mt-4 grid min-w-0 grid-cols-2 gap-3 md:grid-cols-5">
+        <CompletionMetric
+          label={t("results.structured.providersAnalyzed")}
+          value={`${metrics.liveProviders}/${metrics.totalProviders}`}
+        />
+        <CompletionMetric label={t("results.structured.claimCount")} value={metrics.claimCount} />
+        <CompletionMetric label={t("results.structured.agreementCount")} value={metrics.agreementCount} />
+        <CompletionMetric label={t("results.structured.disagreementCount")} value={metrics.disagreementCount} />
+        <CompletionMetric
+          label={t("results.structured.finalConfidence")}
+          value={translateEnum(t, "results.structured.level", conclusion.confidence.level)}
+        />
+      </dl>
+    </section>
+  );
+}
+
+function CompletionMetric({ label, value }) {
+  return (
+    <div className="min-w-0 rounded-xl border border-white/[0.06] bg-black/10 px-3 py-3">
+      <dt className="break-words text-[10px] uppercase tracking-[0.12em] text-white/40 [overflow-wrap:anywhere]">
+        {label}
+      </dt>
+      <dd className="mt-1 text-[15px] font-semibold text-white/80">{value}</dd>
+    </div>
+  );
+}
+
+function conclusionMetrics({ conclusion, evidenceView, claims, providerStatuses }) {
+  const matrixClaims = conclusion.claimMatrix.length;
+  const findingClaims = evidenceView.keyFindings.length;
+  const fallbackClaims = Array.isArray(claims) ? claims.length : 0;
+  const claimCount = matrixClaims || findingClaims || fallbackClaims;
+  const agreementCount = conclusion.claimAgreements.length
+    || evidenceView.agreements.length
+    || evidenceView.sharedFacts.length;
+  const disagreementCount = conclusion.claimDisagreements.length
+    || evidenceView.disagreements.length;
+
+  const statuses = (Array.isArray(providerStatuses) ? providerStatuses : [])
+    .map((item) => String(
+      typeof item === "string"
+        ? item
+        : item?.provider_status || item?.status || ""
+    ).toUpperCase())
+    .filter((status) => ["LIVE", "FAILED", "TIMEOUT", "MOCK"].includes(status));
+  const providersFromMatrix = new Set(
+    conclusion.claimMatrix.flatMap((claim) => (
+      claim.providerPositions.map((position) => position.provider)
+    ))
+  ).size;
+  const liveProviders = statuses.length
+    ? statuses.filter((status) => status === "LIVE").length
+    : providersFromMatrix;
+  const totalProviders = statuses.length || providersFromMatrix;
+
+  return {
+    claimCount,
+    agreementCount,
+    disagreementCount,
+    liveProviders,
+    totalProviders,
+  };
 }
 
 function KeyFindingCard({ finding, t }) {
@@ -556,10 +715,22 @@ function KeyFindingCard({ finding, t }) {
 }
 
 function ClaimMatrixCard({ claim, t }) {
+  const [open, setOpen] = useState(false);
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const detailsId = useId();
+  const tooltipId = useId();
+  const toggleDetails = () => setOpen((value) => !value);
+
   return (
     <article
-      className="w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.02] p-4"
+      className="w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 sm:p-5"
       data-testid={`claim-matrix-${claim.claimId}`}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && open) {
+          event.stopPropagation();
+          setOpen(false);
+        }
+      }}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <LevelBadge
@@ -577,42 +748,133 @@ function ClaimMatrixCard({ claim, t }) {
         {claim.claim}
       </p>
       <div
-        className="mt-4 grid w-full min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3"
-        data-testid="claim-matrix-provider-grid"
+        className="mt-4 flex min-w-0 max-w-full flex-wrap gap-2"
+        data-testid="claim-matrix-provider-summary"
       >
         {claim.providerPositions.map((position) => (
-          <MatrixProviderPosition
+          <ProviderPositionBadge
             key={position.provider}
             position={position}
             t={t}
           />
         ))}
       </div>
-      {claim.refereeAssessment && (
-        <LabeledParagraph
-          label={t("results.structured.refereeAssessment")}
-          text={claim.refereeAssessment}
-        />
-      )}
-      {claim.evidenceLimitations.length > 0 && (
-        <TextList
-          title={t("results.structured.evidenceLimitations")}
-          values={claim.evidenceLimitations}
-          accent="#F59E0B"
-        />
-      )}
+
+      <div className="relative mt-4 inline-flex max-w-full">
+        <button
+          type="button"
+          className="inline-flex min-h-11 max-w-full items-center gap-2 rounded-xl border border-white/10 bg-white/[0.035] px-3 py-2 text-[12.5px] text-white/70 transition-colors duration-200 hover:border-[#00E5FF]/35 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120]"
+          aria-label={open
+            ? t("results.structured.closeClaimDetails")
+            : t("results.structured.openClaimDetails")}
+          aria-expanded={open}
+          aria-controls={detailsId}
+          aria-describedby={tooltipId}
+          onClick={toggleDetails}
+          onMouseEnter={() => setTooltipVisible(true)}
+          onMouseLeave={() => setTooltipVisible(false)}
+          onFocus={() => setTooltipVisible(true)}
+          onBlur={() => setTooltipVisible(false)}
+          data-testid={`claim-details-toggle-${claim.claimId}`}
+        >
+          <Info className="h-4 w-4 flex-shrink-0 text-[#00E5FF]" aria-hidden="true" />
+          <span>{open
+            ? t("results.structured.hideDetails")
+            : t("results.structured.details")}</span>
+          {open
+            ? <ChevronDown className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+            : <ChevronRight className="h-4 w-4 flex-shrink-0" aria-hidden="true" />}
+        </button>
+        <span
+          id={tooltipId}
+          role="tooltip"
+          aria-hidden={!tooltipVisible}
+          className={`pointer-events-none absolute bottom-[calc(100%+8px)] left-0 z-20 w-64 max-w-[calc(100vw-3rem)] rounded-lg border border-white/10 bg-[#111827] px-3 py-2 text-[11.5px] leading-relaxed text-white/75 shadow-xl transition-opacity duration-200 ${
+            tooltipVisible ? "opacity-100" : "opacity-0"
+          }`}
+          data-testid={`claim-details-tooltip-${claim.claimId}`}
+        >
+          {t("results.structured.claimDetailsTooltip")}
+        </span>
+      </div>
+
+      <div
+        id={detailsId}
+        role="region"
+        aria-label={t("results.structured.claimDetailsRegion")}
+        aria-hidden={!open}
+        inert={!open}
+        className={`grid transition-[grid-template-rows,opacity,margin] duration-200 ease-out ${
+          open
+            ? "mt-4 grid-rows-[1fr] opacity-100"
+            : "mt-0 grid-rows-[0fr] opacity-0"
+        }`}
+        data-testid={`claim-details-${claim.claimId}`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div
+            className="grid w-full min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3"
+            data-testid="claim-matrix-provider-grid"
+          >
+            {claim.providerPositions.map((position) => (
+              <MatrixProviderPosition
+                key={position.provider}
+                position={position}
+                t={t}
+              />
+            ))}
+          </div>
+          {claim.refereeAssessment && (
+            <LabeledParagraph
+              label={t("results.structured.refereeAssessment")}
+              text={claim.refereeAssessment}
+              expandable
+              t={t}
+            />
+          )}
+          {claim.evidenceLimitations.length > 0 && (
+            <TextList
+              title={t("results.structured.evidenceLimitations")}
+              values={claim.evidenceLimitations}
+              accent="#F59E0B"
+            />
+          )}
+        </div>
+      </div>
     </article>
   );
 }
 
+function ProviderPositionBadge({ position, t }) {
+  const state = providerPositionState(position.position);
+  const Icon = state.icon;
+  const statusText = translateEnum(
+    t,
+    "results.structured.providerPosition",
+    position.position
+  );
+  return (
+    <span
+      className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]"
+      style={{
+        color: state.color,
+        borderColor: `${state.color}45`,
+        backgroundColor: `${state.color}12`,
+      }}
+      role="status"
+      aria-label={`${position.displayName}: ${statusText}`}
+    >
+      <span className="min-w-0 truncate text-white/75">
+        {position.displayName || PROVIDER_LABELS[position.provider] || position.provider}
+      </span>
+      <Icon className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+      <span className="sr-only">{statusText}</span>
+    </span>
+  );
+}
+
 function MatrixProviderPosition({ position, t }) {
-  const state = {
-    supports: { icon: Check, color: "#10B981" },
-    partially_supports: { icon: HelpCircle, color: "#FBBF24" },
-    contradicts: { icon: AlertTriangle, color: "#F43F5E" },
-    uncertain: { icon: HelpCircle, color: "#A78BFA" },
-    not_mentioned: { icon: HelpCircle, color: "#94A3B8" },
-  }[position.position] || { icon: HelpCircle, color: "#94A3B8" };
+  const state = providerPositionState(position.position);
   const Icon = state.icon;
   const statusText = translateEnum(
     t,
@@ -641,9 +903,9 @@ function MatrixProviderPosition({ position, t }) {
         </span>
       </div>
       {position.summary && (
-        <p className="mt-3 break-words text-[12.5px] leading-relaxed text-white/60 [overflow-wrap:anywhere]">
-          {position.summary}
-        </p>
+        <div className="mt-3">
+          <ExpandableText text={position.summary} t={t} />
+        </div>
       )}
       <div className="mt-3">
         <EnumBadge
@@ -655,6 +917,16 @@ function MatrixProviderPosition({ position, t }) {
       </div>
     </div>
   );
+}
+
+function providerPositionState(position) {
+  return {
+    supports: { icon: Check, color: "#10B981" },
+    partially_supports: { icon: HelpCircle, color: "#FBBF24" },
+    contradicts: { icon: AlertTriangle, color: "#F43F5E" },
+    uncertain: { icon: HelpCircle, color: "#A78BFA" },
+    not_mentioned: { icon: CircleMinus, color: "#F8FAFC" },
+  }[position] || { icon: HelpCircle, color: "#94A3B8" };
 }
 
 function StructuredDisagreementCard({ disagreement, t }) {
@@ -941,35 +1213,121 @@ function ExcerptList({ excerpts, t }) {
   );
 }
 
-function LabeledParagraph({ label, text }) {
+function LabeledParagraph({ label, text, expandable = false, t }) {
   return (
     <div className="mt-3 border-t border-white/[0.06] pt-3">
       <div className="text-[10.5px] uppercase tracking-[0.14em] text-white/40">{label}</div>
-      <p className="mt-1 break-words text-[12.5px] leading-relaxed text-white/55 [overflow-wrap:anywhere]">{text}</p>
+      {expandable ? (
+        <div className="mt-1">
+          <ExpandableText text={text} t={t} />
+        </div>
+      ) : (
+        <p className="mt-1 break-words text-[12.5px] leading-relaxed text-white/55 [overflow-wrap:anywhere]">{text}</p>
+      )}
     </div>
   );
 }
 
-function ConclusionSection({ title, subtitle, icon: Icon, accent, testId, children }) {
+function ExpandableText({ text, t, limit = 240 }) {
+  const [expanded, setExpanded] = useState(false);
+  const needsExpansion = String(text || "").length > limit;
+  const visibleText = needsExpansion && !expanded
+    ? `${String(text).slice(0, limit).trimEnd()}…`
+    : text;
   return (
-    <section className="mt-8 min-w-0 max-w-full border-t border-white/[0.07] pt-7" data-testid={testId}>
-      <div className="mb-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <span
-            className="flex h-7 w-7 items-center justify-center rounded-lg border"
-            style={{ color: accent, borderColor: `${accent}45`, backgroundColor: `${accent}12` }}
-          >
-            <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+    <div className="min-w-0">
+      <p className="break-words text-[12.5px] leading-relaxed text-white/60 [overflow-wrap:anywhere]">
+        {visibleText}
+      </p>
+      {needsExpansion && (
+        <button
+          type="button"
+          className="mt-2 min-h-11 rounded-lg px-2 text-[11.5px] font-medium text-[#00E5FF] transition-colors duration-200 hover:bg-[#00E5FF]/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF]"
+          aria-label={expanded
+            ? t("results.structured.showLess")
+            : t("results.structured.showAll")}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded
+            ? t("results.structured.showLess")
+            : t("results.structured.showAll")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ConclusionSection({
+  title,
+  subtitle,
+  icon: Icon,
+  accent,
+  testId,
+  children,
+  defaultOpen = false,
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const contentId = useId();
+  const headingId = useId();
+  return (
+    <section
+      className="mt-8 min-w-0 max-w-full border-t border-white/[0.07] pt-5 sm:pt-7"
+      data-testid={testId}
+      data-open={open ? "true" : "false"}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && open) {
+          event.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors duration-200 hover:bg-white/[0.025] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120]"
+        aria-label={title}
+        aria-expanded={open}
+        aria-controls={contentId}
+        id={headingId}
+        onClick={() => setOpen((value) => !value)}
+        data-testid={testId ? `${testId}-toggle` : undefined}
+      >
+        {open
+          ? <ChevronDown className="h-4 w-4 flex-shrink-0 text-white/45" aria-hidden="true" />
+          : <ChevronRight className="h-4 w-4 flex-shrink-0 text-white/45" aria-hidden="true" />}
+        <span
+          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border"
+          style={{ color: accent, borderColor: `${accent}45`, backgroundColor: `${accent}12` }}
+        >
+          <Icon className="h-4 w-4" aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block break-words text-[15px] font-semibold text-white [overflow-wrap:anywhere]">
+            {title}
           </span>
-          <h3 className="min-w-0 break-words text-[15px] font-semibold text-white [overflow-wrap:anywhere]">{title}</h3>
+          {subtitle && (
+            <span className="mt-1 block break-words text-[12.5px] leading-relaxed text-white/45 [overflow-wrap:anywhere]">
+              {subtitle}
+            </span>
+          )}
+        </span>
+      </button>
+      <div
+        id={contentId}
+        role="region"
+        aria-labelledby={headingId}
+        aria-hidden={!open}
+        inert={!open}
+        className={`grid transition-[grid-template-rows,opacity,margin] duration-200 ease-out ${
+          open
+            ? "mt-4 grid-rows-[1fr] opacity-100"
+            : "mt-0 grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="space-y-4">{children}</div>
         </div>
-        {subtitle && (
-          <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/45 [overflow-wrap:anywhere]">
-            {subtitle}
-          </p>
-        )}
       </div>
-      <div className="space-y-3">{children}</div>
     </section>
   );
 }
@@ -1079,12 +1437,4 @@ function uniqueExcerpts(values) {
     seen.add(key);
     return true;
   });
-}
-
-function confidenceStyle(level) {
-  const color = level === "high" ? "#10B981" : level === "medium" ? "#F59E0B" : "#F43F5E";
-  return {
-    borderColor: `${color}45`,
-    backgroundColor: `${color}0d`,
-  };
 }

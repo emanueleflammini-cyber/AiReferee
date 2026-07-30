@@ -585,6 +585,7 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
                 synthesisStatus={synthesisStatus}
                 synthesisError={synthesisError}
                 claims={claims}
+                providerStatuses={providerStatuses}
                 t={t}
               />
             )}
