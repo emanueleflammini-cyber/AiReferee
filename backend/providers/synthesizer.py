@@ -420,6 +420,29 @@ def _system_prompt(
         "provider response(s). Never claim that more providers participated "
         "or agreed than are present in allowed_provider_keys.\n"
         "- Extract only material claims relevant to the verdict.\n"
+        "- Build claim_matrix from the material claims, normally 3 to 8 "
+        "items when the supplied evidence justifies that range. Merge "
+        "semantically equivalent claims and do not split them into trivial "
+        "details.\n"
+        "- Every claim_matrix claim_id must exist in claim_analysis.claims. "
+        "For every participating provider, distinguish supports, "
+        "partially_supports, contradicts, uncertain, and not_mentioned. "
+        "Omission is not contradiction.\n"
+        "- claim_agreements and claim_disagreements may reference only IDs "
+        "from claim_matrix. Use claim_disagreements only for genuinely "
+        "incompatible positions, never for style, additional examples, "
+        "omission, or cautious wording alone.\n"
+        "- exclusive_contributions contain useful material supplied by only "
+        "one provider. Mark whether each contribution is supported within "
+        "that response, unverified, inferential, or contradicted; uniqueness "
+        "does not make it true.\n"
+        "- decisive_factors must explain which supplied evidence materially "
+        "led to the final verdict. The narrative verdict, claim_matrix, "
+        "claim_agreements, claim_disagreements, and decisive_factors must be "
+        "mutually coherent.\n"
+        "- evidence_refs may use only provider_response_id values and "
+        "citation IDs supplied in the request. Never create an evidence "
+        "reference.\n"
         "- When agreements or strongest_evidence is non-empty, "
         "claim_analysis.claims must contain at least one corresponding claim. "
         "Do not return an empty claims array in that case.\n"
@@ -515,7 +538,12 @@ def _parse_bundle(
         citations,
         execution_mode,
     )
-    _validate_conclusion_claim_references(conclusion, analysis)
+    _validate_conclusion_claim_references(
+        conclusion,
+        analysis,
+        answers,
+        citations,
+    )
     associated_citations = associate_citations_with_claims(citations, analysis)
     conclusion = _enrich_conclusion(
         conclusion,
@@ -535,6 +563,8 @@ def _parse_bundle(
 def _validate_conclusion_claim_references(
     conclusion: TrustedConclusionV2,
     analysis: ClaimAnalysisV3,
+    answers: list[dict[str, Any]],
+    citations: list[dict[str, Any]],
 ) -> None:
     known = {claim.id for claim in analysis.claims}
     references: list[str] = []
@@ -548,11 +578,44 @@ def _validate_conclusion_claim_references(
         references.extend(evidence.evidence_claim_ids)
     for unsupported in conclusion.unsupported_claims:
         references.extend(unsupported.unsupported_claim_ids)
+    references.extend(item.claim_id for item in conclusion.claim_matrix)
+    for agreement in conclusion.claim_agreements:
+        references.extend(agreement.claim_ids)
+    for disagreement in conclusion.claim_disagreements:
+        references.extend(disagreement.claim_ids)
+    for contribution in conclusion.exclusive_contributions:
+        references.extend(contribution.related_claim_ids)
     unknown = sorted(set(references) - known)
     if unknown:
         raise ValueError(
             "Trusted Conclusion references unknown claim IDs: "
             + ", ".join(unknown)
+        )
+    known_evidence_refs = {
+        str(
+            answer.get("provider_response_id")
+            or answer.get("provider_key")
+            or ""
+        ).strip()
+        for answer in answers
+    } | {
+        str(citation.get("id") or "").strip()
+        for citation in citations
+    }
+    known_evidence_refs.discard("")
+    unknown_evidence_refs = sorted(
+        {
+            reference
+            for item in conclusion.claim_matrix
+            for position in item.provider_positions
+            for reference in position.evidence_refs
+            if reference not in known_evidence_refs
+        }
+    )
+    if unknown_evidence_refs:
+        raise ValueError(
+            "Claim matrix references unknown evidence IDs: "
+            + ", ".join(unknown_evidence_refs)
         )
     claim_by_id = {claim.id: claim for claim in analysis.claims}
     for disagreement in conclusion.disagreements:
@@ -591,6 +654,23 @@ def _salvage_conclusion(
             item["evidence_claim_ids"] = []
         for item in candidate.get("unsupported_claims", []):
             item["unsupported_claim_ids"] = []
+        discarded = []
+        for field in (
+            "claim_matrix",
+            "claim_agreements",
+            "claim_disagreements",
+            "exclusive_contributions",
+            "decisive_factors",
+        ):
+            if candidate.get(field):
+                discarded.append(field)
+            candidate[field] = []
+        if discarded:
+            log.warning(
+                "Discarded malformed optional structured sections during "
+                "conclusion salvage: %s",
+                ", ".join(discarded),
+            )
         return parse_structured_conclusion(candidate, allowed_providers)
     except Exception:
         return None
@@ -670,6 +750,14 @@ def _enrich_conclusion(
         None,
     )
     payload = conclusion.model_dump()
+    phase_b = _phase_b_fields_from_analysis(
+        conclusion,
+        analysis,
+        answers,
+    )
+    for field, value in phase_b.items():
+        if not payload.get(field):
+            payload[field] = value
     payload.update(
         {
             "schema_version": "2.1",
@@ -712,6 +800,14 @@ def _enrich_conclusion_without_claim_analysis(
         claims=[],
     )
     payload = conclusion.model_dump()
+    phase_b = _phase_b_fields_from_findings(
+        conclusion,
+        key_findings,
+        answers,
+    )
+    for field, value in phase_b.items():
+        if not payload.get(field):
+            payload[field] = value
     payload.update(
         {
             "schema_version": "2.1",
@@ -742,6 +838,327 @@ def _enrich_conclusion_without_claim_analysis(
         }
     )
     return TrustedConclusionV21.model_validate(payload)
+
+
+def _phase_b_fields_from_analysis(
+    conclusion: TrustedConclusionV2,
+    analysis: ClaimAnalysisV3,
+    answers: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Derive a conservative matrix from already validated claim evidence."""
+    participants = _phase_b_participants(answers)
+    important_ids = {
+        claim_id
+        for evidence in conclusion.strongest_evidence
+        for claim_id in evidence.evidence_claim_ids
+    }
+    referenced_ids = {
+        claim_id
+        for agreement in conclusion.agreements
+        for claim_id in agreement.supporting_claim_ids
+    } | {
+        claim_id
+        for disagreement in conclusion.disagreements
+        for claim_id in disagreement.disputing_claim_ids
+    }
+
+    matrix: list[dict[str, Any]] = []
+    for claim in analysis.claims:
+        excerpts_by_provider: dict[str, list[Any]] = {}
+        for excerpt in list(claim.support) + list(claim.dispute):
+            excerpts_by_provider.setdefault(excerpt.provider, []).append(excerpt)
+        positions = []
+        for provider, display_name in participants:
+            if provider in claim.supporting_models:
+                position = "supports"
+            elif provider in claim.disputing_models:
+                position = "contradicts"
+            elif provider in claim.originating_models:
+                position = "uncertain"
+            else:
+                position = "not_mentioned"
+            excerpts = excerpts_by_provider.get(provider, [])
+            summary = (
+                excerpts[0].response_excerpt
+                if excerpts
+                else (
+                    claim.assessment.reason
+                    if position == "uncertain"
+                    else ""
+                )
+            )
+            evidence_refs = list(
+                dict.fromkeys(
+                    excerpt.response_reference.provider_response_id
+                    for excerpt in excerpts
+                )
+            )
+            positions.append(
+                {
+                    "provider": provider,
+                    "display_name": display_name,
+                    "position": position,
+                    "summary": summary,
+                    "evidence_refs": evidence_refs,
+                    "confidence": (
+                        "high"
+                        if excerpts and position == "supports"
+                        else "medium"
+                        if excerpts
+                        else "low"
+                    ),
+                }
+            )
+        if claim.id in important_ids:
+            importance = "high"
+        elif claim.id in referenced_ids:
+            importance = "medium"
+        elif claim.assessment.status in ("weak", "unsupported"):
+            importance = "low"
+        else:
+            importance = "medium"
+        matrix.append(
+            {
+                "claim_id": claim.id,
+                "claim": claim.text,
+                "importance": importance,
+                "provider_positions": positions,
+                "agreement_level": _phase_b_agreement_level(positions),
+                "referee_assessment": claim.assessment.reason,
+                "evidence_limitations": [],
+            }
+        )
+    return _phase_b_sections(conclusion, matrix)
+
+
+def _phase_b_fields_from_findings(
+    conclusion: TrustedConclusionV2,
+    findings: list[dict[str, Any]],
+    answers: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Build only the minimum matrix supported by legacy structured fields."""
+    participants = _phase_b_participants(answers)
+    matrix = []
+    for finding in findings:
+        supporters = set(finding.get("supporting_providers") or [])
+        dissenters = set(finding.get("dissenting_providers") or [])
+        excerpts = finding.get("relevant_excerpts") or []
+        positions = []
+        for provider, display_name in participants:
+            if provider in supporters:
+                position = "supports"
+            elif provider in dissenters:
+                position = "contradicts"
+            else:
+                position = "not_mentioned"
+            matching = [
+                excerpt
+                for excerpt in excerpts
+                if excerpt.get("provider") == provider
+            ]
+            positions.append(
+                {
+                    "provider": provider,
+                    "display_name": display_name,
+                    "position": position,
+                    "summary": (
+                        matching[0].get("text", "")
+                        if matching
+                        else (
+                            finding.get("explanation", "")
+                            if position != "not_mentioned"
+                            else ""
+                        )
+                    ),
+                    "evidence_refs": list(
+                        dict.fromkeys(
+                            excerpt.get("provider_response_id", "")
+                            for excerpt in matching
+                            if excerpt.get("provider_response_id")
+                        )
+                    ),
+                    "confidence": "medium" if matching else "low",
+                }
+            )
+        matrix.append(
+            {
+                "claim_id": finding["id"],
+                "claim": finding["claim"],
+                "importance": (
+                    "high"
+                    if finding.get("evidence_strength") == "strong"
+                    else "medium"
+                    if finding.get("evidence_strength") == "moderate"
+                    else "low"
+                ),
+                "provider_positions": positions,
+                "agreement_level": _phase_b_agreement_level(positions),
+                "referee_assessment": finding.get("explanation") or finding["claim"],
+                "evidence_limitations": [],
+            }
+        )
+    return _phase_b_sections(conclusion, matrix)
+
+
+def _phase_b_sections(
+    conclusion: TrustedConclusionV2,
+    matrix: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    agreements = []
+    disagreements = []
+    exclusive_contributions = []
+    for item in matrix:
+        supporters = [
+            position["provider"]
+            for position in item["provider_positions"]
+            if position["position"] in ("supports", "partially_supports")
+        ]
+        opponents = [
+            position["provider"]
+            for position in item["provider_positions"]
+            if position["position"] == "contradicts"
+        ]
+        if item["agreement_level"] in ("unanimous", "strong_consensus"):
+            agreements.append(
+                {
+                    "topic": item["claim"],
+                    "claim_ids": [item["claim_id"]],
+                    "providers": supporters,
+                    "strength": (
+                        "high"
+                        if item["agreement_level"] == "unanimous"
+                        else "medium"
+                    ),
+                    "explanation": item["referee_assessment"],
+                }
+            )
+        elif item["agreement_level"] == "disputed":
+            positions = [
+                {
+                    "provider": position["provider"],
+                    "position": position["summary"],
+                }
+                for position in item["provider_positions"]
+                if position["position"]
+                in ("supports", "partially_supports", "contradicts")
+                and position["summary"]
+            ]
+            if len({position["provider"] for position in positions}) >= 2:
+                disagreements.append(
+                    {
+                        "topic": item["claim"],
+                        "claim_ids": [item["claim_id"]],
+                        "positions": positions,
+                        "disagreement_type": "interpretation",
+                        "impact_on_verdict": (
+                            "high"
+                            if item["importance"] == "high"
+                            else "medium"
+                        ),
+                        "referee_resolution": item["referee_assessment"],
+                    }
+                )
+        involved = list(dict.fromkeys(supporters + opponents))
+        if len(involved) == 1:
+            provider = involved[0]
+            provider_position = next(
+                position
+                for position in item["provider_positions"]
+                if position["provider"] == provider
+            )
+            exclusive_contributions.append(
+                {
+                    "provider": provider,
+                    "contribution": item["claim"],
+                    "related_claim_ids": [item["claim_id"]],
+                    "verification_status": (
+                        "supported_within_response"
+                        if provider_position["evidence_refs"]
+                        and provider_position["position"] == "supports"
+                        else "contradicted"
+                        if provider_position["position"] == "contradicts"
+                        else "unverified"
+                    ),
+                    "referee_note": item["referee_assessment"],
+                }
+            )
+
+    matrix_by_id = {item["claim_id"]: item for item in matrix}
+    decisive_factors = []
+    for evidence in conclusion.strongest_evidence:
+        linked = [
+            matrix_by_id[claim_id]
+            for claim_id in evidence.evidence_claim_ids
+            if claim_id in matrix_by_id
+        ]
+        if not linked:
+            continue
+        opposed_by = list(
+            dict.fromkeys(
+                position["provider"]
+                for item in linked
+                for position in item["provider_positions"]
+                if position["position"] == "contradicts"
+            )
+        )
+        decisive_factors.append(
+            {
+                "factor": evidence.claim,
+                "supported_by": list(dict.fromkeys(evidence.supporting_models)),
+                "opposed_by": opposed_by,
+                "weight": (
+                    "high"
+                    if any(item["importance"] == "high" for item in linked)
+                    else "medium"
+                ),
+                "explanation": evidence.description,
+            }
+        )
+    return {
+        "claim_matrix": matrix,
+        "claim_agreements": agreements,
+        "claim_disagreements": disagreements,
+        "exclusive_contributions": exclusive_contributions,
+        "decisive_factors": decisive_factors,
+    }
+
+
+def _phase_b_participants(
+    answers: list[dict[str, Any]],
+) -> list[tuple[str, str]]:
+    participants = []
+    seen = set()
+    for answer in answers:
+        provider = str(answer.get("provider_key") or "").strip().lower()
+        if not provider or provider in seen:
+            continue
+        seen.add(provider)
+        participants.append(
+            (
+                provider,
+                str(answer.get("label") or provider).strip(),
+            )
+        )
+    return participants
+
+
+def _phase_b_agreement_level(
+    positions: list[dict[str, Any]],
+) -> str:
+    values = [position["position"] for position in positions]
+    if len(values) >= 2 and all(value == "supports" for value in values):
+        return "unanimous"
+    supporters = values.count("supports")
+    if supporters >= 2 and "contradicts" not in values:
+        return "strong_consensus"
+    if "contradicts" in values and any(
+        value in ("supports", "partially_supports")
+        for value in values
+    ):
+        return "disputed"
+    if supporters or "partially_supports" in values:
+        return "partial_consensus"
+    return "unresolved"
 
 
 def _derive_key_findings_from_conclusion(
@@ -927,6 +1344,19 @@ def _normalize_bundle_provider_aliases(
             _normalize_provider_list(evidence, "supporting_models")
         for claim in conclusion.get("unsupported_claims") or []:
             _normalize_provider_list(claim, "originating_models")
+        for matrix_item in conclusion.get("claim_matrix") or []:
+            for position in matrix_item.get("provider_positions") or []:
+                _normalize_provider_value(position, "provider")
+        for agreement in conclusion.get("claim_agreements") or []:
+            _normalize_provider_list(agreement, "providers")
+        for disagreement in conclusion.get("claim_disagreements") or []:
+            for position in disagreement.get("positions") or []:
+                _normalize_provider_value(position, "provider")
+        for contribution in conclusion.get("exclusive_contributions") or []:
+            _normalize_provider_value(contribution, "provider")
+        for factor in conclusion.get("decisive_factors") or []:
+            _normalize_provider_list(factor, "supported_by")
+            _normalize_provider_list(factor, "opposed_by")
 
     analysis = normalized.get("claim_analysis")
     if isinstance(analysis, dict):
@@ -1012,6 +1442,15 @@ def _trace_raw_payload(stage: str, raw: str) -> None:
             "strongest_evidence_count": _safe_list_count(
                 conclusion.get("strongest_evidence")
             ),
+            "claim_matrix_count": _safe_list_count(
+                conclusion.get("claim_matrix")
+            ),
+            "claim_agreements_count": _safe_list_count(
+                conclusion.get("claim_agreements")
+            ),
+            "claim_disagreements_count": _safe_list_count(
+                conclusion.get("claim_disagreements")
+            ),
             "raw_key_findings_count": _safe_list_count(raw_findings),
             "claim_count": _safe_list_count(raw_claims),
             "normalized_providers": _normalized_provider_names(normalized),
@@ -1066,6 +1505,21 @@ def _trace_result(
             ),
             "provider_assessment_count": _safe_list_count(
                 payload.get("provider_assessment")
+            ),
+            "claim_matrix_count": _safe_list_count(
+                payload.get("claim_matrix")
+            ),
+            "claim_agreements_count": _safe_list_count(
+                payload.get("claim_agreements")
+            ),
+            "claim_disagreements_count": _safe_list_count(
+                payload.get("claim_disagreements")
+            ),
+            "exclusive_contributions_count": _safe_list_count(
+                payload.get("exclusive_contributions")
+            ),
+            "decisive_factors_count": _safe_list_count(
+                payload.get("decisive_factors")
             ),
             "claim_count": len(analysis.claims) if analysis else 0,
             "claim_analysis_status": claim_analysis_status,

@@ -1,0 +1,76 @@
+{
+  "schema_version": "2.0",
+  "final_answer": "All three providers support the same core conclusion.",
+  "agreements": [],
+  "disagreements": [],
+  "strongest_evidence": [],
+  "remaining_uncertainties": [],
+  "unsupported_claims": [],
+  "confidence": {
+    "level": "high",
+    "reason": "The three participating responses explicitly support the core claim.",
+    "factors": {
+      "model_agreement": "high",
+      "evidence_quality": "medium",
+      "uncertainty": "low"
+    }
+  },
+  "referee_reasoning": "The verdict follows the proposition shared by all participating providers.",
+  "what_could_change_the_verdict": [],
+  "claim_matrix": [
+    {
+      "claim_id": "claim_automation",
+      "claim": "Automation will affect repetitive programming tasks.",
+      "importance": "high",
+      "provider_positions": [
+        {
+          "provider": "openai",
+          "display_name": "ChatGPT",
+          "position": "supports",
+          "summary": "Repetitive programming tasks are increasingly automated.",
+          "evidence_refs": ["openai-response"],
+          "confidence": "high"
+        },
+        {
+          "provider": "gemini",
+          "display_name": "Gemini",
+          "position": "supports",
+          "summary": "Routine coding work is a likely automation target.",
+          "evidence_refs": ["gemini-response"],
+          "confidence": "high"
+        },
+        {
+          "provider": "mistral",
+          "display_name": "Mistral",
+          "position": "supports",
+          "summary": "Automation is most likely for repetitive development work.",
+          "evidence_refs": ["mistral-response"],
+          "confidence": "medium"
+        }
+      ],
+      "agreement_level": "unanimous",
+      "referee_assessment": "Every participating provider supports the same direction of change.",
+      "evidence_limitations": ["No independently verified source was supplied."]
+    }
+  ],
+  "claim_agreements": [
+    {
+      "topic": "Automation of repetitive programming tasks",
+      "claim_ids": ["claim_automation"],
+      "providers": ["openai", "gemini", "mistral"],
+      "strength": "high",
+      "explanation": "All participating providers explicitly support the claim."
+    }
+  ],
+  "claim_disagreements": [],
+  "exclusive_contributions": [],
+  "decisive_factors": [
+    {
+      "factor": "Explicit support across all participating responses",
+      "supported_by": ["openai", "gemini", "mistral"],
+      "opposed_by": [],
+      "weight": "high",
+      "explanation": "The shared proposition is the strongest basis available for the verdict."
+    }
+  ]
+}

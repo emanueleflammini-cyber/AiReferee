@@ -371,6 +371,56 @@
         "shared_by_multiple_models": "Fonte condivisa da più modelli",
         "unverified": "Fonte non verificata esternamente",
         "malformed": "Collegamento non valido o incompleto"
+      },
+      "claimMatrix": "Matrice delle affermazioni",
+      "claimMatrixDescription": "Ogni affermazione rilevante è confrontata tra i provider che hanno partecipato al risultato.",
+      "mainAgreements": "Accordi principali",
+      "mainDisagreements": "Disaccordi principali",
+      "exclusiveContributions": "Contributi esclusivi",
+      "exclusiveContributionsDescription": "Punti utili introdotti da un solo provider; l'unicità non li rende verificati.",
+      "decisiveFactors": "Fattori decisivi",
+      "decisiveFactorsDescription": "Le evidenze che hanno inciso maggiormente sul verdetto finale.",
+      "importance": "Importanza",
+      "agreementStrength": "Forza dell'accordo",
+      "weight": "Peso",
+      "refereeAssessment": "Valutazione dell'arbitro",
+      "refereeResolution": "Risoluzione dell'arbitro",
+      "evidenceLimitations": "Limiti delle evidenze",
+      "positionConfidence": "Affidabilità della posizione",
+      "verdictImpactLabel": "Impatto sul verdetto",
+      "providerPosition": {
+        "supports": "Concorda",
+        "partially_supports": "Concorda in parte",
+        "contradicts": "Contraddice",
+        "uncertain": "Incerto",
+        "not_mentioned": "Non menzionato"
+      },
+      "agreementLevel": {
+        "unanimous": "Unanime",
+        "strong_consensus": "Consenso forte",
+        "partial_consensus": "Consenso parziale",
+        "disputed": "Contestata",
+        "unresolved": "Non risolta"
+      },
+      "disagreementType": {
+        "factual": "Fattuale",
+        "interpretation": "Interpretazione",
+        "degree": "Grado",
+        "timeframe": "Orizzonte temporale",
+        "uncertainty": "Incertezza",
+        "emphasis": "Enfasi"
+      },
+      "verdictImpact": {
+        "high": "Alto",
+        "medium": "Medio",
+        "low": "Basso",
+        "none": "Nessuno"
+      },
+      "verificationStatus": {
+        "supported_within_response": "Supportato nella risposta",
+        "unverified": "Non verificato",
+        "inferential": "Inferenziale",
+        "contradicted": "Contraddetto"
       }
     },
     "traceability": {

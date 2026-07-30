@@ -1,0 +1,76 @@
+{
+  "schema_version": "2.0",
+  "final_answer": "The participating providers agree on the main conclusion and differ only in emphasis.",
+  "agreements": [],
+  "disagreements": [],
+  "strongest_evidence": [],
+  "remaining_uncertainties": [],
+  "unsupported_claims": [],
+  "confidence": {
+    "level": "medium",
+    "reason": "Two providers explicitly support the claim and no provider contradicts it.",
+    "factors": {
+      "model_agreement": "medium",
+      "evidence_quality": "medium",
+      "uncertainty": "medium"
+    }
+  },
+  "referee_reasoning": "Additional detail and omission are not treated as disagreement.",
+  "what_could_change_the_verdict": [],
+  "claim_matrix": [
+    {
+      "claim_id": "claim_assistance",
+      "claim": "AI will increasingly assist programmers.",
+      "importance": "medium",
+      "provider_positions": [
+        {
+          "provider": "openai",
+          "display_name": "ChatGPT",
+          "position": "supports",
+          "summary": "AI assistance will expand across development tasks.",
+          "evidence_refs": ["openai-response"],
+          "confidence": "high"
+        },
+        {
+          "provider": "gemini",
+          "display_name": "Gemini",
+          "position": "supports",
+          "summary": "AI assistance will be especially visible in routine tasks.",
+          "evidence_refs": ["gemini-response"],
+          "confidence": "medium"
+        },
+        {
+          "provider": "mistral",
+          "display_name": "Mistral",
+          "position": "not_mentioned",
+          "summary": "",
+          "evidence_refs": [],
+          "confidence": "low"
+        }
+      ],
+      "agreement_level": "strong_consensus",
+      "referee_assessment": "The two explicit positions agree; the third provider's omission is not a contradiction.",
+      "evidence_limitations": []
+    }
+  ],
+  "claim_agreements": [
+    {
+      "topic": "Growth of AI assistance",
+      "claim_ids": ["claim_assistance"],
+      "providers": ["openai", "gemini"],
+      "strength": "medium",
+      "explanation": "Both explicit positions support the same direction."
+    }
+  ],
+  "claim_disagreements": [],
+  "exclusive_contributions": [
+    {
+      "provider": "gemini",
+      "contribution": "Routine tasks may be affected first.",
+      "related_claim_ids": ["claim_assistance"],
+      "verification_status": "supported_within_response",
+      "referee_note": "This is an additional emphasis, not a contradiction."
+    }
+  ],
+  "decisive_factors": []
+}

@@ -129,6 +129,144 @@ export function StructuredConclusion({
         </div>
       </div>
 
+      {conclusion.claimMatrix.length > 0 && (
+        <ConclusionSection
+          title={t("results.structured.claimMatrix")}
+          subtitle={t("results.structured.claimMatrixDescription")}
+          icon={GitCompareArrows}
+          accent="#00E5FF"
+          testId="structured-claim-matrix"
+        >
+          {conclusion.claimMatrix.map((claim) => (
+            <ClaimMatrixCard key={claim.claimId} claim={claim} t={t} />
+          ))}
+        </ConclusionSection>
+      )}
+
+      {conclusion.claimAgreements.length > 0 && (
+        <ConclusionSection
+          title={t("results.structured.mainAgreements")}
+          icon={Check}
+          accent="#10B981"
+          testId="structured-claim-agreements"
+        >
+          {conclusion.claimAgreements.map((agreement, index) => (
+            <article
+              key={`${agreement.topic}-${index}`}
+              className="min-w-0 max-w-full rounded-xl border border-[#10B981]/15 bg-[#10B981]/[0.025] p-4"
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <LevelBadge
+                  label={t("results.structured.agreementStrength")}
+                  value={agreement.strength}
+                  t={t}
+                />
+                <ProviderChips providers={agreement.providers} compact />
+              </div>
+              <p className="mt-3 break-words text-[14px] leading-relaxed text-white/85 [overflow-wrap:anywhere]">
+                {agreement.topic}
+              </p>
+              <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/55 [overflow-wrap:anywhere]">
+                {agreement.explanation}
+              </p>
+            </article>
+          ))}
+        </ConclusionSection>
+      )}
+
+      {conclusion.claimDisagreements.length > 0 && (
+        <ConclusionSection
+          title={t("results.structured.mainDisagreements")}
+          subtitle={t("results.structured.disagreementDescription")}
+          icon={GitCompareArrows}
+          accent="#F59E0B"
+          testId="structured-claim-disagreements"
+        >
+          {conclusion.claimDisagreements.map((disagreement, index) => (
+            <StructuredDisagreementCard
+              key={`${disagreement.topic}-${index}`}
+              disagreement={disagreement}
+              t={t}
+            />
+          ))}
+        </ConclusionSection>
+      )}
+
+      {conclusion.exclusiveContributions.length > 0 && (
+        <ConclusionSection
+          title={t("results.structured.exclusiveContributions")}
+          subtitle={t("results.structured.exclusiveContributionsDescription")}
+          icon={ShieldCheck}
+          accent="#A78BFA"
+          testId="structured-exclusive-contributions"
+        >
+          {conclusion.exclusiveContributions.map((contribution, index) => (
+            <article
+              key={`${contribution.provider}-${index}`}
+              className="min-w-0 max-w-full rounded-xl border border-white/[0.06] bg-white/[0.02] p-4"
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ProviderChip provider={contribution.provider} />
+                <EnumBadge
+                  prefix="results.structured.verificationStatus"
+                  value={contribution.verificationStatus}
+                  t={t}
+                />
+              </div>
+              <p className="mt-3 break-words text-[14px] leading-relaxed text-white/85 [overflow-wrap:anywhere]">
+                {contribution.contribution}
+              </p>
+              <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/55 [overflow-wrap:anywhere]">
+                {contribution.refereeNote}
+              </p>
+            </article>
+          ))}
+        </ConclusionSection>
+      )}
+
+      {conclusion.decisiveFactors.length > 0 && (
+        <ConclusionSection
+          title={t("results.structured.decisiveFactors")}
+          subtitle={t("results.structured.decisiveFactorsDescription")}
+          icon={Scale}
+          accent="#0066FF"
+          testId="structured-decisive-factors"
+        >
+          {conclusion.decisiveFactors.map((factor, index) => (
+            <article
+              key={`${factor.factor}-${index}`}
+              className="min-w-0 max-w-full rounded-xl border border-white/[0.06] bg-white/[0.02] p-4"
+            >
+              <LevelBadge
+                label={t("results.structured.weight")}
+                value={factor.weight}
+                t={t}
+              />
+              <p className="mt-3 break-words text-[14px] leading-relaxed text-white/85 [overflow-wrap:anywhere]">
+                {factor.factor}
+              </p>
+              <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+                {factor.supportedBy.length > 0 && (
+                  <ProviderMeta
+                    label={t("results.structured.supportedBy")}
+                    providers={factor.supportedBy}
+                  />
+                )}
+                {factor.opposedBy.length > 0 && (
+                  <ProviderMeta
+                    label={t("results.structured.disputedBy")}
+                    providers={factor.opposedBy}
+                  />
+                )}
+              </div>
+              <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/55 [overflow-wrap:anywhere]">
+                {factor.explanation}
+              </p>
+            </article>
+          ))}
+        </ConclusionSection>
+      )}
+
       {evidenceView.keyFindings.length > 0 && (
         <ConclusionSection
           title={t("results.structured.keyFindings")}
@@ -413,6 +551,148 @@ function KeyFindingCard({ finding, t }) {
           </div>
         </div>
       )}
+    </article>
+  );
+}
+
+function ClaimMatrixCard({ claim, t }) {
+  return (
+    <article
+      className="w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.02] p-4"
+      data-testid={`claim-matrix-${claim.claimId}`}
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <LevelBadge
+          label={t("results.structured.importance")}
+          value={claim.importance}
+          t={t}
+        />
+        <EnumBadge
+          prefix="results.structured.agreementLevel"
+          value={claim.agreementLevel}
+          t={t}
+        />
+      </div>
+      <p className="mt-3 break-words text-[14px] leading-relaxed text-white/90 [overflow-wrap:anywhere]">
+        {claim.claim}
+      </p>
+      <div
+        className="mt-4 grid w-full min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3"
+        data-testid="claim-matrix-provider-grid"
+      >
+        {claim.providerPositions.map((position) => (
+          <MatrixProviderPosition
+            key={position.provider}
+            position={position}
+            t={t}
+          />
+        ))}
+      </div>
+      {claim.refereeAssessment && (
+        <LabeledParagraph
+          label={t("results.structured.refereeAssessment")}
+          text={claim.refereeAssessment}
+        />
+      )}
+      {claim.evidenceLimitations.length > 0 && (
+        <TextList
+          title={t("results.structured.evidenceLimitations")}
+          values={claim.evidenceLimitations}
+          accent="#F59E0B"
+        />
+      )}
+    </article>
+  );
+}
+
+function MatrixProviderPosition({ position, t }) {
+  const state = {
+    supports: { icon: Check, color: "#10B981" },
+    partially_supports: { icon: HelpCircle, color: "#FBBF24" },
+    contradicts: { icon: AlertTriangle, color: "#F43F5E" },
+    uncertain: { icon: HelpCircle, color: "#A78BFA" },
+    not_mentioned: { icon: HelpCircle, color: "#94A3B8" },
+  }[position.position] || { icon: HelpCircle, color: "#94A3B8" };
+  const Icon = state.icon;
+  const statusText = translateEnum(
+    t,
+    "results.structured.providerPosition",
+    position.position
+  );
+  return (
+    <div className="w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-white/[0.06] bg-black/10 p-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <ProviderChip
+          provider={position.provider}
+          displayName={position.displayName}
+        />
+        <span
+          className="inline-flex max-w-full items-center gap-1.5 break-words rounded-full border px-2 py-0.5 text-[10.5px] [overflow-wrap:anywhere]"
+          style={{
+            color: state.color,
+            borderColor: `${state.color}45`,
+            backgroundColor: `${state.color}12`,
+          }}
+          role="status"
+          aria-label={`${position.displayName}: ${statusText}`}
+        >
+          <Icon className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+          {statusText}
+        </span>
+      </div>
+      {position.summary && (
+        <p className="mt-3 break-words text-[12.5px] leading-relaxed text-white/60 [overflow-wrap:anywhere]">
+          {position.summary}
+        </p>
+      )}
+      <div className="mt-3">
+        <EnumBadge
+          prefix="results.structured.level"
+          value={position.confidence}
+          t={t}
+          label={t("results.structured.positionConfidence")}
+        />
+      </div>
+    </div>
+  );
+}
+
+function StructuredDisagreementCard({ disagreement, t }) {
+  return (
+    <article className="min-w-0 max-w-full rounded-xl border border-[#F59E0B]/15 bg-[#F59E0B]/[0.025] p-4">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <EnumBadge
+          prefix="results.structured.disagreementType"
+          value={disagreement.disagreementType}
+          t={t}
+        />
+        <EnumBadge
+          prefix="results.structured.verdictImpact"
+          value={disagreement.impactOnVerdict}
+          t={t}
+          label={t("results.structured.verdictImpactLabel")}
+        />
+      </div>
+      <p className="mt-3 break-words text-[14px] leading-relaxed text-white/90 [overflow-wrap:anywhere]">
+        {disagreement.topic}
+      </p>
+      <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2">
+        {disagreement.positions.map((position) => (
+          <div
+            key={position.provider}
+            className="min-w-0 max-w-full rounded-xl border border-white/[0.06] bg-black/10 p-3"
+          >
+            <ProviderChip provider={position.provider} />
+            <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/65 [overflow-wrap:anywhere]">
+              {position.position}
+            </p>
+          </div>
+        ))}
+      </div>
+      <LabeledParagraph
+        label={t("results.structured.refereeResolution")}
+        text={disagreement.refereeResolution}
+      />
     </article>
   );
 }
@@ -703,10 +983,34 @@ function ProviderChips({ providers, compact = false }) {
   );
 }
 
-function ProviderChip({ provider }) {
+function ProviderChip({ provider, displayName }) {
   return (
     <span className="inline-flex max-w-full break-words rounded-full border border-white/10 bg-white/[0.035] px-2 py-0.5 text-[10.5px] text-white/60 [overflow-wrap:anywhere]">
-      {PROVIDER_LABELS[provider] || provider}
+      {displayName || PROVIDER_LABELS[provider] || provider}
+    </span>
+  );
+}
+
+function LevelBadge({ label, value, t }) {
+  return (
+    <EnumBadge
+      prefix="results.structured.level"
+      value={value}
+      label={label}
+      t={t}
+    />
+  );
+}
+
+function EnumBadge({ prefix, value, t, label = "" }) {
+  const translated = translateEnum(t, prefix, value);
+  const content = label ? `${label}: ${translated}` : translated;
+  return (
+    <span
+      className="inline-flex max-w-full break-words rounded-full border border-white/10 bg-white/[0.025] px-2.5 py-1 text-[10.5px] text-white/65 [overflow-wrap:anywhere]"
+      aria-label={content}
+    >
+      {content}
     </span>
   );
 }

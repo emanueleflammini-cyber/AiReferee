@@ -130,7 +130,7 @@ def test_missing_sources_must_be_disclosed_without_invention():
     assert "Every conclusion statement must be attributable" in prompt
 
 
-def test_behavior_changes_preserve_existing_bundle_schema():
+def test_behavior_changes_extend_existing_bundle_schema_compatibly():
     bundle = SynthesisBundleV3.model_validate(
         {
             "trusted_conclusion": {
@@ -173,4 +173,7 @@ def test_behavior_changes_preserve_existing_bundle_schema():
         "trusted_conclusion",
         "claim_analysis",
     }
-    assert "exclusive_contributions" not in str(schema)
+    assert bundle.trusted_conclusion.claim_matrix == []
+    assert bundle.trusted_conclusion.exclusive_contributions == []
+    assert "claim_matrix" in str(schema)
+    assert "exclusive_contributions" in str(schema)

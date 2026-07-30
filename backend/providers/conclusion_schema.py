@@ -37,6 +37,35 @@ SourceStatus = Literal[
     "provider_citation_unverified",
     "no_source",
 ]
+ProviderPositionType = Literal[
+    "supports",
+    "partially_supports",
+    "contradicts",
+    "uncertain",
+    "not_mentioned",
+]
+AgreementLevel = Literal[
+    "unanimous",
+    "strong_consensus",
+    "partial_consensus",
+    "disputed",
+    "unresolved",
+]
+DisagreementType = Literal[
+    "factual",
+    "interpretation",
+    "degree",
+    "timeframe",
+    "uncertainty",
+    "emphasis",
+]
+VerdictImpact = Literal["high", "medium", "low", "none"]
+VerificationStatus = Literal[
+    "supported_within_response",
+    "unverified",
+    "inferential",
+    "contradicted",
+]
 
 PROVIDER_KEYS_BY_ID = {
     "model-a": "openai",
@@ -200,6 +229,136 @@ class SourceSummaryItem(StrictContractModel):
         return self
 
 
+class ClaimProviderPosition(StrictContractModel):
+    provider: ProviderKey
+    display_name: str = Field(min_length=1, max_length=100)
+    position: ProviderPositionType
+    summary: str = Field(default="", max_length=1000)
+    evidence_refs: list[str] = Field(default_factory=list)
+    confidence: ConfidenceLevel
+
+    @model_validator(mode="after")
+    def require_position_summary(self) -> "ClaimProviderPosition":
+        if self.position != "not_mentioned" and not self.summary:
+            raise ValueError(
+                "provider position summary is required unless the claim was "
+                "not mentioned"
+            )
+        if len(self.evidence_refs) != len(set(self.evidence_refs)):
+            raise ValueError("provider position evidence refs must be unique")
+        return self
+
+
+class ClaimMatrixItem(StrictContractModel):
+    claim_id: str = Field(pattern=r"^claim_[A-Za-z0-9_-]{1,80}$")
+    claim: str = Field(min_length=1, max_length=1200)
+    importance: Impact
+    provider_positions: list[ClaimProviderPosition] = Field(min_length=1)
+    agreement_level: AgreementLevel
+    referee_assessment: str = Field(min_length=1, max_length=1200)
+    evidence_limitations: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_positions_and_agreement(self) -> "ClaimMatrixItem":
+        providers = [position.provider for position in self.provider_positions]
+        if len(providers) != len(set(providers)):
+            raise ValueError(
+                "claim matrix contains duplicate provider positions"
+            )
+        positions = {position.position for position in self.provider_positions}
+        if self.agreement_level == "unanimous" and positions != {"supports"}:
+            raise ValueError(
+                "unanimous requires every participating provider to support "
+                "the claim"
+            )
+        if self.agreement_level == "strong_consensus":
+            supporters = sum(
+                position.position == "supports"
+                for position in self.provider_positions
+            )
+            if supporters < 2 or "contradicts" in positions:
+                raise ValueError(
+                    "strong consensus requires two supporters and no "
+                    "contradiction"
+                )
+        if self.agreement_level == "disputed":
+            has_support = bool(
+                positions & {"supports", "partially_supports"}
+            )
+            if not has_support or "contradicts" not in positions:
+                raise ValueError(
+                    "disputed requires supporting and contradicting positions"
+                )
+        return self
+
+
+class ClaimAgreement(StrictContractModel):
+    topic: str = Field(min_length=1, max_length=500)
+    claim_ids: list[str] = Field(min_length=1)
+    providers: list[ProviderKey] = Field(min_length=2)
+    strength: Impact
+    explanation: str = Field(min_length=1, max_length=1200)
+
+    @model_validator(mode="after")
+    def require_distinct_values(self) -> "ClaimAgreement":
+        if len(self.claim_ids) != len(set(self.claim_ids)):
+            raise ValueError("agreement claim IDs must be unique")
+        if len(set(self.providers)) < 2:
+            raise ValueError("claim agreement requires two distinct providers")
+        return self
+
+
+class ClaimDisagreementPosition(StrictContractModel):
+    provider: ProviderKey
+    position: str = Field(min_length=1, max_length=1000)
+
+
+class ClaimDisagreement(StrictContractModel):
+    topic: str = Field(min_length=1, max_length=500)
+    claim_ids: list[str] = Field(min_length=1)
+    positions: list[ClaimDisagreementPosition] = Field(min_length=2)
+    disagreement_type: DisagreementType
+    impact_on_verdict: VerdictImpact
+    referee_resolution: str = Field(min_length=1, max_length=1200)
+
+    @model_validator(mode="after")
+    def require_distinct_values(self) -> "ClaimDisagreement":
+        if len(self.claim_ids) != len(set(self.claim_ids)):
+            raise ValueError("disagreement claim IDs must be unique")
+        providers = [position.provider for position in self.positions]
+        if len(providers) != len(set(providers)):
+            raise ValueError(
+                "claim disagreement requires distinct provider positions"
+            )
+        return self
+
+
+class ExclusiveContribution(StrictContractModel):
+    provider: ProviderKey
+    contribution: str = Field(min_length=1, max_length=1200)
+    related_claim_ids: list[str] = Field(default_factory=list)
+    verification_status: VerificationStatus
+    referee_note: str = Field(min_length=1, max_length=1000)
+
+
+class DecisiveFactor(StrictContractModel):
+    factor: str = Field(min_length=1, max_length=1200)
+    supported_by: list[ProviderKey] = Field(default_factory=list)
+    opposed_by: list[ProviderKey] = Field(default_factory=list)
+    weight: Impact
+    explanation: str = Field(min_length=1, max_length=1200)
+
+    @model_validator(mode="after")
+    def validate_provider_stances(self) -> "DecisiveFactor":
+        supporters = set(self.supported_by)
+        opponents = set(self.opposed_by)
+        if supporters & opponents:
+            raise ValueError(
+                "a provider cannot both support and oppose a decisive factor"
+            )
+        return self
+
+
 class TrustedConclusionV2(StrictContractModel):
     schema_version: Literal["2.0"] = "2.0"
     final_answer: str = Field(min_length=1)
@@ -211,9 +370,16 @@ class TrustedConclusionV2(StrictContractModel):
     confidence: ConclusionConfidence
     referee_reasoning: str = ""
     what_could_change_the_verdict: list[str] = Field(default_factory=list)
+    claim_matrix: list[ClaimMatrixItem] = Field(default_factory=list)
+    claim_agreements: list[ClaimAgreement] = Field(default_factory=list)
+    claim_disagreements: list[ClaimDisagreement] = Field(default_factory=list)
+    exclusive_contributions: list[ExclusiveContribution] = Field(
+        default_factory=list
+    )
+    decisive_factors: list[DecisiveFactor] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def reject_urls(self) -> "TrustedConclusionV2":
+    def validate_conclusion_contract(self) -> "TrustedConclusionV2":
         for value in _iter_strings(
             self.model_dump(),
             ignored_keys={"source_summary"},
@@ -222,6 +388,93 @@ class TrustedConclusionV2(StrictContractModel):
                 raise ValueError(
                     "Trusted Conclusion narrative fields must not contain source "
                     "URLs; sources belong in the deterministic source summary"
+                )
+        claim_ids = [item.claim_id for item in self.claim_matrix]
+        if len(claim_ids) != len(set(claim_ids)):
+            raise ValueError("claim matrix IDs must be unique")
+        known_claim_ids = set(claim_ids)
+        for section, entries in (
+            ("agreement", self.claim_agreements),
+            ("disagreement", self.claim_disagreements),
+            ("exclusive contribution", self.exclusive_contributions),
+        ):
+            for entry in entries:
+                references = (
+                    entry.related_claim_ids
+                    if isinstance(entry, ExclusiveContribution)
+                    else entry.claim_ids
+                )
+                unknown = set(references) - known_claim_ids
+                if unknown:
+                    raise ValueError(
+                        f"{section} references unknown claim IDs: "
+                        + ", ".join(sorted(unknown))
+                    )
+        agreement_keys = {
+            (
+                _comparison_key(item.topic),
+                tuple(sorted(item.claim_ids)),
+            )
+            for item in self.claim_agreements
+        }
+        if len(agreement_keys) != len(self.claim_agreements):
+            raise ValueError("duplicate structured agreements are not allowed")
+        disagreement_keys = {
+            (
+                _comparison_key(item.topic),
+                tuple(sorted(item.claim_ids)),
+            )
+            for item in self.claim_disagreements
+        }
+        if len(disagreement_keys) != len(self.claim_disagreements):
+            raise ValueError(
+                "duplicate structured disagreements are not allowed"
+            )
+        if agreement_keys & disagreement_keys:
+            raise ValueError(
+                "the same topic and claims cannot be both an agreement and "
+                "a disagreement"
+            )
+
+        matrix_by_id = {
+            item.claim_id: item
+            for item in self.claim_matrix
+        }
+        for agreement in self.claim_agreements:
+            eligible = {
+                position.provider
+                for claim_id in agreement.claim_ids
+                for position in matrix_by_id[claim_id].provider_positions
+                if position.position in ("supports", "partially_supports")
+            }
+            if not set(agreement.providers).issubset(eligible):
+                raise ValueError(
+                    "agreement providers are incompatible with claim matrix "
+                    "positions"
+                )
+        for disagreement in self.claim_disagreements:
+            matrix_positions = {
+                position.provider: position.position
+                for claim_id in disagreement.claim_ids
+                for position in matrix_by_id[claim_id].provider_positions
+            }
+            if not {
+                position.provider for position in disagreement.positions
+            }.issubset(matrix_positions):
+                raise ValueError(
+                    "disagreement provider is absent from the claim matrix"
+                )
+            position_values = set(matrix_positions.values())
+            incompatible = (
+                "contradicts" in position_values
+                and bool(
+                    position_values
+                    & {"supports", "partially_supports"}
+                )
+            )
+            if not incompatible:
+                raise ValueError(
+                    "disagreement is incompatible with provider positions"
                 )
         return self
 
@@ -365,6 +618,24 @@ def parse_structured_conclusion(
             "Conclusion references providers outside the current execution: "
             + ", ".join(unknown)
         )
+    for item in conclusion.claim_matrix:
+        positioned = {
+            position.provider.lower()
+            for position in item.provider_positions
+        }
+        if positioned != allowed:
+            missing = sorted(allowed - positioned)
+            extra = sorted(positioned - allowed)
+            details = []
+            if missing:
+                details.append("missing " + ", ".join(missing))
+            if extra:
+                details.append("unexpected " + ", ".join(extra))
+            raise ValueError(
+                "claim matrix must contain one position for every "
+                "participating provider"
+                + (": " + "; ".join(details) if details else "")
+            )
     if (
         len(allowed) == 1
         and conclusion.confidence.factors.model_agreement != "low"
@@ -383,9 +654,19 @@ def normalize_stored_conclusion(
     if not isinstance(raw, dict):
         return None, "legacy"
     try:
+        matrix_providers = {
+            str(position.get("provider") or "").strip().lower()
+            for item in raw.get("claim_matrix") or []
+            if isinstance(item, dict)
+            for position in item.get("provider_positions") or []
+            if isinstance(position, dict)
+            and position.get("provider")
+        }
         conclusion = parse_structured_conclusion(
             raw,
-            allowed_providers=ProviderKey.__args__,
+            allowed_providers=(
+                matrix_providers or set(ProviderKey.__args__)
+            ),
         )
     except Exception:  # Corrupt/partial stored data must not crash old results.
         return None, "legacy"
@@ -401,6 +682,21 @@ def _provider_references(conclusion: TrustedConclusion) -> Iterable[str]:
         yield from (model.lower() for model in evidence.supporting_models)
     for claim in conclusion.unsupported_claims:
         yield from (model.lower() for model in claim.originating_models)
+    for matrix_item in conclusion.claim_matrix:
+        for position in matrix_item.provider_positions:
+            yield position.provider.lower()
+    for agreement in conclusion.claim_agreements:
+        yield from (provider.lower() for provider in agreement.providers)
+    for disagreement in conclusion.claim_disagreements:
+        for position in disagreement.positions:
+            yield position.provider.lower()
+    for contribution in conclusion.exclusive_contributions:
+        yield contribution.provider.lower()
+    for factor in conclusion.decisive_factors:
+        yield from (
+            provider.lower()
+            for provider in factor.supported_by + factor.opposed_by
+        )
     if isinstance(conclusion, TrustedConclusionV21):
         for finding in conclusion.key_findings:
             yield from (
@@ -432,3 +728,7 @@ def _value(response: Any, name: str) -> Any:
     if isinstance(response, dict):
         return response.get(name)
     return getattr(response, name, None)
+
+
+def _comparison_key(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().casefold()

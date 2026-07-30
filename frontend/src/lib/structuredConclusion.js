@@ -7,6 +7,11 @@ const ARRAY_FIELDS = [
   "remaining_uncertainties",
   "unsupported_claims",
   "what_could_change_the_verdict",
+  "claim_matrix",
+  "claim_agreements",
+  "claim_disagreements",
+  "exclusive_contributions",
+  "decisive_factors",
 ];
 
 export function normalizeStructuredConclusion(value) {
@@ -52,6 +57,15 @@ export function normalizeStructuredConclusion(value) {
       value.provider_assessment
     ),
     source_summary: normalizeSourceSummary(value.source_summary),
+    claimMatrix: normalizeClaimMatrix(value.claim_matrix),
+    claimAgreements: normalizeClaimAgreements(value.claim_agreements),
+    claimDisagreements: normalizeClaimDisagreements(
+      value.claim_disagreements
+    ),
+    exclusiveContributions: normalizeExclusiveContributions(
+      value.exclusive_contributions
+    ),
+    decisiveFactors: normalizeDecisiveFactors(value.decisive_factors),
   };
 
   ARRAY_FIELDS.forEach((field) => {
@@ -363,6 +377,148 @@ function normalizeSourceSummary(values) {
       };
     })
     .filter(Boolean);
+}
+
+function normalizeClaimMatrix(values) {
+  const positions = new Set([
+    "supports",
+    "partially_supports",
+    "contradicts",
+    "uncertain",
+    "not_mentioned",
+  ]);
+  const agreementLevels = new Set([
+    "unanimous",
+    "strong_consensus",
+    "partial_consensus",
+    "disputed",
+    "unresolved",
+  ]);
+  return (Array.isArray(values) ? values : [])
+    .map((item) => {
+      const claimId = cleanText(item?.claim_id);
+      const claim = cleanText(item?.claim);
+      const agreementLevel = cleanText(item?.agreement_level).toLowerCase();
+      if (!claimId || !claim || !agreementLevels.has(agreementLevel)) return null;
+      const providerPositions = (Array.isArray(item?.provider_positions)
+        ? item.provider_positions
+        : []
+      )
+        .map((position) => {
+          const provider = cleanText(position?.provider);
+          const value = cleanText(position?.position).toLowerCase();
+          if (!provider || !positions.has(value)) return null;
+          return {
+            provider,
+            displayName: cleanText(position?.display_name) || provider,
+            position: value,
+            summary: cleanText(position?.summary),
+            evidenceRefs: uniqueStrings(position?.evidence_refs),
+            confidence: normalizeLevel(position?.confidence),
+          };
+        })
+        .filter(Boolean);
+      if (!providerPositions.length) return null;
+      return {
+        claimId,
+        claim,
+        importance: normalizeLevel(item?.importance),
+        providerPositions,
+        agreementLevel,
+        refereeAssessment: cleanText(item?.referee_assessment),
+        evidenceLimitations: uniqueStrings(item?.evidence_limitations),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeClaimAgreements(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((item) => ({
+      topic: cleanText(item?.topic),
+      claimIds: uniqueStrings(item?.claim_ids),
+      providers: uniqueStrings(item?.providers),
+      strength: normalizeLevel(item?.strength),
+      explanation: cleanText(item?.explanation),
+    }))
+    .filter((item) => (
+      item.topic
+      && item.claimIds.length
+      && item.providers.length >= 2
+      && item.explanation
+    ));
+}
+
+function normalizeClaimDisagreements(values) {
+  const types = new Set([
+    "factual",
+    "interpretation",
+    "degree",
+    "timeframe",
+    "uncertainty",
+    "emphasis",
+  ]);
+  const impacts = new Set(["high", "medium", "low", "none"]);
+  return (Array.isArray(values) ? values : [])
+    .map((item) => {
+      const disagreementType = cleanText(item?.disagreement_type).toLowerCase();
+      const impact = cleanText(item?.impact_on_verdict).toLowerCase();
+      const positions = (Array.isArray(item?.positions) ? item.positions : [])
+        .map((position) => ({
+          provider: cleanText(position?.provider),
+          position: cleanText(position?.position),
+        }))
+        .filter((position) => position.provider && position.position);
+      return {
+        topic: cleanText(item?.topic),
+        claimIds: uniqueStrings(item?.claim_ids),
+        positions,
+        disagreementType: types.has(disagreementType)
+          ? disagreementType
+          : "interpretation",
+        impactOnVerdict: impacts.has(impact) ? impact : "none",
+        refereeResolution: cleanText(item?.referee_resolution),
+      };
+    })
+    .filter((item) => (
+      item.topic
+      && item.claimIds.length
+      && item.positions.length >= 2
+      && item.refereeResolution
+    ));
+}
+
+function normalizeExclusiveContributions(values) {
+  const statuses = new Set([
+    "supported_within_response",
+    "unverified",
+    "inferential",
+    "contradicted",
+  ]);
+  return (Array.isArray(values) ? values : [])
+    .map((item) => {
+      const status = cleanText(item?.verification_status).toLowerCase();
+      return {
+        provider: cleanText(item?.provider),
+        contribution: cleanText(item?.contribution),
+        relatedClaimIds: uniqueStrings(item?.related_claim_ids),
+        verificationStatus: statuses.has(status) ? status : "unverified",
+        refereeNote: cleanText(item?.referee_note),
+      };
+    })
+    .filter((item) => item.provider && item.contribution && item.refereeNote);
+}
+
+function normalizeDecisiveFactors(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((item) => ({
+      factor: cleanText(item?.factor),
+      supportedBy: uniqueStrings(item?.supported_by),
+      opposedBy: uniqueStrings(item?.opposed_by),
+      weight: normalizeLevel(item?.weight),
+      explanation: cleanText(item?.explanation),
+    }))
+    .filter((item) => item.factor && item.explanation);
 }
 
 function normalizeExcerpts(values) {

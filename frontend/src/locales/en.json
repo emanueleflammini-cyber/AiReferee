@@ -376,6 +376,56 @@
         "shared_by_multiple_models": "Source shared by multiple models",
         "unverified": "Source not externally verified",
         "malformed": "Invalid or incomplete link"
+      },
+      "claimMatrix": "Claim agreement matrix",
+      "claimMatrixDescription": "Each material claim is compared across the providers that participated in this result.",
+      "mainAgreements": "Main agreements",
+      "mainDisagreements": "Main disagreements",
+      "exclusiveContributions": "Exclusive contributions",
+      "exclusiveContributionsDescription": "Useful points introduced by one provider only; uniqueness does not make them verified.",
+      "decisiveFactors": "Decisive factors",
+      "decisiveFactorsDescription": "The evidence that had the greatest influence on the final verdict.",
+      "importance": "Importance",
+      "agreementStrength": "Agreement strength",
+      "weight": "Weight",
+      "refereeAssessment": "Referee assessment",
+      "refereeResolution": "Referee resolution",
+      "evidenceLimitations": "Evidence limitations",
+      "positionConfidence": "Position confidence",
+      "verdictImpactLabel": "Impact on the verdict",
+      "providerPosition": {
+        "supports": "Supports",
+        "partially_supports": "Partially supports",
+        "contradicts": "Contradicts",
+        "uncertain": "Uncertain",
+        "not_mentioned": "Not mentioned"
+      },
+      "agreementLevel": {
+        "unanimous": "Unanimous",
+        "strong_consensus": "Strong consensus",
+        "partial_consensus": "Partial consensus",
+        "disputed": "Disputed",
+        "unresolved": "Unresolved"
+      },
+      "disagreementType": {
+        "factual": "Factual",
+        "interpretation": "Interpretation",
+        "degree": "Degree",
+        "timeframe": "Timeframe",
+        "uncertainty": "Uncertainty",
+        "emphasis": "Emphasis"
+      },
+      "verdictImpact": {
+        "high": "High",
+        "medium": "Medium",
+        "low": "Low",
+        "none": "None"
+      },
+      "verificationStatus": {
+        "supported_within_response": "Supported within the response",
+        "unverified": "Unverified",
+        "inferential": "Inferential",
+        "contradicted": "Contradicted"
       }
     },
     "traceability": {

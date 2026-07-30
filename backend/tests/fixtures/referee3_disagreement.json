@@ -1,0 +1,86 @@
+{
+  "schema_version": "2.0",
+  "final_answer": "Automation is likely, but the scale of job replacement remains disputed.",
+  "agreements": [],
+  "disagreements": [],
+  "strongest_evidence": [],
+  "remaining_uncertainties": [],
+  "unsupported_claims": [],
+  "confidence": {
+    "level": "medium",
+    "reason": "The direction is shared, while the magnitude remains materially disputed.",
+    "factors": {
+      "model_agreement": "medium",
+      "evidence_quality": "medium",
+      "uncertainty": "high"
+    }
+  },
+  "referee_reasoning": "The verdict preserves the shared direction and exposes the unresolved disagreement about magnitude.",
+  "what_could_change_the_verdict": ["Comparable employment data across affected roles."],
+  "claim_matrix": [
+    {
+      "claim_id": "claim_replacement",
+      "claim": "AI will replace most junior programming roles.",
+      "importance": "high",
+      "provider_positions": [
+        {
+          "provider": "openai",
+          "display_name": "ChatGPT",
+          "position": "contradicts",
+          "summary": "Most roles will change rather than disappear.",
+          "evidence_refs": ["openai-response"],
+          "confidence": "medium"
+        },
+        {
+          "provider": "gemini",
+          "display_name": "Gemini",
+          "position": "supports",
+          "summary": "Junior roles may face substantial replacement pressure.",
+          "evidence_refs": ["gemini-response"],
+          "confidence": "medium"
+        },
+        {
+          "provider": "mistral",
+          "display_name": "Mistral",
+          "position": "uncertain",
+          "summary": "The outcome depends on adoption and role redesign.",
+          "evidence_refs": ["mistral-response"],
+          "confidence": "low"
+        }
+      ],
+      "agreement_level": "disputed",
+      "referee_assessment": "The responses conflict on magnitude, not on the existence of automation pressure.",
+      "evidence_limitations": ["No common timeframe or employment dataset was supplied."]
+    }
+  ],
+  "claim_agreements": [],
+  "claim_disagreements": [
+    {
+      "topic": "Scale of junior-role replacement",
+      "claim_ids": ["claim_replacement"],
+      "positions": [
+        {
+          "provider": "openai",
+          "position": "Most roles will change rather than disappear."
+        },
+        {
+          "provider": "gemini",
+          "position": "Junior roles may face substantial replacement pressure."
+        }
+      ],
+      "disagreement_type": "degree",
+      "impact_on_verdict": "high",
+      "referee_resolution": "The verdict does not claim majority replacement because the supplied evidence does not resolve the magnitude."
+    }
+  ],
+  "exclusive_contributions": [],
+  "decisive_factors": [
+    {
+      "factor": "Unresolved evidence about the scale of displacement",
+      "supported_by": ["gemini"],
+      "opposed_by": ["openai"],
+      "weight": "high",
+      "explanation": "This disagreement prevents a more categorical verdict."
+    }
+  ]
+}
