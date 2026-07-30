@@ -1,6 +1,6 @@
 import en from "../locales/en.json";
 import it from "../locales/it.json";
-import { translateEnum } from "./resultPresentation";
+import { localizeProviderError, translateEnum } from "./resultPresentation";
 
 function get(bundle, path) {
   return path.split(".").reduce((value, key) => value?.[key], bundle);
@@ -53,6 +53,53 @@ describe("Results localization presentation", () => {
     expect(enT("results.evidenceMeter")).toBe("Evidence Meter");
     expect(enT("results.consensusEvolution")).toBe("Consensus Evolution");
     expect(enT("results.errors.providerUnavailable")).toBe("Provider unavailable");
+  });
+
+  test("Italian provider states do not expose raw execution enums", () => {
+    expect(itT("results.status.demo")).toBe("Demo");
+    expect(itT("results.status.live")).toBe("Attivo");
+    expect(itT("results.status.failed")).toBe("Non disponibile");
+    expect(itT("results.status.timeout")).toBe("Tempo scaduto");
+    expect(itT("results.status.disabled")).toBe("Disattivato");
+    expect(itT("results.status.mock")).toBe("Simulato");
+    expect(itT("results.status.liveCount", { n: 3 })).toBe("Provider attivi: 3");
+  });
+
+  test("Italian Results uses the requested evidence terminology", () => {
+    expect(itT("results.evidenceMeter")).toBe("Indicatore delle prove");
+    expect(itT("results.evidenceTitle")).toBe("Quanto è affidabile questa conclusione?");
+    expect(itT("results.structured.strongestEvidence")).toBe("Prova condivisa più solida");
+    expect(itT("results.structured.relevantExcerpts")).toBe("Mostra gli estratti testuali rilevanti");
+  });
+
+  test("known provider errors are presented in Italian without changing the API payload", () => {
+    expect(localizeProviderError(
+      itT,
+      "it",
+      "Gemini API key is not configured.",
+      "FAILED",
+    )).toBe("La chiave API del provider non è configurata.");
+    expect(localizeProviderError(
+      itT,
+      "it",
+      "Network Error",
+      "FAILED",
+    )).toBe("Non è stato possibile raggiungere il provider. Controlla la connessione e riprova.");
+    expect(localizeProviderError(
+      itT,
+      "it",
+      "request timed out",
+      "TIMEOUT",
+    )).toBe("Tempo massimo del provider superato");
+  });
+
+  test("English provider errors preserve the original technical reason", () => {
+    expect(localizeProviderError(
+      enT,
+      "en",
+      "OpenAI rate limit / quota exceeded.",
+      "FAILED",
+    )).toBe("OpenAI rate limit / quota exceeded.");
   });
 
   test("known enum labels are localized", () => {

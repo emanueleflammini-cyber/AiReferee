@@ -36,7 +36,7 @@ import { SafeAnswerText } from "@/components/SafeAnswerText";
 import { StructuredConclusion } from "@/components/StructuredConclusion";
 import { useQueryState } from "@/lib/QueryContext";
 import { useI18n } from "@/lib/i18n";
-import { translateEnum } from "@/lib/resultPresentation";
+import { localizeProviderError, translateEnum } from "@/lib/resultPresentation";
 import { coveredClaimIdsForConclusion } from "@/lib/structuredConclusion";
 import {
   PROVIDER_STATUS,
@@ -920,9 +920,10 @@ function ComingSoonModelCard({ model: m }) {
 
 function ExpandableModelCard({ model: m, response, details, contribution, codename, latencyMs, tokens, providerStatus, executionMode, error, inputTokens, outputTokens, costUsd, modelUsed, onRetry }) {
   const [open, setOpen] = useState(false);
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const displayCodename = modelUsed || codename || m.codename;
   const status = providerStatus || PROVIDER_STATUS.FAILED;
+  const localizedError = localizeProviderError(t, lang, error, status);
   const showLive = status === PROVIDER_STATUS.LIVE;
   const isFailed = status === PROVIDER_STATUS.FAILED;
   const isTimeout = status === PROVIDER_STATUS.TIMEOUT;
@@ -937,15 +938,15 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
     );
   } else if (isFailed) {
     badge = (
-      <span className="flex-shrink-0 rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.1] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-[#F43F5E]" title={error} data-testid={`card-${m.id}-failed`}>{t("results.status.failed")}</span>
+      <span className="flex-shrink-0 rounded-full border border-[#F43F5E]/50 bg-[#F43F5E]/[0.1] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-[#F43F5E]" title={localizedError} data-testid={`card-${m.id}-failed`}>{t("results.status.failed")}</span>
     );
   } else if (isTimeout) {
     badge = (
-      <span className="flex-shrink-0 rounded-full border border-[#F59E0B]/50 bg-[#F59E0B]/[0.1] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-[#F59E0B]" title={error} data-testid={`card-${m.id}-timeout`}>{t("results.status.timeout")}</span>
+      <span className="flex-shrink-0 rounded-full border border-[#F59E0B]/50 bg-[#F59E0B]/[0.1] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-[#F59E0B]" title={localizedError} data-testid={`card-${m.id}-timeout`}>{t("results.status.timeout")}</span>
     );
   } else if (isDisabled) {
     badge = (
-      <span className="flex-shrink-0 rounded-full border border-white/20 bg-white/[0.05] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-white/50" title={error} data-testid={`card-${m.id}-disabled`}>{t("results.status.disabled")}</span>
+      <span className="flex-shrink-0 rounded-full border border-white/20 bg-white/[0.05] px-1.5 py-0.5 text-[9.5px] font-mono tracking-wider text-white/50" title={localizedError} data-testid={`card-${m.id}-disabled`}>{t("results.status.disabled")}</span>
     );
   } else {
     badge = (
@@ -996,7 +997,7 @@ function ExpandableModelCard({ model: m, response, details, contribution, codena
                 : t("results.errors.providerUnavailable")}
           </div>
           <div className="mt-2 break-words text-[12.5px] leading-relaxed text-white/50 [overflow-wrap:anywhere]" data-testid={`card-${m.id}-error`}>
-            {error || t("results.errors.noProviderResponse")}
+            {localizedError}
           </div>
           {!isDisabled && <button
             type="button"

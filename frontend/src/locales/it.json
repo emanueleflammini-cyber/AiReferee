@@ -49,7 +49,7 @@
     "pricingBody": "Inizia gratis con OpenAI, Gemini e Mistral. Passa a Premium per aggiungere Claude, elaborazione prioritaria e limiti più alti — oppure porta le tue chiavi.",
     "plans": {
       "free": {
-        "name": "Free",
+        "name": "Gratuito",
         "price": "€0",
         "tagline": "Tutto ciò che ti serve per confrontare OpenAI, Gemini e Mistral con Riuso Intelligente e piena trasparenza.",
         "f1": "Conclusione Affidabile da GPT + Gemini + Mistral",
@@ -97,9 +97,9 @@
     "demoTitle": "Come l'arbitro ha raggiunto il consenso",
     "liveTitle": "Non è disponibile una trascrizione verificata",
     "demoDescription": "Una trascrizione simulata usata soltanto per mostrare l'esperienza di dibattito.",
-    "liveDescription": "L'esecuzione LIVE mostra esclusivamente i dati restituiti dai provider.",
-    "unavailableTitle": "Trascrizione del dibattito LIVE non disponibile",
-    "unavailableDescription": "AI Referee non inventa una trascrizione del dibattito durante l'esecuzione LIVE.",
+    "liveDescription": "L'esecuzione reale mostra esclusivamente i dati restituiti dai provider.",
+    "unavailableTitle": "Trascrizione del dibattito reale non disponibile",
+    "unavailableDescription": "AI Referee non inventa una trascrizione del dibattito durante l'esecuzione reale.",
     "consensusReached": "Consenso raggiunto",
     "demoVerdictDescription": "I modelli dimostrativi concordano sull'esempio. La conclusione simulata è pronta.",
     "viewConclusion": "Vedi la Conclusione Affidabile"
@@ -126,13 +126,13 @@
     "yourQuestion": "La tua domanda", "backPrompt": "Torna alla domanda",
     "confidence": "Affidabilità", "consensus": "Consenso", "trust": "Attendibilità",
     "thinking": "Sto pensando...", "complete": "Completato",
-    "consensusAnalysis": "Analisi del Consenso", "consensusAnalysisSub": "Confronto il ragionamento di quattro modelli",
-    "trustedConclusion": "Conclusione Affidabile", "refereeVerdict": "Verdetto dell'arbitro",
-    "confidenceScore": "Punteggio di affidabilità", "consensusLevel": "Livello di consenso",
+    "consensusAnalysis": "Analisi del consenso", "consensusAnalysisSub": "Confronto il ragionamento dei modelli attivi",
+    "trustedConclusion": "Conclusione affidabile", "refereeVerdict": "Verdetto dell'arbitro",
+    "confidenceScore": "Affidabilità della conclusione", "consensusLevel": "Livello di consenso",
     "whyConclusion": "Perché questa conclusione?", "whyBody": "Ogni affermazione è ordinata in base al supporto ricevuto dai modelli. Nulla è nascosto.",
     "fullConsensus": "Consenso pieno", "partialConsensus": "Consenso parziale",
     "disagreements": "Disaccordi", "uniqueInsights": "Intuizioni uniche",
-    "evidenceMeter": "Indicatore di prove", "evidenceTitle": "Quanto è difendibile questa risposta?",
+    "evidenceMeter": "Indicatore delle prove", "evidenceTitle": "Quanto è affidabile questa conclusione?",
     "consensusEvolution": "Evoluzione del consenso", "evolutionTitle": "Come Referee è arrivato qui",
     "modelContribution": "Contributo dei modelli", "contributionTitle": "Come ogni modello ha plasmato la conclusione",
     "whyChoseAnswer": "Perché AI Referee ha scelto questa risposta?",
@@ -141,11 +141,11 @@
     "challengeProgress": "Sfida in corso",
     "showBreakdown": "Mostra argomenti, punti di forza e debolezza", "hideBreakdown": "Nascondi dettagli",
     "mainArguments": "Argomenti principali", "strengths": "Punti di forza", "weaknesses": "Punti deboli",
-    "synthFrom": "Sintetizzata da 4 modelli",
+    "synthFrom": "Sintesi basata sui modelli attivi",
     "synthesizing": "Sto sintetizzando la Conclusione Affidabile…",
     "noConclusion": "La Conclusione Affidabile non è disponibile per questa risposta riutilizzata. Aggiorna con un nuovo confronto per generarla.",
-    "synthesizedFromLive": "Sintetizzata da {n} modelli attivi",
-    "synthesizedFromMock": "Sintetizzata da {n} modelli demo",
+    "synthesizedFromLive": "Sintesi basata su {n} modelli attivi",
+    "synthesizedFromMock": "Sintesi basata su {n} modelli demo",
     "transparencyEyebrow": "Trasparenza",
     "rationaleEyebrow": "Motivazione dell'arbitro",
     "rationaleBody": "Tre spiegazioni sintetiche del perché questa conclusione batte ogni alternativa considerata da Referee.",
@@ -179,7 +179,7 @@
     "transparencyNote": "Questa conclusione deriva dal consenso più solido tra le risposte disponibili. Aiuta a prendere decisioni, ma non sostituisce il giudizio umano.",
     "totalScore": "Punteggio totale",
     "weight": "peso",
-    "evidenceNote": "L'Indicatore di prove combina accordo tra i modelli, coerenza logica, qualità del ragionamento, disponibilità delle citazioni e affidabilità.",
+    "evidenceNote": "L'Indicatore delle prove combina accordo tra i modelli, coerenza logica, qualità del ragionamento, disponibilità delle citazioni e affidabilità.",
     "citationLookupSoon": "La verifica online delle citazioni non è ancora disponibile.",
     "evolutionBody": "Dalla domanda al verdetto finale: ogni fase rimane visibile.",
     "analysisSteps": {
@@ -200,21 +200,29 @@
       "recentInformation": "Controllo delle informazioni recenti..."
     },
     "status": {
-      "demo": "DEMO",
-      "live": "LIVE · ATTIVO",
-      "failed": "FAILED · NON DISPONIBILE",
-      "timeout": "TIMEOUT · TEMPO SCADUTO",
-      "disabled": "DISABLED · DISATTIVATO",
-      "mock": "MOCK · SIMULATO",
-      "liveCount": "Provider LIVE: {n}",
-      "failedCount": "Provider FAILED: {n}",
-      "mockCount": "Provider MOCK: {n}"
+      "demo": "Demo",
+      "live": "Attivo",
+      "failed": "Non disponibile",
+      "timeout": "Tempo scaduto",
+      "disabled": "Disattivato",
+      "mock": "Simulato",
+      "liveCount": "Provider attivi: {n}",
+      "failedCount": "Provider non disponibili: {n}",
+      "mockCount": "Provider simulati: {n}"
     },
     "errors": {
       "requestNotCreated": "Non è stato possibile creare la richiesta di confronto.",
       "providerUnavailable": "Provider non disponibile",
       "providerTimeout": "Tempo massimo del provider superato",
       "providerDisabled": "Provider disattivato",
+      "providerFailureDetail": "Il provider non ha completato la richiesta. Riprova tra poco.",
+      "apiKeyMissing": "La chiave API del provider non è configurata.",
+      "authenticationFailed": "Autenticazione del provider non riuscita. Controlla la chiave API.",
+      "quotaExceeded": "Il provider ha raggiunto il limite di utilizzo o la quota disponibile.",
+      "networkError": "Non è stato possibile raggiungere il provider. Controlla la connessione e riprova.",
+      "unknownExecutionStatus": "Il provider ha restituito uno stato di esecuzione non riconosciuto.",
+      "mockBlocked": "Il contenuto simulato è stato bloccato durante l'esecuzione reale.",
+      "queryNotFound": "La richiesta di confronto non è più disponibile.",
       "conclusionUnavailable": "La Conclusione Affidabile non è disponibile.",
       "traceabilityUnavailable": "La tracciabilità delle affermazioni non è disponibile.",
       "providerResultUnavailable": "Risultato del provider non disponibile.",
@@ -225,8 +233,8 @@
       "roadmapDescription": "{model} è previsto nella roadmap e non verrà interrogato finché l'integrazione non sarà attiva."
     },
     "stats": {
-      "input": "in",
-      "output": "out",
+      "input": "ingr.",
+      "output": "usc.",
       "estimatedCost": "Costo stimato del provider",
       "confidenceShort": "aff.",
       "contributionShort": "contr."
@@ -266,7 +274,7 @@
     },
     "rationaleItems": [
       {
-        "title": "Elementi condivisi più solidi",
+        "title": "Prova condivisa più solida",
         "body": "La conclusione privilegia i punti sostenuti con maggiore coerenza dalle risposte disponibili."
       },
       {
@@ -286,7 +294,7 @@
     },
     "addKeys": "Aggiungi altre chiavi provider in",
     "structured": {
-      "synthesisFailed": "Conclusione Affidabile non disponibile",
+      "synthesisFailed": "Conclusione affidabile non disponibile",
       "legacy": "Conclusione precedente",
       "finalVerdict": "Verdetto finale",
       "confidence": "Affidabilità",
@@ -308,7 +316,7 @@
       "consensusLevel": "Livello di consenso",
       "relevantExcerpts": "Mostra gli estratti testuali rilevanti",
       "contraryExcerpt": "Estratto contrario",
-      "strongestEvidence": "Evidenze più solide",
+      "strongestEvidence": "Prova condivisa più solida",
       "remainingUncertainties": "Incertezze rimanenti",
       "unsupportedClaims": "Affermazioni non supportate",
       "whatCouldChange": "Cosa potrebbe cambiare la conclusione",
@@ -355,7 +363,7 @@
       },
       "extraction": {
         "provider_metadata": "Metadati del provider",
-        "markdown_link": "Link Markdown",
+        "markdown_link": "Collegamento Markdown",
         "plain_text_url": "URL nella risposta del provider",
         "explicit_source_label": "Fonte indicata esplicitamente"
       }
