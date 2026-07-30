@@ -56,6 +56,13 @@ describe("Phase 4 responsive and compatibility safeguards", () => {
     expect(results).toContain("modelUsed={live?.model_used}");
   });
 
+  test("Results forwards 2.1 traceability instead of filtering it out", () => {
+    const results = source("pages/Results.jsx");
+    expect(results).toContain("structuredConclusion={structuredConclusion}");
+    expect(results).not.toContain("excludeClaimIds={conclusionClaimIds}");
+    expect(results).not.toContain("hideSources={Boolean(");
+  });
+
   test("legacy generated content is not translated or replaced on the client", () => {
     const original = "Legacy provider content stays exactly in English.";
     const html = renderToStaticMarkup(

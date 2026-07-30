@@ -34,6 +34,40 @@ const props = (overrides = {}) => ({
   ...overrides,
 });
 
+const structuredFinding = (overrides = {}) => ({
+  id: "claim_structured",
+  claim: "A traceable 2.1 claim.",
+  status: "probable",
+  explanation: "The live provider responses support this conclusion.",
+  supporting_providers: ["openai", "gemini"],
+  dissenting_providers: [],
+  evidence_strength: "strong",
+  source_references: [],
+  relevant_excerpts: [
+    {
+      provider: "openai",
+      text: "The exact OpenAI excerpt.",
+      stance: "support",
+      provider_response_id: "openai",
+    },
+    {
+      provider: "gemini",
+      text: "The exact Gemini excerpt.",
+      stance: "support",
+      provider_response_id: "gemini",
+    },
+  ],
+  ...overrides,
+});
+
+const structured21 = (overrides = {}) => ({
+  schema_version: "2.1",
+  key_findings: [structuredFinding()],
+  source_summary: [],
+  provider_assessment: [],
+  ...overrides,
+});
+
 describe("claim traceability", () => {
   test("renders a supported claim and its real excerpts", () => {
     const html = renderToStaticMarkup(<ClaimTraceability {...props()} />);
@@ -185,5 +219,174 @@ describe("claim traceability", () => {
       excludeClaimIds: ["claim_1"],
     });
     expect(view.supported).toEqual([]);
+  });
+
+  test("uses real 2.1 findings when the parallel claim payload is unavailable", () => {
+    const html = renderToStaticMarkup(
+      <ClaimTraceability
+        {...props({
+          claims: [],
+          structuredConclusion: structured21(),
+          claimAnalysisStatus: "FAILED",
+          claimAnalysisError: "Legacy status does not match the 2.1 payload.",
+          providerStatuses: [
+            { provider_name: "OpenAI", provider_status: "LIVE" },
+            { provider_name: "Google DeepMind", provider_status: "LIVE" },
+          ],
+        })}
+      />
+    );
+    expect(html).toContain("data-testid=\"claim-traceability\"");
+    expect(html).toContain("data-testid=\"trace-supported\"");
+    expect(html).toContain("A traceable 2.1 claim.");
+    expect(html).toContain("The exact OpenAI excerpt.");
+    expect(html).toContain("The exact Gemini excerpt.");
+    expect(html).not.toContain("data-testid=\"claim-traceability-failed\"");
+  });
+
+  test("keeps a real 2.1 claim visible when it has no excerpts or sources", () => {
+    const html = renderToStaticMarkup(
+      <ClaimTraceability
+        {...props({
+          claims: [],
+          structuredConclusion: structured21({
+            key_findings: [structuredFinding({
+              relevant_excerpts: [],
+              source_references: [],
+            })],
+          }),
+          claimAnalysisStatus: "NOT_AVAILABLE",
+        })}
+      />
+    );
+    expect(html).toContain("A traceable 2.1 claim.");
+    expect(html).not.toContain("results.traceability.showExcerpts");
+    expect(html).not.toContain("data-testid=\"trace-sources\"");
+  });
+
+  test("renders only genuine 2.1 sources linked to known findings", () => {
+    const source = {
+      id: "citation_123456789abc",
+      title: "Provider-declared source",
+      url: "https://example.com/report",
+      publisher: "Example",
+      domain: "example.com",
+      cited_by: ["openai"],
+      supports_claim_ids: ["claim_structured"],
+      verification_status: "provided_by_model",
+    };
+    const html = renderToStaticMarkup(
+      <ClaimTraceability
+        {...props({
+          claims: [],
+          structuredConclusion: structured21({ source_summary: [source] }),
+          claimAnalysisStatus: "SUCCESS",
+        })}
+      />
+    );
+    expect(html).toContain("data-testid=\"trace-sources\"");
+    expect(html).toContain("Provider-declared source");
+    expect(html).toContain("href=\"https://example.com/report\"");
+  });
+
+  test("keeps supporting and dissenting providers distinct for 2.1 claims", () => {
+    const finding = structuredFinding({
+      status: "disputed",
+      supporting_providers: ["openai"],
+      dissenting_providers: ["gemini"],
+      relevant_excerpts: [
+        {
+          provider: "openai",
+          text: "The supporting position.",
+          stance: "support",
+          provider_response_id: "openai",
+        },
+        {
+          provider: "gemini",
+          text: "The contrary position.",
+          stance: "dissent",
+          provider_response_id: "gemini",
+        },
+      ],
+    });
+    const html = renderToStaticMarkup(
+      <ClaimTraceability
+        {...props({
+          claims: [],
+          structuredConclusion: structured21({ key_findings: [finding] }),
+          claimAnalysisStatus: "SUCCESS",
+        })}
+      />
+    );
+    expect(html).toContain("data-testid=\"trace-disputed\"");
+    expect(html).toContain("The supporting position.");
+    expect(html).toContain("The contrary position.");
+    expect(html).toContain("results.traceability.contraryExcerpt");
+  });
+
+  test("does not turn legacy or empty data into traceability", () => {
+    const failed = renderToStaticMarkup(
+      <ClaimTraceability
+        {...props({
+          claims: [],
+          structuredConclusion: { schema_version: "2.0", key_findings: [] },
+          claimAnalysisStatus: "FAILED",
+        })}
+      />
+    );
+    const unavailable = renderToStaticMarkup(
+      <ClaimTraceability
+        {...props({
+          claims: [],
+          structuredConclusion: null,
+          claimAnalysisStatus: "NOT_AVAILABLE",
+        })}
+      />
+    );
+    expect(failed).toContain("data-testid=\"claim-traceability-failed\"");
+    expect(unavailable).toBe("");
+  });
+
+  test("filters FAILED and cross-mode MOCK providers from 2.1 evidence", () => {
+    const structuredConclusion = structured21({
+      key_findings: [
+        structuredFinding({
+          supporting_providers: ["gemini"],
+          relevant_excerpts: [{
+            provider: "gemini",
+            text: "Gemini-only evidence.",
+            stance: "support",
+            provider_response_id: "gemini",
+          }],
+        }),
+      ],
+    });
+    const failedView = traceabilityViewModel({
+      claims: [],
+      citations: [],
+      structuredConclusion,
+      claimAnalysisStatus: "SUCCESS",
+      providerStatuses: { gemini: "FAILED" },
+      executionMode: "LIVE",
+    });
+    const mockInLiveView = traceabilityViewModel({
+      claims: [],
+      citations: [],
+      structuredConclusion,
+      claimAnalysisStatus: "SUCCESS",
+      providerStatuses: { gemini: "MOCK" },
+      executionMode: "LIVE",
+    });
+    const demoView = traceabilityViewModel({
+      claims: [],
+      citations: [],
+      structuredConclusion,
+      claimAnalysisStatus: "SUCCESS",
+      providerStatuses: { gemini: "MOCK" },
+      executionMode: "DEMO",
+    });
+    expect(failedView.supported).toEqual([]);
+    expect(mockInLiveView.supported).toEqual([]);
+    expect(demoView.supported).toHaveLength(1);
   });
 });

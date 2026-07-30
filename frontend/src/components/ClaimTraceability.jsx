@@ -19,6 +19,7 @@ const PROVIDER_LABELS = {
 export function ClaimTraceability({
   claims,
   citations,
+  structuredConclusion,
   claimAnalysisStatus,
   claimAnalysisError,
   providerStatuses,
@@ -30,6 +31,7 @@ export function ClaimTraceability({
   const view = traceabilityViewModel({
     claims,
     citations,
+    structuredConclusion,
     claimAnalysisStatus,
     claimAnalysisError,
     providerStatuses,

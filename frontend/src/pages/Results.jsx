@@ -38,7 +38,6 @@ import { StructuredConclusion } from "@/components/StructuredConclusion";
 import { useQueryState } from "@/lib/QueryContext";
 import { useI18n } from "@/lib/i18n";
 import { localizeProviderError, translateEnum } from "@/lib/resultPresentation";
-import { coveredClaimIdsForConclusion } from "@/lib/structuredConclusion";
 import {
   PROVIDER_STATUS,
   failedProviderResponses,
@@ -431,7 +430,6 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
   ].includes(response.provider_status)).length;
   const mockCount = (liveResponses || []).filter((response) => response.provider_status === PROVIDER_STATUS.MOCK).length;
   const isDemo = executionMode === "DEMO";
-  const conclusionClaimIds = coveredClaimIdsForConclusion(structuredConclusion, claims);
   // Kept off until these legacy demo-only widgets are backed by the 2.0 API.
   // This prevents fixed mockData analytics from being presented as a verdict.
   const legacyDemoAnalyticsEnabled = false;
@@ -595,15 +593,11 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
                 <ClaimTraceability
                   claims={claims}
                   citations={citations}
+                  structuredConclusion={structuredConclusion}
                   claimAnalysisStatus={claimAnalysisStatus}
                   claimAnalysisError={claimAnalysisError}
                   providerStatuses={providerStatuses}
                   executionMode={executionMode}
-                  excludeClaimIds={conclusionClaimIds}
-                  hideSources={Boolean(
-                    structuredConclusion?.schema_version === "2.1"
-                    && structuredConclusion?.source_summary?.length
-                  )}
                   t={t}
                 />
               </div>
