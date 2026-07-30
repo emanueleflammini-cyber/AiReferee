@@ -113,6 +113,18 @@ class Synthesizer:
                 if answer.get("provider_key") or answer.get("id")
             }
         )
+        provider_labels = {
+            str(answer.get("provider_key") or answer.get("id") or "")
+            .strip()
+            .lower(): str(
+                answer.get("label")
+                or answer.get("provider_key")
+                or answer.get("id")
+                or ""
+            ).strip()
+            for answer in clean
+            if answer.get("provider_key") or answer.get("id")
+        }
         citations = merge_provider_citations(
             answer.get("citations") or []
             for answer in clean
@@ -145,6 +157,7 @@ class Synthesizer:
             audience=audience,
             fmt=fmt,
             allowed_providers=allowed_providers,
+            provider_labels=provider_labels,
             execution_mode=("DEMO" if execution_mode == "DEMO" else "LIVE"),
         )
         user_message = json.dumps(
@@ -346,8 +359,14 @@ def _system_prompt(
     audience: str,
     fmt: str,
     allowed_providers: list[str],
+    provider_labels: dict[str, str],
     execution_mode: str,
 ) -> str:
+    participating_labels = [
+        provider_labels.get(provider, provider)
+        for provider in allowed_providers
+    ]
+    label_list = _human_label_list(participating_labels)
     return (
         "You are AI Referee's Consensus and Claim Traceability Engine. Use "
         "only the supplied provider responses. Do not use outside knowledge "
@@ -360,6 +379,41 @@ def _system_prompt(
         "- final_answer must directly and fully answer the question.\n"
         "- final_answer must be specific to the supplied evidence. Avoid a "
         "generic summary that could apply to a different question.\n"
+        "- Act as an impartial referee, not a summarizer. Explain how the "
+        "provider responses support the verdict; never rank one provider as "
+        "the best AI overall or favor a provider by default.\n"
+        "- In human-readable narrative fields, identify participating "
+        "providers with the exact provider_label supplied in "
+        "provider_responses. Keep schema provider fields normalized to "
+        "allowed_provider_keys.\n"
+        "- The only participating provider labels in this execution are: "
+        f"{label_list}. Do not name an absent or failed provider as a "
+        "participant.\n"
+        "- Describe each material agreement by naming the providers involved "
+        "and the specific proposition they share. Never use only a generic "
+        "statement such as 'the models agree'. Use wording equivalent in the "
+        f"target language to '{label_list} agree that ...', adapted "
+        "grammatically to the number of providers.\n"
+        "- Reserve disagreements for genuinely incompatible positions. "
+        "Different emphasis, different caution, extra non-contradicted "
+        "information, and omission are not disagreements.\n"
+        "- For every genuine disagreement, describe each provider's specific "
+        "position and explain qualitatively whether and why the divergence "
+        "has a low, medium, or high impact on the final verdict.\n"
+        "- If no genuine disagreement exists, leave disagreements empty and "
+        "state clearly in final_answer or referee_reasoning that no "
+        "substantial contradiction emerged; describe any differences as "
+        "emphasis, caution, detail, or omission as appropriate.\n"
+        "- Treat a material contribution made by only one provider as an "
+        "exclusive contribution, not automatically as truth or disagreement. "
+        "Describe it using existing narrative or evidence fields and assess "
+        "whether the supplied response evidence supports it.\n"
+        "- Every conclusion statement must be attributable to at least one "
+        "supplied LIVE provider. If you make an inference, label it explicitly "
+        "as an inference, identify the provider response elements it derives "
+        "from, and never present it as a provider-supplied fact.\n"
+        "- Motivate the verdict only from responses actually supplied. "
+        "Explicitly state when information or verifiable sources are missing.\n"
         "- Distinguish facts, interpretations, recommendations and predictions "
         "using claim_type. Agreement between models is consensus, not proof.\n"
         f"- This execution contains exactly {len(allowed_providers)} usable "
@@ -416,6 +470,17 @@ def _system_prompt(
         "- State uncertainty when the evidence is limited.\n"
         "- Empty optional sections must be empty arrays."
     )
+
+
+def _human_label_list(labels: list[str]) -> str:
+    clean = [label for label in labels if label]
+    if not clean:
+        return "none"
+    if len(clean) == 1:
+        return clean[0]
+    if len(clean) == 2:
+        return f"{clean[0]} and {clean[1]}"
+    return f"{', '.join(clean[:-1])}, and {clean[-1]}"
 
 
 def _parse_bundle(
