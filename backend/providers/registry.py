@@ -87,7 +87,7 @@ PROVIDER_REGISTRY: list[ProviderSpec] = [
         tier="free", builder=_build_openai, accent="#10A37F",
     ),
     ProviderSpec(
-        id="model-c", label="Gemini", codename="3.1 Pro",
+        id="model-c", label="Gemini", codename="3.5 Flash",
         provider_name="Google DeepMind", provider_key="gemini",
         enable_env="ENABLE_GEMINI", key_env="GEMINI_API_KEY",
         tier="free", builder=_build_gemini, accent="#4285F4",
