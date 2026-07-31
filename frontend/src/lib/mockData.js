@@ -27,7 +27,7 @@ export const MODELS = [
   {
     id: "model-c",
     label: "Gemini",
-    codename: "3.1 Pro",
+    codename: "3.5 Flash",
     provider: "Google DeepMind",
     accent: "#4285F4",
     accentClass: "model-bar-c",
