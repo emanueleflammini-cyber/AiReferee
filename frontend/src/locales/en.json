@@ -303,6 +303,18 @@
       "legacy": "Legacy conclusion",
       "finalVerdict": "Final verdict",
       "confidence": "Confidence",
+      "showReasoning": "🧠 Show reasoning",
+      "hideReasoning": "🧠 Hide reasoning",
+      "showSourcesAndReferences": "🔗 Sources and references",
+      "hideSourcesAndReferences": "🔗 Hide sources and references",
+      "sourcesAndReferences": "Sources and references",
+      "noSourcesAvailable": "No sources or references are available for this answer.",
+      "sourceCategories": {
+        "web": "Web sources",
+        "official": "Official documentation",
+        "studies": "Studies and publications",
+        "bibliography": "Bibliography"
+      },
       "whyVerdict": "Why this conclusion?",
       "executiveSummary": "Executive summary",
       "summaryVerdict": "Verdict",

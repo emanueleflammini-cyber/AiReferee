@@ -56,11 +56,10 @@ describe("Phase 4 responsive and compatibility safeguards", () => {
     expect(results).toContain("modelUsed={live?.model_used}");
   });
 
-  test("Results forwards 2.1 traceability instead of filtering it out", () => {
+  test("Results forwards 2.1 citations to the Super Answer disclosures", () => {
     const results = source("pages/Results.jsx");
-    expect(results).toContain("structuredConclusion={structuredConclusion}");
-    expect(results).not.toContain("excludeClaimIds={conclusionClaimIds}");
-    expect(results).not.toContain("hideSources={Boolean(");
+    expect(results).toContain("citations={citations}");
+    expect(results).not.toContain("<ClaimTraceability");
   });
 
   test("legacy generated content is not translated or replaced on the client", () => {

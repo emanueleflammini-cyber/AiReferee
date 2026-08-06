@@ -250,7 +250,8 @@ describe("Trusted Conclusion 2.0 rendering", () => {
     expect(html).toContain("Supported by");
     expect(html).toContain("Strong evidence");
     expect(html).toContain("data-testid=\"structured-provider-assessment\"");
-    expect(html).toContain("data-testid=\"structured-sources\"");
+    expect(html).toContain("data-testid=\"sources-disclosure-panel\"");
+    expect(html).toContain("data-testid=\"source-category\"");
     expect(html).toContain("href=\"https://example.com/report\"");
     expect(html).toContain("target=\"_blank\"");
     expect(html).toContain("rel=\"noopener noreferrer\"");

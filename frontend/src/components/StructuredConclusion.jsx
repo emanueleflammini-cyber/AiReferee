@@ -19,6 +19,7 @@ import {
   conclusionEvidenceViewModel,
   conclusionViewModel,
 } from "../lib/structuredConclusion";
+import { safeHttpUrl } from "../lib/claimTraceability";
 import { translateEnum } from "../lib/resultPresentation";
 import { SafeAnswerText } from "./SafeAnswerText";
 
@@ -34,9 +35,14 @@ export function StructuredConclusion({
   synthesisStatus,
   synthesisError,
   claims = [],
+  citations = [],
   providerStatuses = [],
   t,
 }) {
+  const [reasoningOpen, setReasoningOpen] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const reasoningId = useId();
+  const sourcesId = useId();
   const view = conclusionViewModel({
     structured,
     legacyText,
@@ -86,6 +92,11 @@ export function StructuredConclusion({
     claims,
     providerStatuses,
   });
+  const sourceGroups = sourceGroupsForDisclosure({
+    structuredSources: conclusion.source_summary,
+    citations,
+  });
+  const hasSources = sourceGroups.some((group) => group.sources.length > 0);
   return (
     <div
       data-testid="trusted-conclusion-structured"
@@ -100,12 +111,43 @@ export function StructuredConclusion({
         testId="structured-final-answer"
       />
 
-      <ExecutiveSummary
-        conclusion={conclusion}
-        metrics={metrics}
-        t={t}
-      />
+      <div
+        className="mt-6 grid min-w-0 grid-cols-1 gap-2 min-[370px]:grid-cols-2 sm:gap-3"
+        data-testid="conclusion-disclosure-controls"
+      >
+        <DisclosureButton
+          open={reasoningOpen}
+          onClick={() => setReasoningOpen((value) => !value)}
+          controls={reasoningId}
+          testId="reasoning-disclosure-toggle"
+        >
+          {reasoningOpen
+            ? t("results.structured.hideReasoning")
+            : t("results.structured.showReasoning")}
+        </DisclosureButton>
+        <DisclosureButton
+          open={sourcesOpen}
+          onClick={() => setSourcesOpen((value) => !value)}
+          controls={sourcesId}
+          testId="sources-disclosure-toggle"
+        >
+          {sourcesOpen
+            ? t("results.structured.hideSourcesAndReferences")
+            : t("results.structured.showSourcesAndReferences")}
+        </DisclosureButton>
+      </div>
 
+      <div
+        id={reasoningId}
+        className="min-w-0 max-w-full"
+        data-testid="reasoning-disclosure-panel"
+        hidden={!reasoningOpen}
+      >
+          <ExecutiveSummary
+            conclusion={conclusion}
+            metrics={metrics}
+            t={t}
+          />
       <ConclusionSection
         title={t("results.structured.whyVerdict")}
         icon={Scale}
@@ -475,20 +517,6 @@ export function StructuredConclusion({
         </ConclusionSection>
       )}
 
-      {conclusion.source_summary.length > 0 && (
-        <ConclusionSection
-          title={t("results.structured.sources")}
-          subtitle={t("results.structured.sourcesNotice")}
-          icon={Link2}
-          accent="#00E5FF"
-          testId="structured-sources"
-        >
-          {conclusion.source_summary.map((source) => (
-            <SourceSummaryCard key={source.id} source={source} t={t} />
-          ))}
-        </ConclusionSection>
-      )}
-
       {conclusion.what_could_change.length > 0 && (
         <ConclusionSection
           title={t("results.structured.whatCouldChange")}
@@ -508,8 +536,138 @@ export function StructuredConclusion({
       )}
 
       <CompletionSummary metrics={metrics} conclusion={conclusion} t={t} />
+      </div>
+
+      <section
+        id={sourcesId}
+        className="mt-7 min-w-0 max-w-full border-t border-white/[0.07] pt-7"
+        data-testid="sources-disclosure-panel"
+        hidden={!sourcesOpen}
+      >
+          <div className="mb-5">
+            <h3 className="break-words text-lg font-semibold text-white [overflow-wrap:anywhere]">
+              {t("results.structured.sourcesAndReferences")}
+            </h3>
+            <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/50 [overflow-wrap:anywhere]">
+              {t("results.structured.sourcesNotice")}
+            </p>
+          </div>
+          {hasSources ? (
+            <div className="space-y-7">
+              {sourceGroups.map((group) => (
+                group.sources.length > 0 && (
+                  <SourceCategory
+                    key={group.key}
+                    title={t(`results.structured.sourceCategories.${group.key}`)}
+                    sources={group.sources}
+                    t={t}
+                  />
+                )
+              ))}
+            </div>
+          ) : (
+            <p
+              className="break-words text-[13px] leading-relaxed text-white/50 [overflow-wrap:anywhere]"
+              data-testid="sources-disclosure-empty"
+            >
+              {t("results.structured.noSourcesAvailable")}
+            </p>
+          )}
+      </section>
     </div>
   );
+}
+
+function DisclosureButton({ open, onClick, controls, testId, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      aria-controls={controls}
+      data-testid={testId}
+      className="inline-flex min-h-11 min-w-0 w-full items-center justify-center rounded-xl border border-[#00E5FF]/25 bg-[#00E5FF]/[0.055] px-2.5 py-2 text-center text-[11px] font-medium leading-tight text-[#00E5FF] transition-colors hover:bg-[#00E5FF]/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E5FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1120] min-[370px]:px-1.5 min-[370px]:text-[10px] min-[430px]:px-3 min-[430px]:text-[11px] sm:px-4 sm:text-[13px]"
+    >
+      <span className="whitespace-nowrap">{children}</span>
+    </button>
+  );
+}
+
+function SourceCategory({ title, sources, t }) {
+  return (
+    <section className="min-w-0 max-w-full" data-testid="source-category">
+      <div className="mb-3 flex min-w-0 items-center gap-2">
+        <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-[#00E5FF]/30 bg-[#00E5FF]/[0.06] text-[#00E5FF]">
+          <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+        <h4 className="min-w-0 break-words text-[15px] font-semibold text-white [overflow-wrap:anywhere]">
+          {title}
+        </h4>
+      </div>
+      <div className="space-y-3">
+        {sources.map((source) => (
+          <SourceSummaryCard key={source.id} source={source} t={t} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function sourceGroupsForDisclosure({ structuredSources, citations }) {
+  const seen = new Set();
+  const sources = [];
+  const addSource = (source) => {
+    const rawUrl = String(source?.rawUrl || source?.url || "").trim();
+    const id = String(source?.id || rawUrl).trim();
+    const title = String(source?.title || "").trim();
+    if (!id || (!title && !rawUrl)) return;
+    const key = rawUrl || id;
+    if (seen.has(key)) return;
+    seen.add(key);
+    sources.push({
+      id,
+      title,
+      rawUrl,
+      clickableUrl: source?.clickableUrl || safeHttpUrl(rawUrl),
+      publisher: String(source?.publisher || "").trim(),
+      domain: String(source?.domain || "").trim(),
+      citedBy: Array.isArray(source?.citedBy)
+        ? source.citedBy
+        : (Array.isArray(source?.declared_by_models) ? source.declared_by_models : []),
+      verificationStatus: String(
+        source?.verificationStatus || source?.verification_status || "unverified"
+      ).trim(),
+      sourceType: String(source?.sourceType || source?.source_type || "").toLowerCase(),
+    });
+  };
+
+  (Array.isArray(structuredSources) ? structuredSources : []).forEach(addSource);
+  (Array.isArray(citations) ? citations : []).forEach(addSource);
+
+  const groups = {
+    web: [],
+    official: [],
+    studies: [],
+    bibliography: [],
+  };
+  sources.forEach((source) => {
+    const type = source.sourceType;
+    if (/(book|chapter|bibliograph)/u.test(type)) {
+      groups.bibliography.push(source);
+    } else if (/(study|publication|journal|scientific|doi|pubmed|arxiv)/u.test(type)) {
+      groups.studies.push(source);
+    } else if (/(official|documentation|docs)/u.test(type)) {
+      groups.official.push(source);
+    } else {
+      groups.web.push(source);
+    }
+  });
+  return [
+    { key: "web", sources: groups.web },
+    { key: "official", sources: groups.official },
+    { key: "studies", sources: groups.studies },
+    { key: "bibliography", sources: groups.bibliography },
+  ];
 }
 
 function ExecutiveSummary({ conclusion, metrics, t }) {

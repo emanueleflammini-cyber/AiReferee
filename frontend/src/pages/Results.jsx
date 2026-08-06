@@ -31,7 +31,6 @@ import {
   Share2,
 } from "lucide-react";
 import { NavBar } from "@/components/NavBar";
-import { ClaimTraceability } from "@/components/ClaimTraceability";
 import { ProviderLogo } from "@/components/ProviderLogo";
 import { SafeAnswerText } from "@/components/SafeAnswerText";
 import { StructuredConclusion } from "@/components/StructuredConclusion";
@@ -585,23 +584,10 @@ function RevealSection({ currentConfidence, challengePhase, challengeStep, chall
                 synthesisStatus={synthesisStatus}
                 synthesisError={synthesisError}
                 claims={claims}
+                citations={citations}
                 providerStatuses={providerStatuses}
                 t={t}
               />
-            )}
-            {!conclusionLoading && (
-              <div data-claim-schema={claimSchemaVersion || "none"}>
-                <ClaimTraceability
-                  claims={claims}
-                  citations={citations}
-                  structuredConclusion={structuredConclusion}
-                  claimAnalysisStatus={claimAnalysisStatus}
-                  claimAnalysisError={claimAnalysisError}
-                  providerStatuses={providerStatuses}
-                  executionMode={executionMode}
-                  t={t}
-                />
-              </div>
             )}
           </div>
 
