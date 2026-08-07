@@ -84,7 +84,15 @@ class Synthesizer:
         audience: str = "professional",
         fmt: str = "paragraph",
         execution_mode: str = "LIVE",
+        correlation_id: Optional[str] = None,
     ) -> dict:
+        # `correlation_id` (perf/request-timeline-observability, purely
+        # additive): server.py passes its query_id so the initial-call/
+        # repair-pass log lines below can be correlated to one compare_query
+        # request. Never logged alongside prompt/answer/response content —
+        # only IDs, statuses and durations. Does not affect the request
+        # sent to SYNTH_MODEL, its timeout, its retries, or validation.
+        cid = correlation_id or "unknown"
         if not self._client:
             raise SynthesisFailure(
                 "Trusted Conclusion is unavailable because the synthesis "
@@ -179,12 +187,21 @@ class Synthesizer:
         total_input_tokens = 0
         total_output_tokens = 0
         repair_attempted = False
+        synthesis_initial_call_ms = 0
+        synthesis_repair_ms: Optional[int] = None
 
+        log.info("synthesis_initial_call_started query_id=%s model=%s", cid, SYNTH_MODEL)
+        _initial_call_start = time.perf_counter()
         raw, usage, model_used = await self._request_json(
             [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_message},
             ]
+        )
+        synthesis_initial_call_ms = int((time.perf_counter() - _initial_call_start) * 1000)
+        log.info(
+            "synthesis_initial_call_completed query_id=%s duration_ms=%d",
+            cid, synthesis_initial_call_ms,
         )
         _trace_raw_payload("initial_raw", raw)
         total_input_tokens += usage["input_tokens"]
@@ -205,6 +222,11 @@ class Synthesizer:
                 allowed_providers,
             )
             repair_attempted = True
+            log.info(
+                "synthesis_repair_started query_id=%s reason=%s",
+                cid, type(first_error).__name__,
+            )
+            _repair_call_start = time.perf_counter()
             raw, usage, repair_model = await self._request_json(
                 [
                     {
@@ -236,6 +258,11 @@ class Synthesizer:
                         ),
                     },
                 ]
+            )
+            synthesis_repair_ms = int((time.perf_counter() - _repair_call_start) * 1000)
+            log.info(
+                "synthesis_repair_completed query_id=%s duration_ms=%d",
+                cid, synthesis_repair_ms,
             )
             _trace_raw_payload("repair_raw", raw)
             total_input_tokens += usage["input_tokens"]
@@ -292,6 +319,12 @@ class Synthesizer:
             clean,
         )
         latency_ms = int((time.perf_counter() - start) * 1000)
+        log.info(
+            "synthesis_call_breakdown query_id=%s repair_required=%s "
+            "initial_call_ms=%d repair_ms=%d total_ms=%d",
+            cid, repair_attempted, synthesis_initial_call_ms,
+            synthesis_repair_ms or 0, latency_ms,
+        )
         return {
             "text": conclusion.final_answer,
             "structured_conclusion": conclusion.model_dump(),
