@@ -1,16 +1,28 @@
-"""Gemini resilience hotfix — offline tests, no real API calls.
+"""Gemini resilience + observability — offline tests, no real API calls.
 
-Covers the internal per-request timeout + single bounded retry added to
-GeminiProvider (providers/gemini_provider.py) after two consecutive
-production smoke-test failures ("Tempo massimo del provider superato",
-60000 ms exactly). Gemini previously had no request-level timeout and no
-retry, unlike Mistral (own httpx timeout + 2 retries).
+Covers two patches to GeminiProvider (providers/gemini_provider.py):
 
-Every test here replaces `gemini_provider._call_once` — the one function
-that would actually reach the network — with a stub, so no real
-Gemini/OpenAI/Mistral API call ever happens. `google.generativeai.configure()`
-/ `GenerativeModel(...)` are allowed to run for real: both are local,
-non-network operations (verified before writing this module).
+1. The internal per-request timeout + single bounded retry, added after two
+   consecutive production smoke-test failures ("Tempo massimo del provider
+   superato", 60000 ms exactly). Gemini previously had no request-level
+   timeout and no retry, unlike Mistral (own httpx timeout + 2 retries).
+2. The follow-up observability + explicit SDK timeout patch: `_call_once`
+   now passes `request_options={"timeout": self.request_timeout_seconds}` to
+   the SDK (so its own 600s default deadline / retry-on-503 loop can no
+   longer quietly outlive our budget), and `generate()` now logs a
+   `total_duration_ms` spanning every attempt + backoff, in addition to the
+   pre-existing per-attempt `duration_ms`.
+
+Most tests replace `gemini_provider._call_once` — the one function that
+would actually reach the network — with a stub, so no real
+Gemini/OpenAI/Mistral API call ever happens. The `request_options`
+propagation tests go one level deeper and instead replace
+`google.generativeai.GenerativeModel` itself with a fake, so `_call_once`'s
+own code (which builds `request_options`) runs for real — still with no
+real SDK/network call, since the fake model's `generate_content_async` never
+leaves the process. `google.generativeai.configure()` /
+`GenerativeModel(...)` are allowed to run for real in the other tests: both
+are local, non-network operations (verified before writing this module).
 
 Timing is exercised with genuinely tiny `request_timeout_seconds` /
 `execution_timeout_seconds` overrides (0.02-0.05s), the same technique
@@ -99,7 +111,7 @@ def test_internal_timeout_then_success_is_live():
     provider = _provider(request_timeout_seconds=0.03, max_retries=1)
     calls: list[int] = []
 
-    async def flaky(_gmodel, _prompt):
+    async def flaky(_gmodel, _prompt, _timeout):
         calls.append(1)
         if len(calls) == 1:
             await asyncio.Event().wait()  # never resolves -> outer wait_for times out
@@ -141,7 +153,7 @@ def test_timeout_on_every_attempt_is_failed():
     provider = _provider(request_timeout_seconds=0.02, max_retries=1)
     calls: list[int] = []
 
-    async def always_hang(_gmodel, _prompt):
+    async def always_hang(_gmodel, _prompt, _timeout):
         calls.append(1)
         await asyncio.Event().wait()
 
@@ -265,7 +277,7 @@ def test_openai_and_mistral_not_affected_by_gemini_changes():
 def test_panel_continues_when_gemini_fails_after_retry():
     gemini = _provider(request_timeout_seconds=0.02, max_retries=1)
 
-    async def always_hang(_gmodel, _prompt):
+    async def always_hang(_gmodel, _prompt, _timeout):
         await asyncio.Event().wait()
 
     providers = [
@@ -313,7 +325,7 @@ def test_panel_continues_when_gemini_fails_after_retry():
 def test_log_events_distinguish_attempts_retry_and_exhaustion_without_leaking_content(caplog):
     provider = _provider(request_timeout_seconds=0.02, max_retries=1)
 
-    async def always_hang(_gmodel, _prompt):
+    async def always_hang(_gmodel, _prompt, _timeout):
         await asyncio.Event().wait()
 
     with caplog.at_level(logging.INFO):
@@ -327,6 +339,7 @@ def test_log_events_distinguish_attempts_retry_and_exhaustion_without_leaking_co
     assert "gemini_attempt_internal_timeout" in text
     assert "gemini_retry_scheduled" in text
     assert "gemini_retries_exhausted" in text
+    assert "total_duration_ms" in text
     assert "super secret prompt" not in text
     assert "super secret system" not in text
 
@@ -353,3 +366,96 @@ def test_permanent_error_is_logged_distinctly(caplog):
 
     assert "gemini_permanent_error" in caplog.text
     assert "gemini_retry_scheduled" not in caplog.text
+
+
+# --------------------------------------------------------------------------
+# request_options — explicit SDK timeout (observability + explicit SDK
+# timeout follow-up). These go one level deeper than the tests above: they
+# replace google.generativeai.GenerativeModel itself with a fake, so the
+# real `_call_once` code — the part that actually builds `request_options`
+# — runs for real. No network call is made: the fake model's
+# `generate_content_async` never leaves the process.
+# --------------------------------------------------------------------------
+
+class _FakeGenerativeModel:
+    """Stands in for genai.GenerativeModel; records what it was called with."""
+
+    last_request_options: dict | None = None
+    last_prompt: str | None = None
+    response: object = None
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def generate_content_async(self, prompt, request_options=None):
+        type(self).last_prompt = prompt
+        type(self).last_request_options = request_options
+        return type(self).response or _fake_response("ok")
+
+
+def test_call_once_passes_the_configured_timeout_as_request_options():
+    _FakeGenerativeModel.last_request_options = None
+    _FakeGenerativeModel.response = _fake_response("ok")
+    provider = _provider(request_timeout_seconds=7.5, max_retries=0)
+
+    with patch("google.generativeai.GenerativeModel", _FakeGenerativeModel):
+        result = asyncio.run(provider.timed_generate("q", "s"))
+
+    assert result.provider_status == "LIVE"
+    # GEMINI_REQUEST_TIMEOUT_SECONDS is the only source of truth for this
+    # value — no second timeout constant is introduced.
+    assert _FakeGenerativeModel.last_request_options == {"timeout": 7.5}
+
+
+def test_custom_env_timeout_is_propagated_into_request_options(monkeypatch):
+    monkeypatch.setenv("GEMINI_REQUEST_TIMEOUT_SECONDS", "9")
+    _FakeGenerativeModel.last_request_options = None
+    _FakeGenerativeModel.response = _fake_response("ok")
+    provider = GeminiProvider(api_key="fixture-only-key")  # picks up the env override
+    assert provider.request_timeout_seconds == 9.0
+
+    with patch("google.generativeai.GenerativeModel", _FakeGenerativeModel):
+        asyncio.run(provider.timed_generate("q", "s"))
+
+    assert _FakeGenerativeModel.last_request_options == {"timeout": 9.0}
+
+
+def test_request_options_timeout_matches_the_outer_wait_for_budget():
+    """The value handed to the SDK and the value bounding asyncio.wait_for
+    from the outside must be the exact same GEMINI_REQUEST_TIMEOUT_SECONDS —
+    this is a defence-in-depth pairing, never two independent timeouts."""
+    _FakeGenerativeModel.last_request_options = None
+    _FakeGenerativeModel.response = _fake_response("ok")
+    provider = _provider(request_timeout_seconds=13.25, max_retries=0)
+
+    with patch("google.generativeai.GenerativeModel", _FakeGenerativeModel):
+        asyncio.run(provider.timed_generate("q", "s"))
+
+    assert _FakeGenerativeModel.last_request_options["timeout"] == provider.request_timeout_seconds
+
+
+# --------------------------------------------------------------------------
+# Logging never leaks the API key or prompt/system content, across both the
+# gemini_provider-level logs and the outer base.py provider_* logs.
+# --------------------------------------------------------------------------
+
+def test_logging_never_leaks_api_key_or_prompt_or_system(monkeypatch, caplog):
+    fake_key = "fixture-not-a-real-secret-1234567890"
+    monkeypatch.setenv("GEMINI_API_KEY", fake_key)
+    provider = GeminiProvider(request_timeout_seconds=0.05, max_retries=0)
+    assert provider.api_key == fake_key
+
+    # The exception message itself carries the "leaked" key, exercising both
+    # gemini_provider's own logging (which never emits str(exc)) and
+    # base.py's _safe_error_message redaction (which does).
+    call_mock = AsyncMock(side_effect=InvalidArgument(f"bad request, key={fake_key}"))
+    with caplog.at_level(logging.INFO):
+        with patch("providers.gemini_provider._call_once", call_mock):
+            result = asyncio.run(
+                provider.timed_generate("prompt with secret data", "system with secret data")
+            )
+
+    assert result.provider_status == "FAILED"
+    assert fake_key not in caplog.text
+    assert "prompt with secret data" not in caplog.text
+    assert "system with secret data" not in caplog.text
