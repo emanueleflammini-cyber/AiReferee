@@ -548,9 +548,15 @@ export function StructuredConclusion({
             <h3 className="break-words text-lg font-semibold text-white [overflow-wrap:anywhere]">
               {t("results.structured.sourcesAndReferences")}
             </h3>
-            <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/50 [overflow-wrap:anywhere]">
-              {t("results.structured.sourcesNotice")}
-            </p>
+            {/* Case A (no sources) and Case B (unverified sources listed) are
+                mutually exclusive: the "these sources are unverified" notice
+                must never appear alongside the "no sources available"
+                message. */}
+            {hasSources && (
+              <p className="mt-2 break-words text-[12.5px] leading-relaxed text-white/50 [overflow-wrap:anywhere]">
+                {t("results.structured.sourcesNotice")}
+              </p>
+            )}
           </div>
           {hasSources ? (
             <div className="space-y-7">

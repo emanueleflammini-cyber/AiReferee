@@ -8,7 +8,7 @@ import os
 import re
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import List, Optional, Any, Dict
 import uuid
 from datetime import datetime, timezone
@@ -116,6 +116,47 @@ ASSUMED_SAVED_COST_USD = float(os.environ.get("REUSE_SAVED_COST", "0.00030"))
 ASSUMED_SAVED_LATENCY_MS = int(os.environ.get("REUSE_SAVED_LATENCY_MS", "8000"))
 ASSUMED_SAVED_TOKENS_PER_CALL = 200
 
+# --------------------------------------------------------------------------
+# Security limits — enforced server-side, never delegated to the frontend.
+# --------------------------------------------------------------------------
+
+# Single source of truth for the maximum prompt length accepted anywhere in
+# the API. Configurable via env so it can be tuned without a code change.
+# Applied at the pydantic layer (QueryCreate.prompt, MatchRequest.prompt) so
+# an oversized prompt is rejected before the request handler runs — i.e.
+# before it can ever reach a provider, embedding, translation or synthesis
+# call. `compare_query` re-checks the same constant defensively against the
+# stored prompt before invoking any provider.
+MAX_PROMPT_LENGTH = int(os.environ.get("MAX_PROMPT_LENGTH", "4000"))
+
+# Whitelists for the three client-controlled "shaping" fields (audience,
+# format, strategy). Every value the frontend can ever send is one of these
+# (frontend/src/pages/Home.jsx AUDIENCES/FORMATS, frontend/src/lib/mockData.js
+# STRATEGIES), so accepting only these closes the field entirely rather than
+# just bounding its length — none of the three can be padded by a client to
+# inflate the system prompt built in compare_query (which interpolates all
+# three verbatim). `strategy` is folded into that prompt as descriptive text
+# only: it is never used anywhere to pick a provider, a model or a
+# BASE/MEDIUM/ADVANCED tier — providers_for_execution() takes only
+# `user_id`/`plan`. Kept as plain module-level sets (single source of truth,
+# not scattered literals) so QueryCreate's validators and compare_query's
+# defence-in-depth check both read from the same place.
+SUPPORTED_AUDIENCES = frozenset({"beginner", "professional", "expert"})
+SUPPORTED_FORMATS = frozenset({"paragraph", "bullets", "table", "steps"})
+SUPPORTED_STRATEGIES = frozenset({"max_accuracy", "balanced", "creative", "critical", "fast"})
+
+DEFAULT_AUDIENCE = "professional"
+DEFAULT_FORMAT = "paragraph"
+DEFAULT_STRATEGY = "balanced"
+
+
+def _normalize_shaping_field(value: Any, allowed: frozenset) -> Optional[str]:
+    """Strip/lowercase `value` and return it iff it is in `allowed`, else None."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in allowed else None
+
 
 def normalize_prompt(p: str) -> str:  # kept for backward-compat
     return lang_normalize(p)
@@ -158,7 +199,10 @@ class StatusCheckCreate(BaseModel):
 
 
 class QueryCreate(BaseModel):
-    prompt: str
+    # max_length is enforced by pydantic before this handler ever runs, so an
+    # oversized prompt never reaches the database, an embedding call, a
+    # provider call or the synthesizer. See MAX_PROMPT_LENGTH above.
+    prompt: str = Field(max_length=MAX_PROMPT_LENGTH)
     goal: int = 50
     detail: int = 50
     audience: str = "professional"
@@ -167,6 +211,41 @@ class QueryCreate(BaseModel):
     # Language the user wants to see the Trusted Conclusion in. ISO-639-1 code.
     # Defaults to English so anonymous / legacy clients keep working unchanged.
     answer_language: Optional[str] = "en"
+
+    # Validated (not just length-capped): each of these three fields has a
+    # finite set of values the frontend actually offers, so whitelisting them
+    # closes the "pad this field to inflate the system prompt" bypass
+    # completely instead of merely bounding it. Runs before the handler, so a
+    # rejected value never reaches the database or any provider call.
+    @field_validator("audience")
+    @classmethod
+    def _validate_audience(cls, v: str) -> str:
+        normalized = _normalize_shaping_field(v, SUPPORTED_AUDIENCES)
+        if normalized is None:
+            raise ValueError(
+                f"Unsupported audience '{v}'. Supported values: {sorted(SUPPORTED_AUDIENCES)}."
+            )
+        return normalized
+
+    @field_validator("format")
+    @classmethod
+    def _validate_format(cls, v: str) -> str:
+        normalized = _normalize_shaping_field(v, SUPPORTED_FORMATS)
+        if normalized is None:
+            raise ValueError(
+                f"Unsupported format '{v}'. Supported values: {sorted(SUPPORTED_FORMATS)}."
+            )
+        return normalized
+
+    @field_validator("strategy")
+    @classmethod
+    def _validate_strategy(cls, v: str) -> str:
+        normalized = _normalize_shaping_field(v, SUPPORTED_STRATEGIES)
+        if normalized is None:
+            raise ValueError(
+                f"Unsupported strategy '{v}'. Supported values: {sorted(SUPPORTED_STRATEGIES)}."
+            )
+        return normalized
 
 
 class QueryRecord(BaseModel):
@@ -183,7 +262,9 @@ class QueryRecord(BaseModel):
 
 
 class MatchRequest(BaseModel):
-    prompt: str
+    # Same server-side limit as QueryCreate.prompt — /queries/match triggers a
+    # real embedding call, so it must be rejected before that call is made.
+    prompt: str = Field(max_length=MAX_PROMPT_LENGTH)
     answer_language: Optional[str] = None
     auto_detect_language: bool = True
 
@@ -238,7 +319,13 @@ async def create_query(payload: QueryCreate):
     return record
 
 
-@api_router.get("/queries", response_model=List[QueryRecord])
+# Admin-only: this list endpoint returns every user's prompt text. The
+# frontend never calls it (verified — no reference anywhere in
+# frontend/src), so gating it behind the same admin mechanism as
+# /compare_logs removes the exposure with zero user-facing impact. Approved
+# as part of the pre-beta safety hotfix follow-up — see
+# backend/SECURITY_OWNERSHIP_TODO.md for the wider ownership context.
+@api_router.get("/queries", response_model=List[QueryRecord], dependencies=[Depends(require_admin)])
 async def list_queries(limit: int = 50):
     limit = max(1, min(limit, 200))
     items = await db.queries.find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
@@ -248,6 +335,9 @@ async def list_queries(limit: int = 50):
     return items
 
 
+# TODO(security-ownership): no ownership check — any caller holding this ID
+# can read another user's query. Requires real auth + a stored owner field.
+# See backend/SECURITY_OWNERSHIP_TODO.md.
 @api_router.get("/queries/{query_id}", response_model=QueryRecord)
 async def get_query(query_id: str):
     doc = await db.queries.find_one({"id": query_id}, {"_id": 0})
@@ -367,6 +457,11 @@ async def match_query(req: MatchRequest):
         or {}
     )
     structured_factors = structured_confidence.get("factors") or {}
+    # `prompt` here is the literal text of another user's original question
+    # (the reuse pool is global, unscoped by user/tenant). Verified as
+    # genuinely required by ReuseFound.jsx and the Results.jsx reused/updated
+    # banner — kept unchanged. See backend/SMART_REUSE_PRIVACY_NOTE.md for
+    # the privacy tradeoff and a proposed non-breaking future direction.
     match = {
         "id": best_doc["id"],
         "prompt": best_doc["prompt"],
@@ -422,12 +517,31 @@ class TranslateResponse(BaseModel):
     model_used: str = ""
 
 
+# TODO(security-ownership): no ownership check — any caller holding this ID
+# can trigger a translation of another user's conclusion. Requires real auth
+# + a stored owner field. See backend/SECURITY_OWNERSHIP_TODO.md.
 @api_router.post("/conclusions/{conclusion_id}/translate", response_model=TranslateResponse)
 async def translate_conclusion(conclusion_id: str, req: TranslateRequest):
-    target = (req.target_language or "en").lower()
+    target = (req.target_language or "en").strip().lower()
+    # SUPPORTED_LANGS is the same source of truth already used by /compare
+    # (providers.language.SUPPORTED). An unsupported value is rejected here,
+    # before `_translate_or_fetch` can ever key a cache entry or call
+    # OpenAI — an arbitrary string can no longer be used to force unlimited
+    # fresh (billed) translation calls.
+    if target not in SUPPORTED_LANGS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported target_language '{target}'. "
+                f"Supported languages: {sorted(SUPPORTED_LANGS)}."
+            ),
+        )
     return await _translate_or_fetch(conclusion_id, target)
 
 
+# TODO(security-ownership): no ownership check — any caller holding this ID
+# can read another user's conclusion. Requires real auth + a stored owner
+# field. See backend/SECURITY_OWNERSHIP_TODO.md.
 @api_router.get("/conclusions/{conclusion_id}")
 async def get_conclusion(conclusion_id: str, lang: str = "en"):
     """Return a cached Trusted Conclusion in `lang`.
@@ -436,7 +550,15 @@ async def get_conclusion(conclusion_id: str, lang: str = "en"):
     answer is displayed in the user's selected interface language, not the
     language of the original comparison.
     """
-    target = (lang or "en").lower()
+    target = (lang or "en").strip().lower()
+    # This endpoint is read-mostly (passive language selection, not an
+    # explicit "translate to X" action), so an unsupported value falls back
+    # to English rather than erroring — matching the same normalization
+    # /compare already applies to `answer_language`. This still closes the
+    # cache-key enumeration vector: every unsupported value collapses onto
+    # the same "en" cache entry instead of minting a fresh billed call.
+    if target not in SUPPORTED_LANGS:
+        target = "en"
     resp = await _translate_or_fetch(conclusion_id, target)
     doc = await db.conclusions.find_one({"id": conclusion_id}, {"_id": 0})
     if not doc:
@@ -719,6 +841,9 @@ class CompareResponse(BaseModel):
     claim_analysis_error: Optional[str] = None
 
 
+# TODO(security-ownership): no ownership check — any caller holding this ID
+# can (re-)run a comparison for another user's query. Requires real auth + a
+# stored owner field. See backend/SECURITY_OWNERSHIP_TODO.md.
 @api_router.post("/queries/{query_id}/compare", response_model=CompareResponse)
 async def compare_query(query_id: str, identity: IdentityContext = Depends(get_identity)):
     doc = await db.queries.find_one({"id": query_id}, {"_id": 0})
@@ -726,9 +851,29 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         raise HTTPException(status_code=404, detail="Query not found")
 
     prompt: str = doc["prompt"]
-    strategy: str = doc.get("strategy", "balanced")
-    audience: str = doc.get("audience", "professional")
-    fmt: str = doc.get("format", "paragraph")
+
+    # Defence in depth: QueryCreate already whitelists audience/format/strategy
+    # before a query is ever stored (see SUPPORTED_AUDIENCES/FORMATS/STRATEGIES
+    # above), but this guards any record that predates the whitelist or was
+    # inserted outside the API — none of the three may be interpolated
+    # verbatim into the system prompt below, so an out-of-whitelist value is
+    # silently normalized to its safe default instead of inflating the prompt.
+    strategy = _normalize_shaping_field(doc.get("strategy"), SUPPORTED_STRATEGIES) or DEFAULT_STRATEGY
+    audience = _normalize_shaping_field(doc.get("audience"), SUPPORTED_AUDIENCES) or DEFAULT_AUDIENCE
+    fmt = _normalize_shaping_field(doc.get("format"), SUPPORTED_FORMATS) or DEFAULT_FORMAT
+
+    # Defence in depth: QueryCreate already rejects an oversized prompt before
+    # it is ever stored, but this guards any query record that predates the
+    # limit (or was inserted outside the API) — no provider, embedding,
+    # translation or synthesis call may start for a prompt over the limit.
+    if len(prompt) > MAX_PROMPT_LENGTH:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Query prompt exceeds the maximum allowed length "
+                f"({MAX_PROMPT_LENGTH} characters) and cannot be compared."
+            ),
+        )
 
     system = (
         "You are one panellist in a multi-model AI consensus panel called AI Referee. "
@@ -1092,8 +1237,10 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
     )
 
 
-@api_router.get("/compare_logs")
+@api_router.get("/compare_logs", dependencies=[Depends(require_admin)])
 async def list_compare_logs(query_id: Optional[str] = None, limit: int = 50):
+    """Admin-only. Exposes prompt text and costs across every user — guarded
+    by the same `X-Admin-Token` mechanism as `/admin/users/{id}/plan`."""
     limit = max(1, min(limit, 200))
     q: dict = {}
     if query_id:
@@ -1104,10 +1251,33 @@ async def list_compare_logs(query_id: Optional[str] = None, limit: int = 50):
 
 app.include_router(api_router)
 
+# --------------------------------------------------------------------------
+# CORS
+# --------------------------------------------------------------------------
+# CORS_ORIGINS: comma-separated allow-list, or "*" for any origin. Unchanged
+# default ("*") so an existing deployment (local dev, Vercel) that has never
+# set this var keeps working exactly as before, with no new required config.
+#
+# CORS_ALLOW_CREDENTIALS: defaults to "false". The app has no cookie-based or
+# browser-credentialed auth today (identity is a plain `X-User-Id` header,
+# admin access a plain `X-Admin-Token` header — neither needs the CORS
+# "credentials" mode), so there is no legitimate reason to combine
+# `allow_origins=["*"]` with `allow_credentials=True`. That combination is
+# what made Starlette's CORSMiddleware reflect back *any* request Origin
+# verbatim instead of literally sending "*" — i.e. it silently behaved as if
+# every origin were allowed for credentialed requests. Turning credentials
+# off by default removes that behaviour while leaving the origin allow-list
+# itself exactly as configurable as before. Set CORS_ALLOW_CREDENTIALS=true
+# explicitly (together with a non-"*" CORS_ORIGINS allow-list) if a future
+# cookie/session-based auth flow needs it.
+_cors_origins_raw = os.environ.get('CORS_ORIGINS', '*')
+_cors_origins = [origin.strip() for origin in _cors_origins_raw.split(',') if origin.strip()] or ['*']
+_cors_allow_credentials = os.environ.get('CORS_ALLOW_CREDENTIALS', 'false').strip().lower() == 'true'
+
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_credentials=_cors_allow_credentials,
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

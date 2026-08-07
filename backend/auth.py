@@ -12,6 +12,7 @@ unaffected. Rate limits and BYOK are only applied to identified users.
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 from dataclasses import dataclass
@@ -86,13 +87,17 @@ async def require_admin(x_admin_token: str = Header(default="", alias=ADMIN_TOKE
     """Guard admin-only endpoints.
 
     Uses a shared secret from `ADMIN_TOKEN` env. If the env var is unset
-    the guard fails closed — refusing all requests — so a missing secret
-    can never accidentally expose the admin surface.
+    the guard fails closed — refusing all requests (including anonymous
+    ones) — so a missing secret can never accidentally expose the admin
+    surface. The provided token is compared using a constant-time
+    comparison (`hmac.compare_digest`) so a wrong guess cannot be narrowed
+    down via response-timing differences.
     """
     expected = os.environ.get("ADMIN_TOKEN", "").strip()
     if not expected:
         raise HTTPException(status_code=503, detail="Admin surface is disabled — set ADMIN_TOKEN in backend/.env")
-    if not x_admin_token or x_admin_token.strip() != expected:
+    provided = (x_admin_token or "").strip()
+    if not provided or not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="Invalid admin token")
 
 
