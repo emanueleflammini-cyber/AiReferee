@@ -298,6 +298,18 @@
       "legacy": "Conclusione precedente",
       "finalVerdict": "Verdetto finale",
       "confidence": "Affidabilità",
+      "showReasoning": "🧠 Mostra il ragionamento",
+      "hideReasoning": "🧠 Nascondi il ragionamento",
+      "showSourcesAndReferences": "🔗 Fonti e riferimenti",
+      "hideSourcesAndReferences": "🔗 Nascondi fonti e riferimenti",
+      "sourcesAndReferences": "Fonti e riferimenti",
+      "noSourcesAvailable": "Non sono disponibili fonti o riferimenti per questa risposta.",
+      "sourceCategories": {
+        "web": "Fonti web",
+        "official": "Documentazione ufficiale",
+        "studies": "Studi e pubblicazioni",
+        "bibliography": "Bibliografia"
+      },
       "whyVerdict": "Perché questa conclusione?",
       "executiveSummary": "Riepilogo esecutivo",
       "summaryVerdict": "Verdetto",
