@@ -16,6 +16,29 @@ FAILED, bounded only by the *outer* `Provider.timed_generate` deadline
 `providers/base.py`). This module now adds its own, shorter, configurable
 per-request timeout plus a single bounded retry on transient errors only,
 mirroring the pattern already used by `mistral_provider.py`.
+
+Observability + explicit SDK timeout (follow-up): `_call_once` now passes
+`request_options={"timeout": self.request_timeout_seconds}` to the SDK, so
+its own default 600s deadline (and default retry-on-503 loop baked into
+`google.ai.generativelanguage_v1beta...transports.base`) can never quietly
+outlive GEMINI_REQUEST_TIMEOUT_SECONDS — the same value is reused, not a
+second timeout knob. `generate()` also logs a `total_duration_ms` (spanning
+every attempt + backoff) alongside the existing per-attempt `duration_ms`,
+so a slow *successful* retry is distinguishable in the logs from a slow
+single attempt. None of this changes `ProviderResult.latency_ms` itself,
+which still reflects only the winning attempt's duration (unchanged,
+pre-existing behaviour shared with every other provider) — see the
+"latency_ms only covers the winning attempt" note in the diagnosis this
+patch responds to.
+
+Known limitation, left undone on purpose: there is no `query_id`/request
+correlation ID in these logs. `Provider.generate(self, prompt, system)` is
+the shared interface for every provider (OpenAI, Mistral, Anthropic, mock);
+threading a correlation ID through it would mean changing that shared
+signature and every implementation, which is out of scope for a
+Gemini-only observability patch. If correlation becomes a real need, it
+should be solved once, generically (e.g. a contextvars-based request ID set
+in server.py), not bolted onto one provider.
 """
 from __future__ import annotations
 
@@ -99,6 +122,10 @@ class GeminiProvider(Provider):
 
         attempts = self.max_retries + 1
         last_exc: Exception | None = None
+        # Spans every attempt plus backoff — this is "durata totale Gemini"
+        # for this call, distinct from the per-attempt `duration_ms` logged
+        # below (which only covers one attempt).
+        overall_start = time.perf_counter()
 
         for attempt in range(1, attempts + 1):
             log.info(
@@ -108,8 +135,18 @@ class GeminiProvider(Provider):
             )
             start = time.perf_counter()
             try:
+                # `request_options={"timeout": ...}` is passed straight
+                # through to the SDK's own gapic-wrapped RPC call, where it
+                # overrides that call's *default* deadline (600s, with its
+                # own retry-on-503 loop — see providers/gemini_provider.py
+                # module docstring / _transient_google_api_errors) down to
+                # our own request_timeout_seconds. GEMINI_REQUEST_TIMEOUT_
+                # SECONDS remains the single source of truth: the same value
+                # also bounds this call from the outside via asyncio.wait_for
+                # just below — this is defence in depth, not a second
+                # timeout knob.
                 resp = await asyncio.wait_for(
-                    _call_once(gmodel, prompt),
+                    _call_once(gmodel, prompt, self.request_timeout_seconds),
                     timeout=self.request_timeout_seconds,
                 )
             except asyncio.TimeoutError as exc:
@@ -132,16 +169,20 @@ class GeminiProvider(Provider):
                 # Anything not explicitly classified as transient above (auth
                 # failure, invalid model/argument, safety/policy block, ...)
                 # is permanent: never retried, propagated immediately.
+                total_duration_ms = int((time.perf_counter() - overall_start) * 1000)
                 log.warning(
-                    "gemini_permanent_error attempt=%d error_type=%s",
-                    attempt, type(exc).__name__,
+                    "gemini_permanent_error attempt=%d error_type=%s "
+                    "total_duration_ms=%d",
+                    attempt, type(exc).__name__, total_duration_ms,
                 )
                 raise
             else:
                 latency_ms = int((time.perf_counter() - start) * 1000)
+                total_duration_ms = int((time.perf_counter() - overall_start) * 1000)
                 log.info(
-                    "gemini_attempt_succeeded attempt=%d duration_ms=%d",
-                    attempt, latency_ms,
+                    "gemini_attempt_succeeded attempt=%d duration_ms=%d "
+                    "total_duration_ms=%d",
+                    attempt, latency_ms, total_duration_ms,
                 )
                 return _provider_result_from_response(resp, self.model, latency_ms)
 
@@ -154,7 +195,11 @@ class GeminiProvider(Provider):
                 )
                 await asyncio.sleep(backoff)
 
-        log.warning("gemini_retries_exhausted attempts=%d", attempts)
+        total_duration_ms = int((time.perf_counter() - overall_start) * 1000)
+        log.warning(
+            "gemini_retries_exhausted attempts=%d total_duration_ms=%d",
+            attempts, total_duration_ms,
+        )
         if isinstance(last_exc, asyncio.TimeoutError):
             raise ProviderTimeoutError(
                 f"Gemini exceeded its internal {self.request_timeout_seconds:g}s "
@@ -166,16 +211,27 @@ class GeminiProvider(Provider):
         ) from last_exc
 
 
-async def _call_once(gmodel, prompt: str):
-    """Issue exactly one Gemini request — no timeout, no retry (both handled
-    by the caller). Isolated so it can be wrapped in `asyncio.wait_for`."""
+async def _call_once(gmodel, prompt: str, request_timeout_seconds: float):
+    """Issue exactly one Gemini request — no retry (handled by the caller).
+
+    Passes `request_options={"timeout": request_timeout_seconds}` explicitly
+    so the SDK's own default deadline (600s) and its default retry-on-503
+    policy never outlive our own budget; GEMINI_REQUEST_TIMEOUT_SECONDS is
+    reused as-is, not a new timeout value. Isolated so the whole call can
+    still be wrapped in an outer `asyncio.wait_for` by the caller.
+    """
+    request_options = {"timeout": request_timeout_seconds}
     try:
-        return await gmodel.generate_content_async(prompt)  # type: ignore[attr-defined]
+        return await gmodel.generate_content_async(  # type: ignore[attr-defined]
+            prompt, request_options=request_options,
+        )
     except AttributeError:
         # Keep the deprecated SDK's synchronous compatibility path off the
         # event loop so the surrounding asyncio.wait_for can still enforce
         # its independent deadline.
-        return await asyncio.to_thread(gmodel.generate_content, prompt)
+        return await asyncio.to_thread(
+            gmodel.generate_content, prompt, request_options=request_options,
+        )
 
 
 def _provider_result_from_response(resp, model: str, latency_ms: int) -> ProviderResult:
