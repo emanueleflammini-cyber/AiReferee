@@ -8,6 +8,7 @@ import functools
 import os
 import re
 import logging
+import time
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import List, Optional, Any, Dict
@@ -1007,6 +1008,14 @@ async def _persist_late_provider_result(
 # stored owner field. See backend/SECURITY_OWNERSHIP_TODO.md.
 @api_router.post("/queries/{query_id}/compare", response_model=CompareResponse)
 async def compare_query(query_id: str, identity: IdentityContext = Depends(get_identity)):
+    # Observability only (perf/request-timeline-observability): a monotonic
+    # clock anchor for this request plus a start/end log pair. Never used
+    # for any decision — quorum/grace/disagreement/Synthesizer timeouts and
+    # retries are all unaffected by this timer.
+    request_started_at = time.perf_counter()
+    logging.getLogger(__name__).info(
+        "compare_request_started query_id=%s", query_id,
+    )
     doc = await db.queries.find_one({"id": query_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Query not found")
@@ -1090,6 +1099,7 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         execution_mode=execution_mode,
         conclusion_saved=conclusion_saved,
     )
+    _provider_phase_started_at = time.perf_counter()
     quorum_run = await run_providers_with_quorum(
         providers=callable_providers,
         prompt=prompt,
@@ -1098,6 +1108,14 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         provider_policy_lookup=get_provider_policy,
         similarity_fn=lambda a, b: jaccard(tokens_of(a), tokens_of(b)),
         on_late_complete=on_late_complete,
+        correlation_id=query_id,
+    )
+    logging.getLogger(__name__).info(
+        "compare_provider_phase_completed query_id=%s provider_phase_ms=%d "
+        "early_synthesis=%s",
+        query_id,
+        int((time.perf_counter() - _provider_phase_started_at) * 1000),
+        quorum_run.early_synthesis,
     )
     generated_by_id = quorum_run.finalized
     if quorum_run.early_synthesis:
@@ -1297,6 +1315,14 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         )
         claim_analysis_error = synthesis_error
     else:
+        # Observability only: start/end markers + time-to-start around the
+        # whole synth.synthesize() call. Same Synthesizer, same call, same
+        # exception handling below — only logging was added.
+        _synthesis_started_at = time.perf_counter()
+        logging.getLogger(__name__).info(
+            "synthesis_started query_id=%s time_to_synthesis_start_ms=%d",
+            query_id, int((_synthesis_started_at - request_started_at) * 1000),
+        )
         try:
             synth = Synthesizer()
             if not synth.available:
@@ -1312,6 +1338,7 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                     audience,
                     fmt,
                     execution_mode,
+                    correlation_id=query_id,
                 )
                 synth_text = s["text"]
                 synth_structured = s["structured_conclusion"]
@@ -1329,12 +1356,22 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                     "FAILED",
                 )
                 claim_analysis_error = s.get("claim_analysis_error")
+                logging.getLogger(__name__).info(
+                    "synthesis_completed query_id=%s status=SUCCESS "
+                    "synthesis_total_ms=%d",
+                    query_id, int((time.perf_counter() - _synthesis_started_at) * 1000),
+                )
         except SynthesisFailure as exc:
             synthesis_error = str(exc)
             claim_analysis_error = synthesis_error
             logging.getLogger(__name__).warning(
                 "Trusted Conclusion synthesis failed: %s",
                 type(exc).__name__,
+            )
+            logging.getLogger(__name__).info(
+                "synthesis_completed query_id=%s status=FAILED "
+                "synthesis_total_ms=%d",
+                query_id, int((time.perf_counter() - _synthesis_started_at) * 1000),
             )
         except Exception as exc:  # Defence in depth: never expose raw errors.
             synthesis_error = "Trusted Conclusion synthesis failed unexpectedly."
@@ -1344,6 +1381,11 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
             logging.getLogger(__name__).warning(
                 "Unexpected Trusted Conclusion failure: %s",
                 type(exc).__name__,
+            )
+            logging.getLogger(__name__).info(
+                "synthesis_completed query_id=%s status=ERROR "
+                "synthesis_total_ms=%d",
+                query_id, int((time.perf_counter() - _synthesis_started_at) * 1000),
             )
 
     # Persist the synthesised conclusion so Smart Reuse can serve it later.
@@ -1366,6 +1408,8 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         }
         for response in responses
     ]
+    _persistence_started_at = time.perf_counter()
+    logging.getLogger(__name__).info("persistence_started query_id=%s", query_id)
     try:
         await db.conclusions.update_one(
             {"id": query_id},
@@ -1432,14 +1476,26 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
             },
             upsert=True,
         )
+        logging.getLogger(__name__).info(
+            "persistence_completed query_id=%s status=SUCCESS persistence_ms=%d",
+            query_id, int((time.perf_counter() - _persistence_started_at) * 1000),
+        )
     except Exception as e:  # noqa: BLE001
         logging.getLogger(__name__).warning("Failed to persist compare result: %s", e)
+        logging.getLogger(__name__).info(
+            "persistence_completed query_id=%s status=FAILED persistence_ms=%d",
+            query_id, int((time.perf_counter() - _persistence_started_at) * 1000),
+        )
     finally:
         # Unblocks any late-arriving provider's persistence (see
         # _persist_late_provider_result) the moment this write has been
         # attempted — success or failure, always fires exactly once.
         conclusion_saved.set()
 
+    logging.getLogger(__name__).info(
+        "compare_request_completed query_id=%s total_request_ms=%d",
+        query_id, int((time.perf_counter() - request_started_at) * 1000),
+    )
     return CompareResponse(
         query_id=query_id,
         prompt=prompt,

@@ -27,6 +27,16 @@ If quorum is never satisfied, the loop behaves exactly like the previous
 only by each provider's own existing timeout, unchanged), and returns with
 `late_tasks` empty — this is what keeps the "no quorum" and "3 fast
 providers" paths byte-for-byte equivalent to the prior behaviour.
+
+Observability (perf/request-timeline-observability, purely additive): every
+log line now carries `query_id` (via the optional `correlation_id`
+parameter — never threaded into Provider.timed_generate/generate, whose
+shared signatures are untouched), plus `early_synthesis_disagreement_gate_result`
+(similarity score / threshold / pass-fail, never response text),
+`early_synthesis_time_to_first_provider_ms`, `early_synthesis_provider_
+execution_started`, and `grace_window_actual_ms`. None of this changes the
+quorum/grace/disagreement decision logic itself — same comparisons, same
+thresholds, same control flow, only new log statements alongside them.
 """
 from __future__ import annotations
 
@@ -77,6 +87,7 @@ async def run_providers_with_quorum(
     provider_policy_lookup: Callable[[str], ProviderPolicy] = get_provider_policy,
     similarity_fn: Optional[Callable[[str, str], float]] = None,
     on_late_complete: Optional[Callable[[str, ProviderResult], Awaitable[None]]] = None,
+    correlation_id: Optional[str] = None,
 ) -> QuorumRunResult:
     """Run every provider in parallel; stop waiting once quorum + grace allow it.
 
@@ -94,7 +105,15 @@ async def run_providers_with_quorum(
     failure in the caller can never leave this module's own housekeeping
     incomplete. Never called for providers that finished before the cutoff
     (those are in `finalized`, no callback fires for them).
+
+    `correlation_id` (observability-only — see the perf/request-timeline-
+    observability patch report): server.py passes its `query_id` so every
+    log line below can be correlated to one compare_query call, without
+    threading query_id through Provider.timed_generate/generate — those
+    shared adapter signatures are untouched. Purely additive: logging only,
+    no effect on quorum/grace/disagreement decisions.
     """
+    cid = correlation_id or "unknown"
     if not providers:
         return QuorumRunResult(
             finalized={},
@@ -109,11 +128,18 @@ async def run_providers_with_quorum(
         asyncio.create_task(provider.timed_generate(prompt, system)): provider.id
         for provider in providers
     }
+    log.info(
+        "early_synthesis_provider_execution_started query_id=%s provider_ids=%s "
+        "provider_count=%d",
+        cid, sorted(tasks.values()), len(tasks),
+    )
 
     pending: set[asyncio.Task] = set(tasks.keys())
     finalized: dict[str, ProviderResult] = {}
     quorum_deadline: Optional[float] = None
     quorum_reached_at_ms: Optional[int] = None
+    grace_window_started_at: Optional[float] = None
+    first_provider_logged = False
 
     while pending:
         wait_timeout: Optional[float] = None
@@ -130,33 +156,43 @@ async def run_providers_with_quorum(
                 result = task.result()
             except Exception as exc:  # noqa: BLE001 — defence in depth; timed_generate never raises today.
                 log.exception(
-                    "early_synthesis_provider_task_unexpected_exception provider_id=%s",
-                    provider_id,
+                    "early_synthesis_provider_task_unexpected_exception "
+                    "query_id=%s provider_id=%s",
+                    cid, provider_id,
                 )
                 result = ProviderResult(text="", provider_status="FAILED", error=str(exc)[:200])
             finalized[provider_id] = result
+            if not first_provider_logged:
+                first_provider_logged = True
+                log.info(
+                    "early_synthesis_time_to_first_provider_ms query_id=%s "
+                    "provider_id=%s time_to_first_provider_ms=%d",
+                    cid, provider_id, int((time.perf_counter() - started_at) * 1000),
+                )
             log.info(
-                "early_synthesis_provider_finalized provider_id=%s status=%s "
-                "duration_ms=%d before_quorum=%s",
-                provider_id, result.provider_status, result.latency_ms,
+                "early_synthesis_provider_finalized query_id=%s provider_id=%s "
+                "status=%s duration_ms=%d before_quorum=%s",
+                cid, provider_id, result.provider_status, result.latency_ms,
                 quorum_deadline is None,
             )
 
         if quorum_deadline is None and _quorum_satisfied(
-            finalized, provider_policy_lookup, quorum_policy, similarity_fn,
+            finalized, provider_policy_lookup, quorum_policy, similarity_fn, cid,
         ):
             quorum_reached_at_ms = int((time.perf_counter() - started_at) * 1000)
             live_count = sum(
                 1 for r in finalized.values() if r.provider_status == PROVIDER_STATUS_LIVE
             )
             log.info(
-                "early_synthesis_quorum_reached elapsed_ms=%d live_count=%d",
-                quorum_reached_at_ms, live_count,
+                "early_synthesis_quorum_reached query_id=%s elapsed_ms=%d live_count=%d",
+                cid, quorum_reached_at_ms, live_count,
             )
             if quorum_policy.grace_window_seconds > 0:
+                grace_window_started_at = time.perf_counter()
                 log.info(
-                    "early_synthesis_grace_window_started grace_window_seconds=%g",
-                    quorum_policy.grace_window_seconds,
+                    "early_synthesis_grace_window_started query_id=%s "
+                    "grace_window_seconds=%g",
+                    cid, quorum_policy.grace_window_seconds,
                 )
             quorum_deadline = time.perf_counter() + quorum_policy.grace_window_seconds
 
@@ -165,9 +201,15 @@ async def run_providers_with_quorum(
 
     early_synthesis = bool(pending)
     if quorum_reached_at_ms is not None:
+        grace_window_actual_ms = (
+            int((time.perf_counter() - grace_window_started_at) * 1000)
+            if grace_window_started_at is not None
+            else 0
+        )
         log.info(
-            "early_synthesis_grace_window_ended pending_providers=%s early_synthesis=%s",
-            sorted(tasks[t] for t in pending), early_synthesis,
+            "early_synthesis_grace_window_ended query_id=%s pending_providers=%s "
+            "early_synthesis=%s grace_window_actual_ms=%d",
+            cid, sorted(tasks[t] for t in pending), early_synthesis, grace_window_actual_ms,
         )
 
     late_tasks: dict[str, asyncio.Task] = {}
@@ -176,7 +218,7 @@ async def run_providers_with_quorum(
         late_tasks[provider_id] = task
         _BACKGROUND_TASKS.add(task)
         task.add_done_callback(
-            lambda t, pid=provider_id: _handle_late_completion(pid, t, on_late_complete)
+            lambda t, pid=provider_id: _handle_late_completion(pid, t, on_late_complete, cid)
         )
 
     return QuorumRunResult(
@@ -193,6 +235,7 @@ def _quorum_satisfied(
     provider_policy_lookup: Callable[[str], ProviderPolicy],
     quorum_policy: QuorumPolicy,
     similarity_fn: Optional[Callable[[str, str], float]],
+    correlation_id: str,
 ) -> bool:
     live_ids = [
         provider_id
@@ -210,6 +253,8 @@ def _quorum_satisfied(
     # exactly two LIVE responses are the basis for the decision — matching
     # "i due primi LIVE" from the design brief. A general N-way disagreement
     # gate is deferred to Patch 3 (see module docstring / patch report).
+    # Unchanged by this observability patch: same threshold comparison,
+    # same similarity_fn contract — only a log line was added below.
     if (
         similarity_fn is not None
         and len(live_ids) == 2
@@ -217,7 +262,16 @@ def _quorum_satisfied(
     ):
         text_a = finalized[live_ids[0]].text
         text_b = finalized[live_ids[1]].text
-        if similarity_fn(text_a, text_b) < quorum_policy.disagreement_threshold:
+        score = similarity_fn(text_a, text_b)
+        gate_passed = score >= quorum_policy.disagreement_threshold
+        # Numeric score/threshold/ids only — never the response text itself.
+        log.info(
+            "early_synthesis_disagreement_gate_result query_id=%s "
+            "provider_ids=%s similarity_score=%.4f threshold=%.4f gate_passed=%s",
+            correlation_id, sorted([live_ids[0], live_ids[1]]), score,
+            quorum_policy.disagreement_threshold, gate_passed,
+        )
+        if not gate_passed:
             return False
     return True
 
@@ -226,6 +280,7 @@ def _handle_late_completion(
     provider_id: str,
     task: asyncio.Task,
     on_late_complete: Optional[Callable[[str, ProviderResult], Awaitable[None]]],
+    correlation_id: str,
 ) -> None:
     """Done-callback for a late provider task — always sync (asyncio contract).
 
@@ -239,21 +294,22 @@ def _handle_late_completion(
         result = task.result()
     except Exception:  # noqa: BLE001 — defence in depth; timed_generate never raises today.
         log.exception(
-            "early_synthesis_late_provider_unexpected_exception provider_id=%s",
-            provider_id,
+            "early_synthesis_late_provider_unexpected_exception "
+            "query_id=%s provider_id=%s",
+            correlation_id, provider_id,
         )
         return
 
     log.info(
-        "early_synthesis_late_provider_completed provider_id=%s status=%s "
-        "total_duration_ms=%d",
-        provider_id, result.provider_status, result.latency_ms,
+        "early_synthesis_late_provider_completed query_id=%s provider_id=%s "
+        "status=%s total_duration_ms=%d",
+        correlation_id, provider_id, result.provider_status, result.latency_ms,
     )
 
     if on_late_complete is None:
         return
 
-    follow_up = asyncio.create_task(_run_late_complete_callback(provider_id, result, on_late_complete))
+    follow_up = asyncio.create_task(_run_late_complete_callback(provider_id, result, on_late_complete, correlation_id))
     _BACKGROUND_TASKS.add(follow_up)
     follow_up.add_done_callback(_BACKGROUND_TASKS.discard)
 
@@ -262,11 +318,12 @@ async def _run_late_complete_callback(
     provider_id: str,
     result: ProviderResult,
     on_late_complete: Callable[[str, ProviderResult], Awaitable[None]],
+    correlation_id: str,
 ) -> None:
     try:
         await on_late_complete(provider_id, result)
     except Exception:  # noqa: BLE001
         log.exception(
-            "early_synthesis_late_complete_callback_failed provider_id=%s",
-            provider_id,
+            "early_synthesis_late_complete_callback_failed query_id=%s provider_id=%s",
+            correlation_id, provider_id,
         )
