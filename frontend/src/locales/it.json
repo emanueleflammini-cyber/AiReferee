@@ -359,7 +359,7 @@
       "usefulContributions": "Contributi utili",
       "providerWeaknesses": "Limiti della risposta",
       "sources": "Fonti indicate dai modelli",
-      "sourcesNotice": "Le fonti sono state indicate dai modelli e non sono state verificate esternamente da AI Referee.",
+      "sourcesNotice": "Le fonti seguenti sono state indicate dai modelli e non sono state verificate esternamente da AI Referee.",
       "unnamedSource": "Riferimento senza titolo",
       "openSource": "Apri la fonte: {source}",
       "level": {

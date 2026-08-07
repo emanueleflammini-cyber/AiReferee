@@ -256,7 +256,7 @@ describe("Trusted Conclusion 2.0 rendering", () => {
     expect(html).toContain("target=\"_blank\"");
     expect(html).toContain("rel=\"noopener noreferrer\"");
     expect(html).toContain(
-      "These sources were indicated by the models and were not externally verified by AI Referee."
+      "The following sources were indicated by the models and were not externally verified by AI Referee."
     );
   });
 
@@ -291,7 +291,7 @@ describe("Trusted Conclusion 2.0 rendering", () => {
     expect(html).toContain("Fonte indicata dal modello");
     expect(html).not.toContain("href=");
     expect(html).toContain(
-      "Le fonti sono state indicate dai modelli e non sono state verificate esternamente da AI Referee."
+      "Le fonti seguenti sono state indicate dai modelli e non sono state verificate esternamente da AI Referee."
     );
   });
 

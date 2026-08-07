@@ -364,7 +364,7 @@
       "usefulContributions": "Useful contributions",
       "providerWeaknesses": "Limitations in this response",
       "sources": "Sources indicated by the models",
-      "sourcesNotice": "These sources were indicated by the models and were not externally verified by AI Referee.",
+      "sourcesNotice": "The following sources were indicated by the models and were not externally verified by AI Referee.",
       "unnamedSource": "Unnamed source reference",
       "openSource": "Open source: {source}",
       "level": {
