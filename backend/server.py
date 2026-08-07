@@ -4,6 +4,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import asyncio
 import certifi
+import functools
 import os
 import re
 import logging
@@ -44,6 +45,8 @@ from providers.traceability_schema import (  # noqa: E402
     merge_provider_citations,
     normalize_stored_traceability,
 )
+from providers.policy import DEFAULT_QUORUM_POLICY, get_provider_policy  # noqa: E402
+from providers.early_synthesis import run_providers_with_quorum  # noqa: E402
 from auth import IdentityContext, get_identity, require_admin, enforce_daily_compare_limit  # noqa: E402
 
 mongo_url = os.environ['MONGO_URL']
@@ -848,6 +851,157 @@ class CompareResponse(BaseModel):
     claim_analysis_error: Optional[str] = None
 
 
+# Safety-net bound for how long a late-arriving provider's persistence will
+# wait for compare_query's own main conclusions write before giving up and
+# attempting anyway (see _persist_late_provider_result). Generous relative
+# to any realistic synthesis latency, so it practically never triggers in
+# normal operation; it only guards the pathological case where compare_query
+# raised before ever reaching that write (in which case conclusion_saved.set()
+# — in a `finally` — never fires on its own, and this timeout prevents an
+# otherwise-permanent wait). Not a business-logic timeout, not user-facing,
+# not worth making configurable.
+_CONCLUSION_SAVED_WAIT_TIMEOUT_SECONDS = 30.0
+
+
+async def _persist_late_provider_result(
+    provider_id: str,
+    result: ProviderResult,
+    *,
+    query_id: str,
+    specs_by_id: dict,
+    execution_mode: str,
+    conclusion_saved: asyncio.Event,
+) -> None:
+    """Persist a late-arriving provider's real, final outcome.
+
+    Called (as its own tracked background task — see
+    providers/early_synthesis.py) once a provider that was still PENDING at
+    the quorum+grace-window cutoff finally resolves to LIVE or FAILED. It
+    therefore MUST NOT and DOES NOT: trigger a second Synthesizer call,
+    modify the trusted_conclusion / trusted_conclusion_structured fields
+    already written and already shown to the user, or touch total_cost_usd
+    on the conclusion document (that snapshot reflects exactly what the
+    user saw; reconciling a late provider's real cost into it is left for a
+    future patch — see the Patch 2 report's "rischi residui").
+
+    Ordering / race-safety: a late provider can finish WHILE compare_query
+    is still running — e.g. during the (potentially multi-second)
+    Synthesizer call — i.e. strictly *before* compare_query's own main
+    db.conclusions.update_one write, not only after. Returning the HTTP
+    response does not order anything either way, since this function runs
+    as an independently scheduled task the moment the provider resolves.
+    `conclusion_saved` (an asyncio.Event, created once per compare_query
+    call and passed in via functools.partial) is set in a `finally` right
+    after that main write is attempted — success or failure — so waiting on
+    it here guarantees the main write has already been attempted first,
+    without polling or a busy loop. The bounded timeout below is a
+    defensive fallback only, for the rare case compare_query raised before
+    ever reaching that write and therefore never set the event on its own.
+
+    Once past that wait, this update still targets a disjoint, namespaced
+    field (`late_provider_results.<provider_id>`) that the main write never
+    touches, so the two can never interleave on the same field even if
+    (after the event fires) both happen to run back to back. `upsert=False`
+    remains a defensive belt: if the main write genuinely never created the
+    conclusion document (e.g. it hit its own caught exception), this is a
+    real, detected, logged no-op rather than a silent success or a
+    fabricated partial conclusion document.
+    """
+    status = result.provider_status
+    cost = billable_provider_cost(result, status)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    spec = specs_by_id.get(provider_id, {})
+    provider_key = spec.get("provider_key", provider_id)
+
+    try:
+        provider_citations = extract_citations(
+            result.text, provider_key, result.citation_metadata,
+        ) if status == "LIVE" else []
+    except Exception:  # noqa: BLE001 — citation extraction must never break persistence.
+        provider_citations = []
+
+    try:
+        await db.compare_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "query_id": query_id,
+            "prompt_length": None,
+            "response_length": len(result.text or ""),
+            "provider_id": provider_id,
+            "provider_name": spec.get("provider", provider_id),
+            "provider_label": spec.get("label", provider_id),
+            "model_requested": spec.get("codename", ""),
+            "model_used": result.model_used,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "total_tokens": result.total_tokens,
+            "latency_ms": result.latency_ms,
+            "cost_usd": cost,
+            "is_mock": status == "MOCK",
+            "provider_status": status,
+            "execution_mode": execution_mode,
+            "error": result.error,
+            "citation_count": len(provider_citations),
+            "created_at": now_iso,
+            "is_late_arriving": True,
+        })
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "Failed to persist late-arriving compare log for %s: %s", provider_id, e,
+        )
+
+    # Never attempt the conclusions write until the main write has at least
+    # been attempted — this is the actual race fix. compare_logs above has
+    # no such ordering dependency (insert-only), so it is not gated.
+    try:
+        await asyncio.wait_for(
+            conclusion_saved.wait(), timeout=_CONCLUSION_SAVED_WAIT_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logging.getLogger(__name__).warning(
+            "early_synthesis_late_provider_wait_timed_out query_id=%s "
+            "provider_id=%s timeout_seconds=%g — attempting persistence anyway",
+            query_id, provider_id, _CONCLUSION_SAVED_WAIT_TIMEOUT_SECONDS,
+        )
+
+    try:
+        update_result = await db.conclusions.update_one(
+            {"id": query_id},
+            {"$set": {
+                f"late_provider_results.{provider_id}": {
+                    "provider_status": status,
+                    "text": result.text,
+                    "latency_ms": result.latency_ms,
+                    "cost_usd": cost,
+                    "model_used": result.model_used,
+                    "error": result.error,
+                    "completed_at": now_iso,
+                },
+            }},
+            upsert=False,
+        )
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "Failed to persist late-arriving provider result for %s: %s", provider_id, e,
+        )
+    else:
+        # A matched_count of 0 means the conclusion document did not exist
+        # (the main write never created it — e.g. it failed too) — a real,
+        # detected failure to attach the late result, never treated as a
+        # silent success.
+        matched_count = getattr(update_result, "matched_count", None)
+        if not matched_count:
+            logging.getLogger(__name__).warning(
+                "early_synthesis_late_provider_result_not_attached query_id=%s "
+                "provider_id=%s reason=conclusion_document_not_found",
+                query_id, provider_id,
+            )
+
+    logging.getLogger(__name__).info(
+        "early_synthesis_late_provider_persisted query_id=%s provider_id=%s status=%s",
+        query_id, provider_id, status,
+    )
+
+
 # TODO(security-ownership): no ownership check — any caller holding this ID
 # can (re-)run a comparison for another user's query. Requires real auth + a
 # stored owner field. See backend/SECURITY_OWNERSHIP_TODO.md.
@@ -903,6 +1057,7 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
     # Every integrated FREE provider is discovered from the registry. Missing
     # optional providers remain visible as DISABLED records.
     expected_specs = comparison_provider_specs()
+    specs_by_id = {spec["id"]: spec for spec in expected_specs}
     providers_by_id = {
         provider.id: provider
         for provider in providers
@@ -913,14 +1068,47 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         for spec in expected_specs
         if spec["id"] in providers_by_id
     ]
-    generated = await asyncio.gather(
-        *(provider.timed_generate(prompt, system) for provider in callable_providers),
-        return_exceptions=False,
+
+    # Early synthesis (quorum + grace window): replaces the previous
+    # asyncio.gather all-or-nothing wait with providers.early_synthesis'
+    # incremental collection. When quorum is never reached (or every
+    # provider finishes within the grace window — e.g. all 3 fast), this
+    # behaves exactly like the previous gather: `finalized` ends up holding
+    # every provider's result and `late_tasks` is empty. `jaccard`/
+    # `tokens_of` below are the exact, unmodified Smart Reuse similarity
+    # functions (see above in this file) — injected rather than imported by
+    # providers/early_synthesis.py, to avoid a circular import.
+    # Set once the main conclusions write below has been attempted (success
+    # or failure) — see _persist_late_provider_result's docstring for why a
+    # late provider must wait on this before writing, rather than assuming
+    # the HTTP response boundary orders anything.
+    conclusion_saved = asyncio.Event()
+    on_late_complete = functools.partial(
+        _persist_late_provider_result,
+        query_id=query_id,
+        specs_by_id=specs_by_id,
+        execution_mode=execution_mode,
+        conclusion_saved=conclusion_saved,
     )
-    generated_by_id = {
-        provider.id: result
-        for provider, result in zip(callable_providers, generated)
-    }
+    quorum_run = await run_providers_with_quorum(
+        providers=callable_providers,
+        prompt=prompt,
+        system=system,
+        quorum_policy=DEFAULT_QUORUM_POLICY,
+        provider_policy_lookup=get_provider_policy,
+        similarity_fn=lambda a, b: jaccard(tokens_of(a), tokens_of(b)),
+        on_late_complete=on_late_complete,
+    )
+    generated_by_id = quorum_run.finalized
+    if quorum_run.early_synthesis:
+        logging.getLogger(__name__).info(
+            "early_synthesis_started query_id=%s live_providers=%s "
+            "pending_providers=%s quorum_reached_at_ms=%s",
+            query_id,
+            sorted(pid for pid, r in generated_by_id.items() if r.provider_status == "LIVE"),
+            sorted(quorum_run.late_tasks.keys()),
+            quorum_run.quorum_reached_at_ms,
+        )
 
     responses: List[ModelResponse] = []
     live_count = 0
@@ -931,6 +1119,24 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
     now_iso = datetime.now(timezone.utc).isoformat()
 
     for spec in expected_specs:
+        if spec["id"] in quorum_run.late_tasks:
+            # Still running in the background past the quorum+grace cutoff.
+            # Never included in this response and never marked FAILED/
+            # DISABLED here — its real outcome is persisted separately once
+            # it resolves, by _persist_late_provider_result (see below).
+            #
+            # Deliberately NOT represented as provider_status="PENDING" in
+            # this HTTP response either: the current frontend
+            # (frontend/src/lib/executionMode.js) coerces any provider
+            # status it does not recognise to FAILED, which would
+            # misrepresent a still-running provider as a definitive
+            # failure — exactly what this patch must not do. Representing
+            # it safely end-to-end requires a frontend change, out of scope
+            # here (see providers/early_synthesis.py module docstring and
+            # the Patch 2 report). PENDING remains available internally
+            # (providers.base.make_pending_result) for a future patch that
+            # does update the frontend.
+            continue
         provider = providers_by_id.get(spec["id"])
         result = generated_by_id.get(spec["id"])
         if result is None:
@@ -1072,6 +1278,18 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
     claim_analysis_status = "FAILED"
     claim_analysis_error: Optional[str] = None
     answers_for_synth = eligible_synthesis_answers(responses, execution_mode)
+    if quorum_run.early_synthesis:
+        # answers_for_synth is built exclusively from `responses`, which
+        # never contained the still-pending provider(s) in the first place
+        # (see the `continue` above) — eligible_synthesis_answers' own
+        # provider_status equality check would exclude a PENDING entry too,
+        # unchanged, if one were ever present. No PENDING result reaches
+        # the synthesizer either way.
+        logging.getLogger(__name__).info(
+            "early_synthesis_providers_used_in_synthesis query_id=%s "
+            "provider_ids=%s count=%d",
+            query_id, sorted(a["id"] for a in answers_for_synth), len(answers_for_synth),
+        )
     if not answers_for_synth:
         synthesis_error = (
             "Trusted Conclusion is unavailable because no provider returned "
@@ -1216,6 +1434,11 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         )
     except Exception as e:  # noqa: BLE001
         logging.getLogger(__name__).warning("Failed to persist compare result: %s", e)
+    finally:
+        # Unblocks any late-arriving provider's persistence (see
+        # _persist_late_provider_result) the moment this write has been
+        # attempted — success or failure, always fires exactly once.
+        conclusion_saved.set()
 
     return CompareResponse(
         query_id=query_id,

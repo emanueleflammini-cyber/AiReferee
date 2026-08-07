@@ -346,25 +346,36 @@ class TestSynthesizerNeverReceivesPending:
 
 
 class TestFoundationNotWiredIntoRuntime:
-    def test_server_module_does_not_import_policy_yet(self):
-        # server.py's ModelResponse docstring/comment deliberately *mentions*
-        # `providers.policy` in prose (pointing a future reader at it) — this
-        # checks for an actual import statement, not that bare substring.
+    """Named for Patch 1, where compare_query did not yet read any of this.
+
+    Early Synthesis Patch 2 (quorum + grace window + late-arriving
+    background providers) is exactly the patch that wires
+    providers.policy / QuorumPolicy into compare_query's orchestration, by
+    explicit design — see providers/early_synthesis.py. These two tests
+    now assert the *positive*, intentional versions of what Patch 1 could
+    only assert the absence of.
+    """
+
+    def test_server_module_now_imports_policy_for_early_synthesis(self):
         server_source = (BACKEND_DIR / "server.py").read_text(encoding="utf-8")
         import_lines = [
             line.strip()
             for line in server_source.splitlines()
             if line.strip().startswith(("import ", "from "))
         ]
-        assert not any("policy" in line for line in import_lines)
+        assert any("providers.policy" in line for line in import_lines)
 
-    def test_server_module_does_not_reference_pending_status_in_logic(self):
-        # Every mention of PENDING in server.py must live in the
-        # documentation comment on ModelResponse.provider_status — none may
-        # appear in actual code (e.g. `== "PENDING"` or similar logic).
+    def test_server_module_never_constructs_or_compares_pending_string_literal(self):
+        # server.py must never itself assign/compare a provider_status to
+        # the literal "PENDING" string — the single source of truth for
+        # "is this provider still running" is quorum_run.late_tasks
+        # membership (an asyncio.Task presence check), not a status-string
+        # comparison. Prose mentions of the bare word PENDING in comments
+        # or docstrings (e.g. explaining why it is deliberately not sent
+        # over HTTP) are expected and fine; a quoted "PENDING" string
+        # literal in real code is not.
         server_source = (BACKEND_DIR / "server.py").read_text(encoding="utf-8")
-        pending_lines = [
-            line for line in server_source.splitlines() if "PENDING" in line
+        quoted_pending_lines = [
+            line for line in server_source.splitlines() if '"PENDING"' in line
         ]
-        assert pending_lines, "expected the documentation comment to still be present"
-        assert all(line.strip().startswith("#") for line in pending_lines)
+        assert all(line.strip().startswith("#") for line in quoted_pending_lines)
