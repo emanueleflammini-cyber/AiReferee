@@ -498,6 +498,95 @@ class TestServerRequestTimeline:
         synth_ms = int(re.search(r"synthesis_completed query_id=%s status=SUCCESS synthesis_total_ms=(\d+)" % re.escape(query_id), text).group(1))
         assert total_ms >= synth_ms  # the whole request must cover its own synthesis segment
 
+    def test_failed_synthesis_telemetry_is_returned_and_persisted(
+        self,
+        fake_db,
+        monkeypatch,
+    ):
+        query_id = "timeline-failed-synthesis"
+        self._seed_query(fake_db, query_id)
+        providers = [
+            _TimedProvider("model-a", 0.001, text="OpenAI answer"),
+            _TimedProvider("model-c", 0.001, text="Gemini answer"),
+            _TimedProvider("model-e", 0.001, text="Mistral answer"),
+        ]
+        telemetry = {
+            "model_used": "gpt-5.4-mini",
+            "input_tokens": 250,
+            "output_tokens": 50,
+            "total_tokens": 300,
+            "latency_ms": 4321,
+            "cost_usd": 0.0042,
+            "repair_attempted": True,
+            "attempts": [
+                {
+                    "stage": "initial",
+                    "request_id": "req_initial",
+                    "finish_reason": "stop",
+                    "model": "gpt-5.4-mini",
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "total_tokens": 120,
+                    "latency_ms": 2000,
+                },
+                {
+                    "stage": "repair",
+                    "request_id": "req_repair",
+                    "finish_reason": "stop",
+                    "model": "gpt-5.4-mini",
+                    "input_tokens": 150,
+                    "output_tokens": 30,
+                    "total_tokens": 180,
+                    "latency_ms": 2200,
+                },
+            ],
+        }
+        mocked_synth_instance = SimpleNamespace(
+            available=True,
+            synthesize=AsyncMock(
+                side_effect=SynthesisFailure(
+                    "Trusted Conclusion could not be validated after one repair attempt.",
+                    telemetry=telemetry,
+                )
+            ),
+        )
+
+        with patch.object(
+            server,
+            "providers_for_execution",
+            return_value=("LIVE", providers),
+        ), patch.object(
+            server,
+            "Synthesizer",
+            return_value=mocked_synth_instance,
+        ):
+            response = asyncio.run(
+                server.compare_query(query_id, _anonymous_identity())
+            )
+
+        assert response.synthesis_status == "FAILED"
+        assert response.trusted_conclusion == ""
+        assert response.trusted_conclusion_structured is None
+        assert response.synthesis_model == "gpt-5.4-mini"
+        assert response.synthesis_latency_ms == 4321
+        assert response.synthesis_cost_usd == pytest.approx(0.0042)
+        assert response.synthesis_input_tokens == 250
+        assert response.synthesis_output_tokens == 50
+        assert response.synthesis_total_tokens == 300
+        assert response.total_cost_usd == pytest.approx(0.0042)
+
+        stored = fake_db["conclusions"].documents[query_id]
+        assert stored["synthesis_status"] == "FAILED"
+        assert stored["synthesis_model"] == "gpt-5.4-mini"
+        assert stored["synthesis_latency_ms"] == 4321
+        assert stored["synthesis_cost_usd"] == pytest.approx(0.0042)
+        assert stored["synthesis_input_tokens"] == 250
+        assert stored["synthesis_output_tokens"] == 50
+        assert stored["synthesis_total_tokens"] == 300
+        assert stored["synthesis_repair_attempted"] is True
+        assert stored["synthesis_attempt_metadata"] == telemetry["attempts"]
+        assert stored["total_cost_usd"] == pytest.approx(0.0042)
+
 
 # ==========================================================================
 # 5) No sensitive content anywhere in the new logs.

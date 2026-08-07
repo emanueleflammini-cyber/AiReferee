@@ -11,10 +11,11 @@ import logging
 import os
 import re
 import time
+from functools import lru_cache
 from typing import Any, Iterable, Optional
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from .base import estimate_cost
 from .conclusion_schema import (
@@ -35,6 +36,8 @@ log = logging.getLogger(__name__)
 SYNTH_MODEL = os.environ.get("SYNTH_MODEL", "gpt-5.4-mini").strip()
 TRACE_CONCLUSION_ENV = "AI_REFEREE_TRACE_CONCLUSION"
 _TRUE_VALUES = {"1", "true", "yes", "on"}
+_MAX_VALIDATION_ERRORS_LOGGED = 20
+_SAFE_DIAGNOSTIC_VALUE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _PROVIDER_ALIASES = {
     "openai": "openai",
     "chatgpt": "openai",
@@ -48,6 +51,15 @@ _PROVIDER_ALIASES = {
 
 class SynthesisFailure(RuntimeError):
     """Safe, user-displayable Trusted Conclusion synthesis failure."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        telemetry: Optional[dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message)
+        self.telemetry = dict(telemetry or {})
 
 
 class SynthesisBundleV3(BaseModel):
@@ -160,6 +172,8 @@ class Synthesizer:
         ]
 
         schema = SynthesisBundleV3.model_json_schema()
+        schema_json = json.dumps(schema, ensure_ascii=False)
+        panel_payload_json = json.dumps(panel_payload, ensure_ascii=False)
         system = _system_prompt(
             target_name=target_name,
             audience=audience,
@@ -186,18 +200,49 @@ class Synthesizer:
         start = time.perf_counter()
         total_input_tokens = 0
         total_output_tokens = 0
+        total_reported_tokens = 0
+        total_cost_usd = 0.0
         repair_attempted = False
         synthesis_initial_call_ms = 0
         synthesis_repair_ms: Optional[int] = None
+        model_used = SYNTH_MODEL
+        attempt_metadata: list[dict[str, Any]] = []
 
+        log.info(
+            "synthesis_prompt_dimensions query_id=%s stage=initial "
+            "system_prompt_chars=%d schema_chars=%d panel_payload_chars=%d "
+            "request_prompt_chars=%d",
+            cid,
+            len(system),
+            len(schema_json),
+            len(panel_payload_json),
+            len(user_message),
+        )
         log.info("synthesis_initial_call_started query_id=%s model=%s", cid, SYNTH_MODEL)
         _initial_call_start = time.perf_counter()
-        raw, usage, model_used = await self._request_json(
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_message},
-            ]
-        )
+        try:
+            raw, usage, model_used, initial_metadata = await self._request_json(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_message},
+                ]
+            )
+        except SynthesisFailure as exc:
+            synthesis_initial_call_ms = int(
+                (time.perf_counter() - _initial_call_start) * 1000
+            )
+            exc.telemetry = _synthesis_telemetry(
+                model_used=model_used,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                total_tokens=total_reported_tokens,
+                latency_ms=int((time.perf_counter() - start) * 1000),
+                cost_usd=total_cost_usd,
+                repair_attempted=False,
+                attempts=attempt_metadata,
+            )
+            _log_failed_attempt_totals(cid, exc.telemetry)
+            raise
         synthesis_initial_call_ms = int((time.perf_counter() - _initial_call_start) * 1000)
         log.info(
             "synthesis_initial_call_completed query_id=%s duration_ms=%d",
@@ -206,6 +251,17 @@ class Synthesizer:
         _trace_raw_payload("initial_raw", raw)
         total_input_tokens += usage["input_tokens"]
         total_output_tokens += usage["output_tokens"]
+        total_reported_tokens += usage["total_tokens"]
+        total_cost_usd += estimate_cost(
+            model_used,
+            usage["input_tokens"],
+            usage["output_tokens"],
+        )
+        initial_metadata.update(
+            {"stage": "initial", "latency_ms": synthesis_initial_call_ms}
+        )
+        attempt_metadata.append(initial_metadata)
+        _log_openai_response_metadata(cid, "initial", initial_metadata)
 
         try:
             parsed = _parse_bundle(
@@ -216,49 +272,95 @@ class Synthesizer:
                 execution_mode,
             )
         except Exception as first_error:
-            _trace_validation_error("initial_parse_failed", first_error)
+            _log_parse_failure(cid, "initial", model_used, first_error)
+            _trace_validation_error(
+                "initial_parse_failed",
+                first_error,
+                query_id=cid,
+                model=model_used,
+            )
+            log.info(
+                "synthesis_salvage_started query_id=%s stage=initial",
+                cid,
+            )
             first_valid_conclusion = _salvage_conclusion(
                 raw,
                 allowed_providers,
+            )
+            log.info(
+                "synthesis_salvage_completed query_id=%s stage=initial status=%s",
+                cid,
+                "SUCCESS" if first_valid_conclusion is not None else "FAILED",
             )
             repair_attempted = True
             log.info(
                 "synthesis_repair_started query_id=%s reason=%s",
                 cid, type(first_error).__name__,
             )
-            _repair_call_start = time.perf_counter()
-            raw, usage, repair_model = await self._request_json(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Repair the JSON so it exactly matches the supplied "
-                            "schema. Do not add facts, source names, citation IDs "
-                            "or URLs. Every response_excerpt must be copied from "
-                            "the matching provider response. Return JSON only."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "allowed_provider_keys": allowed_providers,
-                                "available_citation_ids": [
-                                    citation["id"] for citation in citations
-                                ],
-                                "provider_responses": panel_payload,
-                                "required_json_schema": schema,
-                                "validation_error": (
-                                    f"{type(first_error).__name__}: "
-                                    f"{str(first_error)[:1500]}"
-                                ),
-                                "invalid_output": raw[:20000],
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ]
+            repair_system = (
+                "Repair the JSON so it exactly matches the supplied "
+                "schema. Do not add facts, source names, citation IDs "
+                "or URLs. Every response_excerpt must be copied from "
+                "the matching provider response. Return JSON only."
             )
+            invalid_output = raw[:20000]
+            repair_user_message = json.dumps(
+                {
+                    "allowed_provider_keys": allowed_providers,
+                    "available_citation_ids": [
+                        citation["id"] for citation in citations
+                    ],
+                    "provider_responses": panel_payload,
+                    "required_json_schema": schema,
+                    "validation_error": (
+                        f"{type(first_error).__name__}: "
+                        f"{str(first_error)[:1500]}"
+                    ),
+                    "invalid_output": invalid_output,
+                },
+                ensure_ascii=False,
+            )
+            log.info(
+                "synthesis_prompt_dimensions query_id=%s stage=repair "
+                "system_prompt_chars=%d schema_chars=%d panel_payload_chars=%d "
+                "invalid_output_chars=%d repair_prompt_chars=%d",
+                cid,
+                len(repair_system),
+                len(schema_json),
+                len(panel_payload_json),
+                len(invalid_output),
+                len(repair_user_message),
+            )
+            _repair_call_start = time.perf_counter()
+            try:
+                raw, usage, repair_model, repair_metadata = await self._request_json(
+                    [
+                        {
+                            "role": "system",
+                            "content": repair_system,
+                        },
+                        {
+                            "role": "user",
+                            "content": repair_user_message,
+                        },
+                    ]
+                )
+            except SynthesisFailure as exc:
+                synthesis_repair_ms = int(
+                    (time.perf_counter() - _repair_call_start) * 1000
+                )
+                exc.telemetry = _synthesis_telemetry(
+                    model_used=model_used,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    total_tokens=total_reported_tokens,
+                    latency_ms=int((time.perf_counter() - start) * 1000),
+                    cost_usd=total_cost_usd,
+                    repair_attempted=True,
+                    attempts=attempt_metadata,
+                )
+                _log_failed_attempt_totals(cid, exc.telemetry)
+                raise
             synthesis_repair_ms = int((time.perf_counter() - _repair_call_start) * 1000)
             log.info(
                 "synthesis_repair_completed query_id=%s duration_ms=%d",
@@ -267,7 +369,18 @@ class Synthesizer:
             _trace_raw_payload("repair_raw", raw)
             total_input_tokens += usage["input_tokens"]
             total_output_tokens += usage["output_tokens"]
+            total_reported_tokens += usage["total_tokens"]
             model_used = repair_model or model_used
+            total_cost_usd += estimate_cost(
+                repair_model or model_used,
+                usage["input_tokens"],
+                usage["output_tokens"],
+            )
+            repair_metadata.update(
+                {"stage": "repair", "latency_ms": synthesis_repair_ms}
+            )
+            attempt_metadata.append(repair_metadata)
+            _log_openai_response_metadata(cid, "repair", repair_metadata)
             try:
                 parsed = _parse_bundle(
                     raw,
@@ -277,21 +390,50 @@ class Synthesizer:
                     execution_mode,
                 )
             except Exception as repair_error:
-                _trace_validation_error("repair_parse_failed", repair_error)
+                _log_parse_failure(cid, "repair", model_used, repair_error)
+                _trace_validation_error(
+                    "repair_parse_failed",
+                    repair_error,
+                    query_id=cid,
+                    model=model_used,
+                )
                 # Preserve a valid Phase 2 conclusion when only claim analysis
                 # failed. Claim links are stripped to avoid dangling references.
-                conclusion = (
-                    _salvage_conclusion(raw, allowed_providers)
-                    or first_valid_conclusion
+                log.info(
+                    "synthesis_salvage_started query_id=%s stage=repair",
+                    cid,
                 )
+                repair_valid_conclusion = _salvage_conclusion(
+                    raw,
+                    allowed_providers,
+                )
+                log.info(
+                    "synthesis_salvage_completed query_id=%s stage=repair status=%s",
+                    cid,
+                    "SUCCESS" if repair_valid_conclusion is not None else "FAILED",
+                )
+                conclusion = repair_valid_conclusion or first_valid_conclusion
                 if conclusion is None:
                     log.warning(
                         "Synthesis validation failed after repair: %s",
                         type(repair_error).__name__,
                     )
+                    latency_ms = int((time.perf_counter() - start) * 1000)
+                    telemetry = _synthesis_telemetry(
+                        model_used=model_used,
+                        input_tokens=total_input_tokens,
+                        output_tokens=total_output_tokens,
+                        total_tokens=total_reported_tokens,
+                        latency_ms=latency_ms,
+                        cost_usd=total_cost_usd,
+                        repair_attempted=True,
+                        attempts=attempt_metadata,
+                    )
+                    _log_failed_attempt_totals(cid, telemetry)
                     raise SynthesisFailure(
                         "Trusted Conclusion could not be validated after one "
-                        "repair attempt."
+                        "repair attempt.",
+                        telemetry=telemetry,
                     ) from repair_error
                 conclusion = _enrich_conclusion_without_claim_analysis(
                     conclusion,
@@ -340,21 +482,19 @@ class Synthesizer:
             "claim_analysis_error": parsed["claim_analysis_error"],
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
+            "total_tokens": total_reported_tokens,
             "latency_ms": latency_ms,
-            "cost_usd": estimate_cost(
-                model_used,
-                total_input_tokens,
-                total_output_tokens,
-            ),
+            "cost_usd": total_cost_usd,
             "model_used": model_used,
             "language": target_lang,
             "repair_attempted": repair_attempted,
+            "attempt_metadata": attempt_metadata,
         }
 
     async def _request_json(
         self,
         messages: list[dict[str, str]],
-    ) -> tuple[str, dict[str, int], str]:
+    ) -> tuple[str, dict[str, int], str, dict[str, Any]]:
         try:
             response = await self._client.chat.completions.create(
                 model=SYNTH_MODEL,
@@ -372,18 +512,36 @@ class Synthesizer:
             ) from exc
 
         raw = (response.choices[0].message.content or "").strip()
-        usage = response.usage
+        usage = getattr(response, "usage", None)
+        input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        total_tokens = int(
+            getattr(usage, "total_tokens", 0)
+            or (input_tokens + output_tokens)
+        )
+        model_used = getattr(response, "model", SYNTH_MODEL) or SYNTH_MODEL
+        first_choice = response.choices[0] if response.choices else None
+        metadata = {
+            "request_id": _safe_diagnostic_value(
+                getattr(response, "_request_id", None)
+            ),
+            "finish_reason": _safe_diagnostic_value(
+                getattr(first_choice, "finish_reason", None)
+            ),
+            "model": _safe_diagnostic_value(model_used),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
         return (
             raw,
             {
-                "input_tokens": int(
-                    getattr(usage, "prompt_tokens", 0) or 0
-                ),
-                "output_tokens": int(
-                    getattr(usage, "completion_tokens", 0) or 0
-                ),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
             },
-            getattr(response, "model", SYNTH_MODEL) or SYNTH_MODEL,
+            model_used,
+            metadata,
         )
 
 
@@ -1491,25 +1649,177 @@ def _trace_raw_payload(stage: str, raw: str) -> None:
     )
 
 
-def _trace_validation_error(stage: str, error: Exception) -> None:
+def _safe_diagnostic_value(value: Any) -> Optional[str]:
+    """Return a bounded, single-line identifier suitable for diagnostics."""
+    if value is None:
+        return None
+    clean = _SAFE_DIAGNOSTIC_VALUE_RE.sub("_", str(value).strip())[:200]
+    return clean or None
+
+
+@lru_cache(maxsize=1)
+def _known_validation_fields() -> set[str]:
+    """Collect schema property names so arbitrary extra keys are never logged."""
+    fields: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                fields.update(str(key) for key in properties)
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    visit(SynthesisBundleV3.model_json_schema())
+    visit(TrustedConclusionV21.model_json_schema())
+    return fields
+
+
+def _safe_validation_location(location: Any) -> str:
+    known_fields = _known_validation_fields()
+    parts: list[str] = []
+    for part in location or []:
+        if isinstance(part, int):
+            parts.append(str(part))
+        elif str(part) in known_fields:
+            parts.append(str(part))
+        else:
+            parts.append("<unknown_field>")
+    return ".".join(parts) or "<root>"
+
+
+def _validation_error_summary(error: ValidationError) -> dict[str, Any]:
+    raw_errors = error.errors()
+    errors = []
+    for item in raw_errors[:_MAX_VALIDATION_ERRORS_LOGGED]:
+        error_type = _safe_diagnostic_value(item.get("type")) or "validation_error"
+        errors.append(
+            {
+                "location": _safe_validation_location(item.get("loc")),
+                "type": error_type,
+                "code": f"pydantic.{error_type}",
+            }
+        )
+    return {"error_count": len(raw_errors), "errors": errors}
+
+
+def _log_parse_failure(
+    query_id: str,
+    stage: str,
+    model: str,
+    error: Exception,
+) -> None:
+    safe_query_id = _safe_diagnostic_value(query_id) or "unknown"
+    safe_model = _safe_diagnostic_value(model) or "unknown"
+    if isinstance(error, ValidationError):
+        summary = _validation_error_summary(error)
+        log.warning(
+            "synthesis_validation_error query_id=%s stage=%s "
+            "error_count=%d model=%s errors=%s",
+            safe_query_id,
+            stage,
+            summary["error_count"],
+            safe_model,
+            json.dumps(summary["errors"], separators=(",", ":")),
+        )
+        return
+    log.warning(
+        "synthesis_parse_failed query_id=%s stage=%s error_type=%s model=%s",
+        safe_query_id,
+        stage,
+        _safe_diagnostic_value(type(error).__name__) or "Exception",
+        safe_model,
+    )
+
+
+def _synthesis_telemetry(
+    *,
+    model_used: str,
+    input_tokens: int,
+    output_tokens: int,
+    total_tokens: int,
+    latency_ms: int,
+    cost_usd: float,
+    repair_attempted: bool,
+    attempts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "model_used": _safe_diagnostic_value(model_used) or SYNTH_MODEL,
+        "input_tokens": max(0, int(input_tokens)),
+        "output_tokens": max(0, int(output_tokens)),
+        "total_tokens": max(0, int(total_tokens)),
+        "latency_ms": max(0, int(latency_ms)),
+        "cost_usd": max(0.0, float(cost_usd)),
+        "repair_attempted": bool(repair_attempted),
+        "attempts": [dict(attempt) for attempt in attempts],
+    }
+
+
+def _log_openai_response_metadata(
+    query_id: str,
+    stage: str,
+    metadata: dict[str, Any],
+) -> None:
+    log.info(
+        "synthesis_response_metadata query_id=%s stage=%s request_id=%s "
+        "finish_reason=%s model=%s input_tokens=%d output_tokens=%d "
+        "total_tokens=%d",
+        _safe_diagnostic_value(query_id) or "unknown",
+        stage,
+        metadata.get("request_id") or "unavailable",
+        metadata.get("finish_reason") or "unavailable",
+        metadata.get("model") or "unknown",
+        int(metadata.get("input_tokens") or 0),
+        int(metadata.get("output_tokens") or 0),
+        int(metadata.get("total_tokens") or 0),
+    )
+
+
+def _log_failed_attempt_totals(
+    query_id: str,
+    telemetry: dict[str, Any],
+) -> None:
+    log.warning(
+        "synthesis_failed_attempt_totals query_id=%s model=%s "
+        "input_tokens=%d output_tokens=%d total_tokens=%d cost_usd=%.8f "
+        "failed_synthesis_total_ms=%d repair_attempted=%s",
+        _safe_diagnostic_value(query_id) or "unknown",
+        telemetry.get("model_used") or "unknown",
+        int(telemetry.get("input_tokens") or 0),
+        int(telemetry.get("output_tokens") or 0),
+        int(telemetry.get("total_tokens") or 0),
+        float(telemetry.get("cost_usd") or 0.0),
+        int(telemetry.get("latency_ms") or 0),
+        bool(telemetry.get("repair_attempted")),
+    )
+
+
+def _trace_validation_error(
+    stage: str,
+    error: Exception,
+    *,
+    query_id: str = "unknown",
+    model: str = "unknown",
+) -> None:
     if not _trace_enabled():
         return
     validation_errors = []
-    if callable(getattr(error, "errors", None)):
-        for item in error.errors()[:20]:
-            validation_errors.append(
-                {
-                    "location": ".".join(
-                        str(part) for part in item.get("loc") or []
-                    ),
-                    "type": str(item.get("type") or "validation_error"),
-                }
-            )
+    error_count = 0
+    if isinstance(error, ValidationError):
+        summary = _validation_error_summary(error)
+        validation_errors = summary["errors"]
+        error_count = summary["error_count"]
     _trace_event(
         stage,
         {
             "parse_status": "failed",
             "error_type": type(error).__name__,
+            "query_id": _safe_diagnostic_value(query_id) or "unknown",
+            "model": _safe_diagnostic_value(model) or "unknown",
+            "error_count": error_count,
             "validation_errors": validation_errors,
         },
     )

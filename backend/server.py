@@ -845,6 +845,9 @@ class CompareResponse(BaseModel):
     synthesis_model: str = ""
     synthesis_latency_ms: int = 0
     synthesis_cost_usd: float = 0.0
+    synthesis_input_tokens: int = 0
+    synthesis_output_tokens: int = 0
+    synthesis_total_tokens: int = 0
     claims: List[TraceableClaim] = Field(default_factory=list)
     citations: List[CitationRecord] = Field(default_factory=list)
     claim_schema_version: Optional[str] = None
@@ -1284,6 +1287,10 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
     synth_model_used = ""
     synth_latency_ms = 0
     synth_cost_usd = 0.0
+    synth_input_tokens = 0
+    synth_output_tokens = 0
+    synth_total_tokens = 0
+    synth_attempt_metadata: list[dict[str, Any]] = []
     claims: list[dict] = []
     citations = merge_provider_citations(
         response.citations
@@ -1348,6 +1355,13 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                 synth_model_used = s["model_used"]
                 synth_latency_ms = s["latency_ms"]
                 synth_cost_usd = float(s.get("cost_usd") or 0.0)
+                synth_input_tokens = int(s.get("input_tokens") or 0)
+                synth_output_tokens = int(s.get("output_tokens") or 0)
+                synth_total_tokens = int(
+                    s.get("total_tokens")
+                    or (synth_input_tokens + synth_output_tokens)
+                )
+                synth_attempt_metadata = list(s.get("attempt_metadata") or [])
                 claims = s.get("claims") or []
                 citations = s.get("citations") or citations
                 claim_schema_version = s.get("claim_schema_version")
@@ -1364,6 +1378,22 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         except SynthesisFailure as exc:
             synthesis_error = str(exc)
             claim_analysis_error = synthesis_error
+            telemetry = exc.telemetry
+            synth_model_used = str(
+                telemetry.get("model_used") or synth_model_used
+            )
+            synth_latency_ms = int(telemetry.get("latency_ms") or 0)
+            synth_cost_usd = float(telemetry.get("cost_usd") or 0.0)
+            synthesis_repair_attempted = bool(
+                telemetry.get("repair_attempted")
+            )
+            synth_input_tokens = int(telemetry.get("input_tokens") or 0)
+            synth_output_tokens = int(telemetry.get("output_tokens") or 0)
+            synth_total_tokens = int(
+                telemetry.get("total_tokens")
+                or (synth_input_tokens + synth_output_tokens)
+            )
+            synth_attempt_metadata = list(telemetry.get("attempts") or [])
             logging.getLogger(__name__).warning(
                 "Trusted Conclusion synthesis failed: %s",
                 type(exc).__name__,
@@ -1419,7 +1449,7 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                     "execution_mode": execution_mode,
                     "provider_statuses": provider_statuses,
                     "live_count": live_count,
-                    "total_cost_usd": round(total_cost, 6),
+                    "total_cost_usd": round(total_cost + synth_cost_usd, 6),
                     "generated_at": now_iso,
                     "conclusion_created_at": now_iso,
                     "trusted_conclusion": synth_text,
@@ -1430,6 +1460,12 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                     "synthesis_error": synthesis_error,
                     "synthesis_repair_attempted": synthesis_repair_attempted,
                     "synthesis_model": synth_model_used,
+                    "synthesis_latency_ms": synth_latency_ms,
+                    "synthesis_cost_usd": round(synth_cost_usd, 6),
+                    "synthesis_input_tokens": synth_input_tokens,
+                    "synthesis_output_tokens": synth_output_tokens,
+                    "synthesis_total_tokens": synth_total_tokens,
+                    "synthesis_attempt_metadata": synth_attempt_metadata,
                     "claims": claims,
                     "citations": citations,
                     "claim_schema_version": claim_schema_version,
@@ -1453,6 +1489,11 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
                         "claim_analysis_status": claim_analysis_status,
                         "claim_analysis_error": claim_analysis_error,
                         "model": synth_model_used,
+                        "synthesis_latency_ms": synth_latency_ms,
+                        "synthesis_cost_usd": round(synth_cost_usd, 6),
+                        "synthesis_input_tokens": synth_input_tokens,
+                        "synthesis_output_tokens": synth_output_tokens,
+                        "synthesis_total_tokens": synth_total_tokens,
                         "generated_at": now_iso,
                     },
                 },
@@ -1515,6 +1556,9 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
         synthesis_model=synth_model_used,
         synthesis_latency_ms=synth_latency_ms,
         synthesis_cost_usd=round(synth_cost_usd, 6),
+        synthesis_input_tokens=synth_input_tokens,
+        synthesis_output_tokens=synth_output_tokens,
+        synthesis_total_tokens=synth_total_tokens,
         claims=claims,
         citations=citations,
         claim_schema_version=claim_schema_version,
