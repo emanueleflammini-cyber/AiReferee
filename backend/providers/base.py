@@ -27,6 +27,49 @@ PROVIDER_TIMEOUT_ENV_BY_ID = {
 }
 
 
+# --------------------------------------------------------------------------
+# Provider result status values — early-synthesis foundation.
+# --------------------------------------------------------------------------
+# LIVE / FAILED / MOCK remain the only statuses Provider.timed_generate can
+# ever produce (see the module docstring above — unchanged by this patch).
+# PENDING is reserved for the *future* early-synthesis orchestrator: it
+# means "the real provider call is still in flight, neither succeeded nor
+# failed yet". It is defined here, as named constants, purely so nothing
+# has to spell "PENDING" as a bare string once that orchestrator exists —
+# nothing in this codebase produces or consumes it today. The synchronous
+# compare_query flow in server.py always resolves every provider to one of
+# the other three statuses (via this exact function) before a ModelResponse
+# is ever built, so PENDING cannot appear in a CompareResponse today.
+PROVIDER_STATUS_LIVE = "LIVE"
+PROVIDER_STATUS_FAILED = "FAILED"
+PROVIDER_STATUS_MOCK = "MOCK"
+PROVIDER_STATUS_PENDING = "PENDING"
+
+# Every status a provider result may carry, PENDING included for forward
+# compatibility even though nothing produces it yet (see above).
+PROVIDER_STATUSES = frozenset({
+    PROVIDER_STATUS_LIVE,
+    PROVIDER_STATUS_FAILED,
+    PROVIDER_STATUS_MOCK,
+    PROVIDER_STATUS_PENDING,
+})
+
+# Statuses that represent a *finished* provider call — everything except
+# PENDING. Code that must never treat "still running" as "resolved"
+# (synthesis eligibility, claim-analysis validation, cost accounting, ...)
+# should check membership here rather than hardcoding the other three.
+FINALIZED_PROVIDER_STATUSES = frozenset({
+    PROVIDER_STATUS_LIVE,
+    PROVIDER_STATUS_FAILED,
+    PROVIDER_STATUS_MOCK,
+})
+
+
+def is_pending_status(status: str) -> bool:
+    """True iff `status` is exactly the PENDING marker."""
+    return status == PROVIDER_STATUS_PENDING
+
+
 PRICING: dict[str, dict[str, float]] = {
     "gpt-5.5-mini": {"input": 0.15, "output": 0.60},
     "gpt-5.5": {"input": 2.50, "output": 10.00},
@@ -107,6 +150,18 @@ class ProviderResult:
                 self.output_tokens,
             )
         return self
+
+
+def make_pending_result() -> ProviderResult:
+    """Construct a well-formed PENDING ProviderResult.
+
+    Not called anywhere yet — Provider.timed_generate never produces
+    PENDING today (see the status constants above). Provided so a future
+    early-synthesis orchestrator has exactly one correct, tested way to
+    represent "still running": no text, no cost, not mock. Enforces the
+    invariant that PENDING must never carry synthetic/mock content.
+    """
+    return ProviderResult(text="", provider_status=PROVIDER_STATUS_PENDING, is_mock=False)
 
 
 class ProviderTimeoutError(TimeoutError):
