@@ -122,16 +122,53 @@ class ClaimAssessment(StrictModel):
 
 
 class TraceableClaim(StrictModel):
+    """A single claim with cross-checked provider support/dispute evidence.
+
+    Invariants enforced by validate_relationships(): a provider can never be
+    both a supporter and a disputer of the same claim; every provider in
+    support[] must also appear in supporting_models; every provider in
+    dispute[] must also appear in disputing_models; assessment.status
+    'supported' requires at least one real excerpt in support[]; assessment.
+    status 'disputed' requires at least one provider in disputing_models.
+    """
+
     id: str = Field(pattern=r"^claim_[A-Za-z0-9_-]{1,80}$")
     text: str = Field(min_length=1, max_length=1200)
     claim_type: ClaimType
     originating_models: list[ProviderKey] = Field(min_length=1)
-    supporting_models: list[ProviderKey] = Field(default_factory=list)
-    disputing_models: list[ProviderKey] = Field(default_factory=list)
-    support: list[ClaimSupport] = Field(default_factory=list)
+    supporting_models: list[ProviderKey] = Field(
+        default_factory=list,
+        description=(
+            "Providers that support this claim. Must be disjoint from "
+            "disputing_models. Every provider referenced in support[] must "
+            "appear here."
+        ),
+    )
+    disputing_models: list[ProviderKey] = Field(
+        default_factory=list,
+        description=(
+            "Providers that dispute this claim. Must be disjoint from "
+            "supporting_models. Every provider referenced in dispute[] must "
+            "appear here."
+        ),
+    )
+    support: list[ClaimSupport] = Field(
+        default_factory=list,
+        description=(
+            "Exact excerpts from supporting providers. Required and "
+            "non-empty when assessment.status is 'supported'."
+        ),
+    )
     dispute: list[ClaimSupport] = Field(default_factory=list)
     citation_ids: list[str] = Field(default_factory=list)
-    assessment: ClaimAssessment
+    assessment: ClaimAssessment = Field(
+        description=(
+            "status='supported' requires a non-empty support[] with a real "
+            "excerpt; never set 'supported' from supporting_models alone. "
+            "status='disputed' requires at least one provider in "
+            "disputing_models."
+        )
+    )
 
     @model_validator(mode="after")
     def validate_relationships(self) -> "TraceableClaim":

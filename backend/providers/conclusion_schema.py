@@ -100,17 +100,56 @@ class Agreement(StrictContractModel):
 
 
 class DisagreementPosition(StrictContractModel):
-    model: ProviderKey
+    """One provider's position within trusted_conclusion.disagreements[].
+
+    Belongs only to Disagreement, never to ClaimDisagreement.
+    """
+
+    model: ProviderKey = Field(
+        description=(
+            "Provider key for this position. Named 'model' because this "
+            "belongs to trusted_conclusion.disagreements[]; the equivalent "
+            "field in trusted_conclusion.claim_disagreements[] is named "
+            "'provider' instead."
+        )
+    )
     position: str = Field(min_length=1)
-    evidence_claim_ids: list[str] = Field(default_factory=list)
+    evidence_claim_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Claim IDs from claim_analysis.claims supporting this position. "
+            "Valid only inside trusted_conclusion.disagreements[]; "
+            "claim_disagreements[].positions[] has no such field."
+        ),
+    )
 
 
 class Disagreement(StrictContractModel):
+    """A narrative disagreement in trusted_conclusion.disagreements[].
+
+    Distinct from ClaimDisagreement (trusted_conclusion.claim_disagreements[]).
+    This structure never carries disagreement_type, impact_on_verdict or
+    referee_resolution.
+    """
+
     id: str = Field(min_length=1)
     topic: str = Field(min_length=1)
     positions: list[DisagreementPosition] = Field(min_length=2)
-    referee_assessment: str = Field(min_length=1)
-    missing_information: str = ""
+    referee_assessment: str = Field(
+        min_length=1,
+        description=(
+            "Required narrative assessment of this disagreement. Only "
+            "valid in trusted_conclusion.disagreements[]; "
+            "claim_disagreements[] has no referee_assessment field."
+        ),
+    )
+    missing_information: str = Field(
+        default="",
+        description=(
+            "What additional information could resolve this disagreement. "
+            "Only valid in trusted_conclusion.disagreements[]."
+        ),
+    )
     disputing_claim_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -309,17 +348,60 @@ class ClaimAgreement(StrictContractModel):
 
 
 class ClaimDisagreementPosition(StrictContractModel):
-    provider: ProviderKey
+    """One provider's position within trusted_conclusion.claim_disagreements[].
+
+    Belongs only to ClaimDisagreement, never to Disagreement.
+    """
+
+    provider: ProviderKey = Field(
+        description=(
+            "Provider key for this position. Named 'provider' because this "
+            "belongs to trusted_conclusion.claim_disagreements[]; the "
+            "equivalent field in trusted_conclusion.disagreements[] is "
+            "named 'model' instead."
+        )
+    )
     position: str = Field(min_length=1, max_length=1000)
 
 
 class ClaimDisagreement(StrictContractModel):
+    """A structured disagreement in trusted_conclusion.claim_disagreements[],
+    linked to claim_matrix claim_ids.
+
+    Distinct from Disagreement (trusted_conclusion.disagreements[]). This
+    structure never carries evidence_claim_ids (inside positions) or
+    referee_assessment.
+    """
+
     topic: str = Field(min_length=1, max_length=500)
-    claim_ids: list[str] = Field(min_length=1)
+    claim_ids: list[str] = Field(
+        min_length=1,
+        description="Must reference claim_matrix claim_ids, never evidence_claim_ids.",
+    )
     positions: list[ClaimDisagreementPosition] = Field(min_length=2)
-    disagreement_type: DisagreementType
-    impact_on_verdict: VerdictImpact
-    referee_resolution: str = Field(min_length=1, max_length=1200)
+    disagreement_type: DisagreementType = Field(
+        description=(
+            "Only valid in trusted_conclusion.claim_disagreements[]; "
+            "trusted_conclusion.disagreements[] has no disagreement_type "
+            "field."
+        )
+    )
+    impact_on_verdict: VerdictImpact = Field(
+        description=(
+            "Only valid in trusted_conclusion.claim_disagreements[]; "
+            "trusted_conclusion.disagreements[] has no impact_on_verdict "
+            "field."
+        )
+    )
+    referee_resolution: str = Field(
+        min_length=1,
+        max_length=1200,
+        description=(
+            "Only valid in trusted_conclusion.claim_disagreements[]; "
+            "trusted_conclusion.disagreements[] has no referee_resolution "
+            "field."
+        ),
+    )
 
     @model_validator(mode="after")
     def require_distinct_values(self) -> "ClaimDisagreement":
