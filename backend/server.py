@@ -805,6 +805,13 @@ class ModelResponse(BaseModel):
     model_used: str = ""
     is_mock: bool
     error: Optional[str] = None
+    # Unconstrained str (not an Enum/Literal) so it can represent LIVE /
+    # FAILED / MOCK today, and — once a future early-synthesis orchestrator
+    # exists — PENDING (see providers.base PROVIDER_STATUS_* constants /
+    # providers.policy) with zero schema migration. compare_query below
+    # always resolves every provider to one of the first three before
+    # building a ModelResponse, so PENDING cannot appear in a
+    # CompareResponse today; this comment does not change that.
     provider_status: str
     execution_mode: str
     provider_error: Optional[str] = None
