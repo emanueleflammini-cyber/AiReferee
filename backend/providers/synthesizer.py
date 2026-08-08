@@ -12,15 +12,25 @@ import os
 import re
 import time
 from functools import lru_cache
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Literal, Optional
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .base import estimate_cost
 from .conclusion_schema import (
+    Agreement,
+    ClaimAgreement,
+    ClaimDisagreement,
+    ClaimMatrixItem,
+    ConclusionConfidence,
+    Disagreement,
+    EvidenceItem,
+    RemainingUncertainty,
+    StrictContractModel,
     TrustedConclusionV2,
     TrustedConclusionV21,
+    UnsupportedClaim,
     parse_structured_conclusion,
 )
 from .traceability_schema import (
@@ -69,6 +79,61 @@ class SynthesisBundleV3(BaseModel):
 
     @model_validator(mode="after")
     def require_claims_for_structured_evidence(self) -> "SynthesisBundleV3":
+        has_structured_evidence = bool(
+            self.trusted_conclusion.agreements
+            or self.trusted_conclusion.strongest_evidence
+        )
+        if has_structured_evidence and not self.claim_analysis.claims:
+            raise ValueError(
+                "agreements or strongest_evidence require traceable claims"
+            )
+        return self
+
+
+class TrustedConclusionWireV2(StrictContractModel):
+    # Implementation note (not part of the model's public docstring, which
+    # Pydantic embeds verbatim into the JSON schema shown to the LLM --
+    # keep that docstring free of any field name this model intentionally
+    # omits): this is the LLM-facing wire contract for trusted_conclusion,
+    # narrower than the full TrustedConclusionV2 shape used elsewhere. It
+    # reuses the exact same nested models (Agreement, ClaimMatrixItem,
+    # etc.), so every field-level and cross-field validator that already
+    # applies to those types still applies unchanged here.
+    """The referee's structured verdict for this comparison: the narrative
+    conclusion plus the per-claim provider agreement/disagreement matrix.
+    """
+
+    schema_version: Literal["2.0"] = "2.0"
+    final_answer: str = Field(min_length=1)
+    agreements: list[Agreement] = Field(default_factory=list)
+    disagreements: list[Disagreement] = Field(default_factory=list)
+    strongest_evidence: list[EvidenceItem] = Field(default_factory=list)
+    remaining_uncertainties: list[RemainingUncertainty] = Field(
+        default_factory=list
+    )
+    unsupported_claims: list[UnsupportedClaim] = Field(default_factory=list)
+    confidence: ConclusionConfidence
+    referee_reasoning: str = ""
+    what_could_change_the_verdict: list[str] = Field(default_factory=list)
+    claim_matrix: list[ClaimMatrixItem] = Field(default_factory=list)
+    claim_agreements: list[ClaimAgreement] = Field(default_factory=list)
+    claim_disagreements: list[ClaimDisagreement] = Field(default_factory=list)
+
+
+class SynthesisWireBundleV1(BaseModel):
+    """The actual JSON contract sent to and required from the LLM (perf/
+    synthesizer-wire-phaseb-step1, purely additive -- replaces
+    SynthesisBundleV3 only as the schema/validation target for the live
+    OpenAI call; SynthesisBundleV3 itself is untouched and keeps being used
+    where the full canonical shape is needed, e.g. _known_validation_fields).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    trusted_conclusion: TrustedConclusionWireV2
+    claim_analysis: ClaimAnalysisV3
+
+    @model_validator(mode="after")
+    def require_claims_for_structured_evidence(self) -> "SynthesisWireBundleV1":
         has_structured_evidence = bool(
             self.trusted_conclusion.agreements
             or self.trusted_conclusion.strongest_evidence
@@ -171,7 +236,7 @@ class Synthesizer:
             for answer in clean
         ]
 
-        schema = SynthesisBundleV3.model_json_schema()
+        schema = SynthesisWireBundleV1.model_json_schema()
         schema_json = json.dumps(schema, ensure_ascii=False)
         panel_payload_json = json.dumps(panel_payload, ensure_ascii=False)
         system = _system_prompt(
@@ -633,14 +698,6 @@ def _system_prompt(
         "partially_supports, contradicts, uncertain, and not_mentioned. "
         "Omission is not contradiction.\n"
         "- claim_agreements may reference only IDs from claim_matrix.\n"
-        "- exclusive_contributions contain useful material supplied by only "
-        "one provider. Mark whether each contribution is supported within "
-        "that response, unverified, inferential, or contradicted; uniqueness "
-        "does not make it true.\n"
-        "- decisive_factors must explain which supplied evidence materially "
-        "led to the final verdict. The narrative verdict, claim_matrix, "
-        "claim_agreements, claim_disagreements, and decisive_factors must be "
-        "mutually coherent.\n"
         "- evidence_refs may use only provider_response_id values and "
         "citation IDs supplied in the request. Never create an evidence "
         "reference.\n"
@@ -791,7 +848,7 @@ def _parse_bundle(
         }
 
     payload = _normalize_bundle_provider_aliases(payload)
-    bundle = SynthesisBundleV3.model_validate(payload)
+    bundle = SynthesisWireBundleV1.model_validate(payload)
     conclusion = parse_structured_conclusion(
         bundle.trusted_conclusion.model_dump(),
         allowed_providers,
