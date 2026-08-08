@@ -146,27 +146,32 @@ def test_final_answer_is_explicitly_exempt_from_brevity_and_stays_complete():
     assert "final_answer must directly and fully answer the question" in prompt
 
 
-def test_excerpts_are_explicitly_exempt_from_brevity():
+def test_sentence_index_selection_is_unaffected_by_conciseness_rule():
+    # sentence_index selects a whole existing sentence -- there is no
+    # LLM-authored excerpt text left to shorten, so the general conciseness
+    # rule has nothing left to constrain here (feature/deterministic-
+    # excerpt-sentence-index).
     prompt = behavior_prompt()
-    assert (
-        "This conciseness requirement never shortens support[]/dispute[] "
-        "response_excerpt"
-    ) in prompt
+    assert "set sentence_index to the index" in prompt
+    assert "response_excerpt" not in prompt
 
 
 # --- regression: previous prompt patches remain intact ---------------------
 
 
-def test_exact_excerpt_rules_from_previous_patch_are_unchanged():
+def test_sentence_index_rules_from_this_patch_are_present():
     prompt = behavior_prompt()
     assert (
-        "a short, CONTIGUOUS, character-for-character substring copied "
-        "directly from that provider's response field above"
+        "set sentence_index to the index (from that provider's "
+        "provider_responses[].sentences) of the single sentence"
     ) in prompt
-    assert "Never: translate it" in prompt
     assert (
-        "This translation requirement does NOT apply to "
-        "support[].response_excerpt"
+        "never invent, estimate, or reuse an index from a different "
+        "provider's sentence list"
+    ) in prompt
+    assert (
+        "This translation requirement does not apply to the numbered "
+        "sentences supplied in provider_responses[].sentences"
     ) in prompt
 
 

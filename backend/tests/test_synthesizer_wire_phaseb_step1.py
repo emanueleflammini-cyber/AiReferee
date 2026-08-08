@@ -167,8 +167,27 @@ OPENAI_TEXT = "Caching reduces repeated network calls, which is a clear win."
 GEMINI_TEXT = "Caching reduces repeated network calls, which is a clear win."
 ANSWERS = [answer("openai", OPENAI_TEXT), answer("gemini", GEMINI_TEXT)]
 
+# OPENAI_TEXT/GEMINI_TEXT are each a single sentence (no other sentence-
+# terminal punctuation), so every support/dispute item below resolves via
+# sentence_index=0 to that one full sentence (feature/deterministic-
+# excerpt-sentence-index resolves whole sentences, never sub-sentence
+# spans -- see wire_support()).
+
+
+def wire_support(provider: str, sentence_index: int = 0, response_id=None) -> dict:
+    return {
+        "provider": provider,
+        "sentence_index": sentence_index,
+        "provider_response_id": response_id or provider,
+    }
+
 
 def _claim_analysis_claims() -> list[dict]:
+    """Wire-shape claims (sentence_index) sent through the full synth()
+    pipeline. See _public_claim_analysis_claims() for the public-shape
+    (response_excerpt) equivalent used where a test constructs a
+    ClaimAnalysisV3 directly, bypassing the wire model entirely.
+    """
     return [
         {
             # Only openai addresses this point -> exclusive_contributions
@@ -179,13 +198,7 @@ def _claim_analysis_claims() -> list[dict]:
             "originating_models": ["openai"],
             "supporting_models": ["openai"],
             "disputing_models": [],
-            "support": [
-                {
-                    "provider": "openai",
-                    "response_excerpt": "which is a clear win",
-                    "response_reference": {"provider_response_id": "openai"},
-                }
-            ],
+            "support": [wire_support("openai")],
             "dispute": [],
             "citation_ids": [],
             "assessment": {
@@ -203,16 +216,8 @@ def _claim_analysis_claims() -> list[dict]:
             "supporting_models": ["openai", "gemini"],
             "disputing_models": [],
             "support": [
-                {
-                    "provider": "openai",
-                    "response_excerpt": "Caching reduces repeated network calls",
-                    "response_reference": {"provider_response_id": "openai"},
-                },
-                {
-                    "provider": "gemini",
-                    "response_excerpt": "Caching reduces repeated network calls",
-                    "response_reference": {"provider_response_id": "gemini"},
-                },
+                wire_support("openai"),
+                wire_support("gemini"),
             ],
             "dispute": [],
             "citation_ids": [],
@@ -230,6 +235,62 @@ def _claim_analysis() -> dict:
         "execution_mode": "LIVE",
         "claims": _claim_analysis_claims(),
     }
+
+
+def _public_claim_analysis_claims() -> list[dict]:
+    """Public-shape (response_excerpt) equivalent of _claim_analysis_claims(),
+    for tests that build a ClaimAnalysisV3 directly via model_validate,
+    bypassing the wire model and its sentence_index resolution.
+    """
+    return [
+        {
+            "id": "claim_exclusive",
+            "text": "OpenAI notes a secondary caching benefit.",
+            "claim_type": "fact",
+            "originating_models": ["openai"],
+            "supporting_models": ["openai"],
+            "disputing_models": [],
+            "support": [
+                {
+                    "provider": "openai",
+                    "response_excerpt": OPENAI_TEXT,
+                    "response_reference": {"provider_response_id": "openai"},
+                }
+            ],
+            "dispute": [],
+            "citation_ids": [],
+            "assessment": {
+                "status": "supported",
+                "reason": "OpenAI states this directly.",
+            },
+        },
+        {
+            "id": "claim_decisive",
+            "text": "Caching reduces repeated network calls.",
+            "claim_type": "fact",
+            "originating_models": ["openai", "gemini"],
+            "supporting_models": ["openai", "gemini"],
+            "disputing_models": [],
+            "support": [
+                {
+                    "provider": "openai",
+                    "response_excerpt": OPENAI_TEXT,
+                    "response_reference": {"provider_response_id": "openai"},
+                },
+                {
+                    "provider": "gemini",
+                    "response_excerpt": GEMINI_TEXT,
+                    "response_reference": {"provider_response_id": "gemini"},
+                },
+            ],
+            "dispute": [],
+            "citation_ids": [],
+            "assessment": {
+                "status": "supported",
+                "reason": "Both providers state this identically.",
+            },
+        },
+    ]
 
 
 def _llm_claim_matrix() -> list[dict]:
@@ -427,7 +488,13 @@ def test_f_derivation_is_deterministic_given_same_inputs():
     conclusion = parse_structured_conclusion(
         _wire_trusted_conclusion(), ["openai", "gemini"]
     )
-    analysis = ClaimAnalysisV3.model_validate(_claim_analysis())
+    analysis = ClaimAnalysisV3.model_validate(
+        {
+            "schema_version": "3.0",
+            "execution_mode": "LIVE",
+            "claims": _public_claim_analysis_claims(),
+        }
+    )
 
     first = _enrich_conclusion(conclusion, analysis, [], ANSWERS)
     second = _enrich_conclusion(conclusion, analysis, [], ANSWERS)
@@ -492,11 +559,7 @@ def test_k_llm_claim_disagreements_passes_through_unmodified():
         if item["provider"] == "openai"
     ]
     bundle["claim_analysis"]["claims"][1]["dispute"] = [
-        {
-            "provider": "gemini",
-            "response_excerpt": "which is a clear win",
-            "response_reference": {"provider_response_id": "gemini"},
-        }
+        wire_support("gemini"),
     ]
     bundle["claim_analysis"]["claims"][1]["assessment"] = {
         "status": "disputed",
@@ -519,17 +582,19 @@ def test_l_traceability_and_excerpt_validation_unaffected():
 
     assert result["claim_analysis_status"] == "SUCCESS"
     claims = {claim["id"]: claim for claim in result["claims"]}
+    # Resolution always returns the full sentence at sentence_index -- never
+    # a sub-sentence span -- so the resolved excerpt is the whole (only)
+    # sentence in OPENAI_TEXT, not a hand-picked fragment of it.
     assert claims["claim_decisive"]["support"][0]["response_excerpt"] == (
-        "Caching reduces repeated network calls"
+        OPENAI_TEXT
     )
     assert claims["claim_decisive"]["support"][0]["provider"] == "openai"
 
 
-def test_l_fabricated_excerpt_is_still_rejected():
+def test_l_out_of_range_sentence_index_is_still_rejected():
     bundle = _wire_bundle()
-    bundle["claim_analysis"]["claims"][0]["support"][0]["response_excerpt"] = (
-        "This text was never said by anyone."
-    )
+    # OPENAI_TEXT has exactly one sentence (index 0) -- 7 is out of range.
+    bundle["claim_analysis"]["claims"][0]["support"][0]["sentence_index"] = 7
     synth, completions = _synthesizer(
         [json.dumps(bundle), json.dumps(_wire_bundle())]
     )
@@ -593,7 +658,7 @@ def test_m_failed_provider_never_enters_derived_sections():
     single_claim_analysis = {
         "schema_version": "3.0",
         "execution_mode": "LIVE",
-        "claims": [_claim_analysis_claims()[0]],
+        "claims": [_public_claim_analysis_claims()[0]],
     }
     analysis = ClaimAnalysisV3.model_validate(single_claim_analysis)
     only_openai_answer = [answer("openai", OPENAI_TEXT, status="LIVE")]
@@ -659,9 +724,8 @@ def test_n_live_demo_mismatch_is_still_rejected():
 
 def test_o_repair_prompt_uses_the_new_wire_schema():
     bundle = _wire_bundle()
-    bundle["claim_analysis"]["claims"][0]["support"][0]["response_excerpt"] = (
-        "This text was never said by anyone."
-    )
+    # OPENAI_TEXT has exactly one sentence (index 0) -- 9 is out of range.
+    bundle["claim_analysis"]["claims"][0]["support"][0]["sentence_index"] = 9
     synth, completions = _synthesizer(
         [json.dumps(bundle), json.dumps(_wire_bundle())]
     )

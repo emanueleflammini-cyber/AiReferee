@@ -33,8 +33,13 @@ from .conclusion_schema import (
     UnsupportedClaim,
     parse_structured_conclusion,
 )
+from .sentence_segmenter import split_sentences
 from .traceability_schema import (
     ClaimAnalysisV3,
+    ClaimAssessment,
+    ClaimType,
+    ExecutionMode,
+    ProviderKey,
     associate_citations_with_claims,
     merge_provider_citations,
     validate_claim_analysis,
@@ -120,17 +125,92 @@ class TrustedConclusionWireV2(StrictContractModel):
     claim_disagreements: list[ClaimDisagreement] = Field(default_factory=list)
 
 
+class ClaimSupportWire(StrictContractModel):
+    """LLM-facing support/dispute evidence pointer (feature/deterministic-
+    excerpt-sentence-index): the model selects which sentence of a provider's
+    response constitutes the evidence by position, instead of copying a
+    free-text excerpt. The backend resolves sentence_index into the actual
+    response_excerpt by direct lookup on the same sentence list shown to the
+    model -- no fuzzy or semantic matching, no free text trusted from the
+    LLM. response_reference's start_hint/end_hint are dropped here: they are
+    redundant once evidence is identified by an exact sentence position.
+    """
+
+    provider: ProviderKey
+    sentence_index: int = Field(ge=0)
+    provider_response_id: str = Field(min_length=1, max_length=100)
+
+
+class TraceableClaimWire(StrictContractModel):
+    """LLM-facing claim shape: identical to the public TraceableClaim except
+    support[]/dispute[] use ClaimSupportWire (sentence_index) instead of
+    ClaimSupport (response_excerpt). The cross-field invariants below mirror
+    TraceableClaim.validate_relationships exactly -- attribution checks are
+    unaffected by how evidence is located within a response.
+    """
+
+    id: str = Field(pattern=r"^claim_[A-Za-z0-9_-]{1,80}$")
+    text: str = Field(min_length=1, max_length=1200)
+    claim_type: ClaimType
+    originating_models: list[ProviderKey] = Field(min_length=1)
+    supporting_models: list[ProviderKey] = Field(default_factory=list)
+    disputing_models: list[ProviderKey] = Field(default_factory=list)
+    support: list[ClaimSupportWire] = Field(default_factory=list)
+    dispute: list[ClaimSupportWire] = Field(default_factory=list)
+    citation_ids: list[str] = Field(default_factory=list)
+    assessment: ClaimAssessment
+
+    @model_validator(mode="after")
+    def validate_relationships(self) -> "TraceableClaimWire":
+        supporters = set(self.supporting_models)
+        disputers = set(self.disputing_models)
+        if supporters & disputers:
+            raise ValueError("a provider cannot both support and dispute one claim")
+        support_providers = {item.provider for item in self.support}
+        if not support_providers.issubset(supporters):
+            raise ValueError("support excerpts require a supporting provider")
+        dispute_providers = {item.provider for item in self.dispute}
+        if not dispute_providers.issubset(disputers):
+            raise ValueError("dispute excerpts require a disputing provider")
+        if self.assessment.status == "supported" and not self.support:
+            raise ValueError("supported claim requires at least one real excerpt")
+        if self.assessment.status == "disputed" and not disputers:
+            raise ValueError("disputed claim requires at least one disputing provider")
+        return self
+
+
+class ClaimAnalysisWireV1(StrictContractModel):
+    """LLM-facing claim_analysis shape: identical to the public
+    ClaimAnalysisV3 except claims[] is TraceableClaimWire (sentence_index)
+    instead of TraceableClaim (response_excerpt).
+    """
+
+    schema_version: Literal["3.0"] = "3.0"
+    execution_mode: ExecutionMode
+    claims: list[TraceableClaimWire] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_claim_ids(self) -> "ClaimAnalysisWireV1":
+        ids = [claim.id for claim in self.claims]
+        if len(ids) != len(set(ids)):
+            raise ValueError("claim IDs must be unique within the result")
+        return self
+
+
 class SynthesisWireBundleV1(BaseModel):
     """The actual JSON contract sent to and required from the LLM (perf/
     synthesizer-wire-phaseb-step1, purely additive -- replaces
     SynthesisBundleV3 only as the schema/validation target for the live
     OpenAI call; SynthesisBundleV3 itself is untouched and keeps being used
     where the full canonical shape is needed, e.g. _known_validation_fields).
+    claim_analysis uses the sentence-index wire shape (feature/deterministic-
+    excerpt-sentence-index); _parse_bundle resolves it into a public
+    ClaimAnalysisV3 before any downstream code sees it.
     """
 
     model_config = ConfigDict(extra="forbid")
     trusted_conclusion: TrustedConclusionWireV2
-    claim_analysis: ClaimAnalysisV3
+    claim_analysis: ClaimAnalysisWireV1
 
     @model_validator(mode="after")
     def require_claims_for_structured_evidence(self) -> "SynthesisWireBundleV1":
@@ -215,6 +295,14 @@ class Synthesizer:
             for answer in clean
         )
         target_name = LANG_NAMES.get(target_lang, "English")
+        # Segmented once per request (feature/deterministic-excerpt-sentence-
+        # index) and reused verbatim for both the initial call and the
+        # repair call below -- never recomputed, so a sentence_index means
+        # the same sentence in both passes.
+        sentences_by_provider = {
+            str(answer.get("provider_key")): split_sentences(answer["text"].strip())
+            for answer in clean
+        }
         panel_payload = [
             {
                 "provider_key": answer.get("provider_key"),
@@ -225,7 +313,12 @@ class Synthesizer:
                 "provider_label": answer.get("label"),
                 "provider_organization": answer.get("provider"),
                 "provider_status": answer.get("provider_status"),
-                "response": answer["text"].strip(),
+                "sentences": [
+                    {"index": index, "text": sentence}
+                    for index, sentence in enumerate(
+                        sentences_by_provider[str(answer.get("provider_key"))]
+                    )
+                ],
                 "provider_declared_citations": [
                     _citation_for_prompt(citation)
                     for citation in citations
@@ -335,6 +428,7 @@ class Synthesizer:
                 clean,
                 citations,
                 execution_mode,
+                sentences_by_provider,
             )
         except Exception as first_error:
             _log_parse_failure(cid, "initial", model_used, first_error)
@@ -365,8 +459,9 @@ class Synthesizer:
             repair_system = (
                 "Repair the JSON so it exactly matches the supplied "
                 "schema. Do not add facts, source names, citation IDs "
-                "or URLs. Every response_excerpt must be copied from "
-                "the matching provider response. Return JSON only."
+                "or URLs. Every support/dispute sentence_index must be "
+                "the index of an existing sentence for the matching "
+                "provider in provider_responses. Return JSON only."
             )
             diagnostic_instruction = _repair_diagnostic_instruction(first_error)
             if diagnostic_instruction:
@@ -456,6 +551,7 @@ class Synthesizer:
                     clean,
                     citations,
                     execution_mode,
+                    sentences_by_provider,
                 )
             except Exception as repair_error:
                 _log_parse_failure(cid, "repair", model_used, repair_error)
@@ -634,10 +730,9 @@ def _system_prompt(
         "Markdown or prose outside JSON.\n\n"
         f"Write every human-readable field in {target_name}. Audience: "
         f"{audience}. Preferred answer format: {fmt}. This translation "
-        "requirement does NOT apply to support[].response_excerpt, "
-        "dispute[].response_excerpt, or response_reference start_hint/"
-        "end_hint: those are verbatim evidence and must stay in whatever "
-        "language the original provider response used, unmodified.\n\n"
+        "requirement does not apply to the numbered sentences supplied in "
+        "provider_responses[].sentences: those are reference material to "
+        "select from, not output you write.\n\n"
         "Rules:\n"
         "- final_answer must directly and fully answer the question.\n"
         "- final_answer must be specific to the supplied evidence. Avoid a "
@@ -752,23 +847,15 @@ def _system_prompt(
         "disagreements. Use claim_disagreements only for genuinely "
         "incompatible positions, never for style, additional examples, "
         "omission, or cautious wording alone.\n"
-        "- support[].response_excerpt and dispute[].response_excerpt (and "
-        "response_reference start_hint/end_hint, when present) must each be "
-        "a short, CONTIGUOUS, character-for-character substring copied "
-        "directly from that provider's response field above. Before "
-        "writing one, locate the exact span in the response text and copy "
-        "it unchanged. Never: translate it (even though every other "
-        "field is written in the target language, excerpts stay in the "
-        "response's original language); paraphrase or summarize it; add "
-        "an ellipsis or otherwise skip words from the middle; join two "
-        "separate spans of the response into one excerpt; fix grammar, "
-        "spelling or capitalization; change any punctuation, quotation "
-        "mark, or dash character; strip Markdown if doing so would alter "
-        "the substring; or add or remove any word. If no single "
-        "contiguous span expresses the point cleanly, pick a shorter span "
-        "that IS an exact contiguous substring rather than editing one.\n"
-        "- For a disputed claim, put exact excerpts supporting the claim in "
-        "support and exact excerpts opposing it in dispute.\n"
+        "- For every support[]/dispute[] item, set sentence_index to the "
+        "index (from that provider's provider_responses[].sentences) of "
+        "the single sentence that best serves as evidence for that "
+        "provider. Choose exactly one existing sentence per item; "
+        "sentence_index must be one of the indices actually listed for "
+        "that provider -- never invent, estimate, or reuse an index from "
+        "a different provider's sentence list.\n"
+        "- For a disputed claim, point support at the sentence(s) that "
+        "support the claim and dispute at the sentence(s) that oppose it.\n"
         "- provider_response_id must exactly match the supplied ID.\n"
         "- supporting, disputing and originating models may use only: "
         f"{', '.join(allowed_providers)}.\n"
@@ -804,9 +891,6 @@ def _system_prompt(
         "- This conciseness requirement never applies to final_answer: "
         "final_answer must stay complete, specific and readable -- never "
         "shorten it into a telegraphic or incomplete answer.\n"
-        "- This conciseness requirement never shortens support[]/dispute[] "
-        "response_excerpt below what the exact-substring rules above "
-        "already require.\n"
         "- referee_reasoning must explain how agreements, disagreements, "
         "evidence quality and uncertainty lead to the final answer.\n"
         "- Confidence is high, medium or low only; never output a confidence "
@@ -833,6 +917,7 @@ def _parse_bundle(
     answers: list[dict[str, Any]],
     citations: list[dict[str, Any]],
     execution_mode: str,
+    sentences_by_provider: dict[str, list[str]],
 ) -> dict[str, Any]:
     payload = json.loads(_extract_json_object(raw))
 
@@ -853,8 +938,12 @@ def _parse_bundle(
         bundle.trusted_conclusion.model_dump(),
         allowed_providers,
     )
+    resolved_claim_analysis = _resolve_claim_analysis_wire(
+        bundle.claim_analysis,
+        sentences_by_provider,
+    )
     analysis = validate_claim_analysis(
-        bundle.claim_analysis.model_dump(),
+        resolved_claim_analysis,
         answers,
         citations,
         execution_mode,
@@ -887,6 +976,78 @@ def _parse_bundle(
         "claim_analysis_status": "SUCCESS",
         "claim_analysis_error": None,
         "citations": associated_citations,
+    }
+
+
+def _resolve_claim_analysis_wire(
+    wire: ClaimAnalysisWireV1,
+    sentences_by_provider: dict[str, list[str]],
+) -> dict[str, Any]:
+    """Deterministically resolve sentence_index -> response_excerpt.
+
+    Direct lookup only (feature/deterministic-excerpt-sentence-index): each
+    support/dispute item's (provider, sentence_index) is looked up on
+    sentences_by_provider, the exact same sentence list shown to the model.
+    No fuzzy matching, no semantic matching, no text search, no anchors. The
+    resulting dict matches ClaimAnalysisV3's public shape and is handed to
+    validate_claim_analysis unchanged -- its exact-substring check still
+    runs and now passes by construction, since every excerpt is copied
+    verbatim from the same response text the sentences were split from.
+    """
+    try:
+        claims = [
+            {
+                "id": claim.id,
+                "text": claim.text,
+                "claim_type": claim.claim_type,
+                "originating_models": claim.originating_models,
+                "supporting_models": claim.supporting_models,
+                "disputing_models": claim.disputing_models,
+                "support": [
+                    _resolve_claim_support(item, sentences_by_provider)
+                    for item in claim.support
+                ],
+                "dispute": [
+                    _resolve_claim_support(item, sentences_by_provider)
+                    for item in claim.dispute
+                ],
+                "citation_ids": claim.citation_ids,
+                "assessment": claim.assessment.model_dump(),
+            }
+            for claim in wire.claims
+        ]
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(
+            "claim sentence resolution failed unexpectedly"
+        ) from exc
+    return {
+        "schema_version": wire.schema_version,
+        "execution_mode": wire.execution_mode,
+        "claims": claims,
+    }
+
+
+def _resolve_claim_support(
+    item: "ClaimSupportWire",
+    sentences_by_provider: dict[str, list[str]],
+) -> dict[str, Any]:
+    sentences = sentences_by_provider.get(item.provider)
+    if sentences is None:
+        raise ValueError(
+            "claim sentence provider is not available in this execution"
+        )
+    if item.sentence_index >= len(sentences):
+        raise ValueError(
+            "claim sentence index is out of range for the provider response"
+        )
+    return {
+        "provider": item.provider,
+        "response_excerpt": sentences[item.sentence_index],
+        "response_reference": {
+            "provider_response_id": item.provider_response_id,
+        },
     }
 
 
@@ -1814,6 +1975,12 @@ def _known_validation_fields() -> set[str]:
 
     visit(SynthesisBundleV3.model_json_schema())
     visit(TrustedConclusionV21.model_json_schema())
+    # Also allowlists sentence_index/provider_response_id (feature/
+    # deterministic-excerpt-sentence-index): ClaimSupportWire diverges in
+    # field names from the public ClaimSupport it replaces on the wire, so
+    # SynthesisBundleV3 alone is no longer a superset of every field name a
+    # wire-stage validation error could report a location for.
+    visit(ClaimAnalysisWireV1.model_json_schema())
     return fields
 
 
@@ -1928,6 +2095,21 @@ _POST_VALIDATION_ERROR_PATTERNS: tuple[tuple[str, str, str], ...] = (
         "citation provenance does not match claim providers",
     ),
     (
+        "resolve_claim_analysis_wire",
+        "sentence_index_out_of_range",
+        "claim sentence index is out of range for the provider response",
+    ),
+    (
+        "resolve_claim_analysis_wire",
+        "sentence_provider_not_available",
+        "claim sentence provider is not available in this execution",
+    ),
+    (
+        "resolve_claim_analysis_wire",
+        "sentence_resolution_failed",
+        "claim sentence resolution failed unexpectedly",
+    ),
+    (
         "validate_conclusion_claim_references",
         "unknown_claim_reference",
         "Trusted Conclusion references unknown claim IDs",
@@ -1990,6 +2172,18 @@ _REPAIR_DIAGNOSTIC_INSTRUCTIONS: dict[str, str] = {
         "not match the provider_response_id supplied for that provider in "
         "provider_responses. Set each provider_response_id to exactly the "
         "value supplied for that provider."
+    ),
+    "sentence_index_out_of_range": (
+        "One or more support/dispute sentence_index values are out of "
+        "range for the declared provider's sentences list in "
+        "provider_responses. Replace each invalid sentence_index with the "
+        "index of an existing sentence for that provider. Never invent an "
+        "index."
+    ),
+    "sentence_provider_not_available": (
+        "One or more support/dispute items reference a provider with no "
+        "sentences list in provider_responses for this execution. Use "
+        "only sentence_index values for providers actually listed there."
     ),
 }
 

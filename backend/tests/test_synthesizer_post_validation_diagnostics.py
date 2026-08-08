@@ -115,6 +115,21 @@ from providers.synthesizer import (  # noqa: E402
             "validate_claim_analysis",
         ),
         (
+            "claim sentence index is out of range for the provider response",
+            "sentence_index_out_of_range",
+            "resolve_claim_analysis_wire",
+        ),
+        (
+            "claim sentence provider is not available in this execution",
+            "sentence_provider_not_available",
+            "resolve_claim_analysis_wire",
+        ),
+        (
+            "claim sentence resolution failed unexpectedly",
+            "sentence_resolution_failed",
+            "resolve_claim_analysis_wire",
+        ),
+        (
             "Trusted Conclusion references unknown claim IDs: claim_9",
             "unknown_claim_reference",
             "validate_conclusion_claim_references",
@@ -308,7 +323,7 @@ def _bundle_unknown_claim_reference():
     }
 
 
-def _bundle_excerpt_not_in_response():
+def _bundle_sentence_index_out_of_range():
     return {
         "trusted_conclusion": _base_trusted_conclusion(),
         "claim_analysis": {
@@ -325,12 +340,10 @@ def _bundle_excerpt_not_in_response():
                     "support": [
                         {
                             "provider": "openai",
-                            "response_excerpt": (
-                                "This exact text never appears anywhere."
-                            ),
-                            "response_reference": {
-                                "provider_response_id": "openai"
-                            },
+                            # _answers() gives openai a single-sentence
+                            # response (index 0 only) -- 5 is out of range.
+                            "sentence_index": 5,
+                            "provider_response_id": "openai",
                         }
                     ],
                     "dispute": [],
@@ -473,10 +486,10 @@ def test_b_unknown_claim_reference_is_diagnosed(caplog):
         assert forbidden not in caplog.text
 
 
-def test_c_claim_excerpt_not_in_provider_response_is_diagnosed(caplog):
+def test_c_sentence_index_out_of_range_is_diagnosed(caplog):
     synth, completions = _synthesizer(
         [
-            json.dumps(_bundle_excerpt_not_in_response()),
+            json.dumps(_bundle_sentence_index_out_of_range()),
             json.dumps(_valid_bundle()),
         ]
     )
@@ -494,8 +507,8 @@ def test_c_claim_excerpt_not_in_provider_response_is_diagnosed(caplog):
     )
     assert "query_id=diag-c" in event
     assert "stage=initial" in event
-    assert "validation_stage=validate_claim_analysis" in event
-    assert "diagnostic_code=claim_excerpt_not_in_provider_response" in event
+    assert "validation_stage=resolve_claim_analysis_wire" in event
+    assert "diagnostic_code=sentence_index_out_of_range" in event
     assert "error_type=ValueError" in event
     for forbidden in _FORBIDDEN_CONTENT:
         assert forbidden not in caplog.text

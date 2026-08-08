@@ -16,6 +16,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from providers.conclusion_schema import eligible_synthesis_answers  # noqa: E402
+from providers.sentence_segmenter import split_sentences  # noqa: E402
 from providers.synthesizer import Synthesizer  # noqa: E402
 from providers.traceability_schema import (  # noqa: E402
     extract_citations,
@@ -240,21 +241,92 @@ def valid_conclusion():
     }
 
 
+def _sentence_index_for(text, excerpt):
+    """Locate excerpt as a whole sentence of text (wire-shape test fixtures
+    only): the sentence-index wire contract resolves whole sentences, never
+    arbitrary substrings, so every wire fixture excerpt below must equal one
+    full sentence exactly.
+    """
+    return split_sentences(text).index(excerpt)
+
+
+def wire_support(provider, sentence_index, response_id=None):
+    return {
+        "provider": provider,
+        "sentence_index": sentence_index,
+        "provider_response_id": response_id or provider,
+    }
+
+
+def wire_supported_claim(citation_ids=None):
+    excerpt = "Caching reduces repeated work."
+    return {
+        "id": "claim_shared",
+        "text": "Caching reduces repeated work.",
+        "claim_type": "fact",
+        "originating_models": ["openai", "gemini"],
+        "supporting_models": ["openai", "gemini"],
+        "disputing_models": [],
+        "support": [
+            wire_support("openai", _sentence_index_for(OPENAI_TEXT, excerpt)),
+            wire_support("gemini", _sentence_index_for(GEMINI_TEXT, excerpt)),
+        ],
+        "citation_ids": citation_ids or [],
+        "assessment": {
+            "status": "supported",
+            "reason": "Both provider responses contain the same statement.",
+        },
+    }
+
+
+def wire_disputed_claim():
+    return {
+        "id": "claim_limit",
+        "text": "The current request limit is ten.",
+        "claim_type": "fact",
+        "originating_models": ["openai", "gemini"],
+        "supporting_models": ["openai"],
+        "disputing_models": ["gemini"],
+        "support": [
+            wire_support(
+                "openai",
+                _sentence_index_for(OPENAI_TEXT, "The current limit is ten requests."),
+            ),
+        ],
+        "dispute": [
+            wire_support(
+                "gemini",
+                _sentence_index_for(
+                    GEMINI_TEXT, "The current limit is twenty requests."
+                ),
+            ),
+        ],
+        "citation_ids": [],
+        "assessment": {
+            "status": "disputed",
+            "reason": "Gemini states a different current limit.",
+        },
+    }
+
+
 def valid_bundle():
     return {
         "trusted_conclusion": valid_conclusion(),
         "claim_analysis": claim_analysis(
-            [supported_claim(), disputed_claim()]
+            [wire_supported_claim(), wire_disputed_claim()]
         ),
     }
 
 
 def test_three_provider_bundle_generates_conclusion_and_traceability():
-    shared = supported_claim()
+    shared = wire_supported_claim()
     shared["originating_models"].append("mistral")
     shared["supporting_models"].append("mistral")
     shared["support"].append(
-        support("mistral", "Caching reduces repeated work.")
+        wire_support(
+            "mistral",
+            _sentence_index_for(MISTRAL_TEXT, "Caching reduces repeated work."),
+        )
     )
     bundle = valid_bundle()
     bundle["claim_analysis"]["claims"][0] = shared
@@ -477,7 +549,7 @@ def synthesizer_with_outputs(outputs):
 
 def test_invalid_claim_json_gets_one_controlled_repair():
     invalid = valid_bundle()
-    invalid["claim_analysis"]["claims"][0]["support"][0]["response_excerpt"] = "Invented."
+    invalid["claim_analysis"]["claims"][0]["support"][0]["sentence_index"] = 9
     synth, completions = synthesizer_with_outputs(
         [json.dumps(invalid), json.dumps(valid_bundle())]
     )
@@ -495,7 +567,7 @@ def test_invalid_claim_json_gets_one_controlled_repair():
 
 def test_claim_failure_preserves_conclusion_without_mock_data():
     invalid = valid_bundle()
-    invalid["claim_analysis"]["claims"][0]["support"][0]["response_excerpt"] = "Invented."
+    invalid["claim_analysis"]["claims"][0]["support"][0]["sentence_index"] = 9
     synth, completions = synthesizer_with_outputs(
         [json.dumps(invalid), json.dumps(invalid)]
     )
@@ -743,7 +815,7 @@ def test_conclusion_is_generated_from_openai_and_mistral_when_gemini_failed():
     bundle = valid_bundle()
     conclusion = bundle["trusted_conclusion"]
     conclusion["disagreements"] = []
-    bundle["claim_analysis"]["claims"] = [supported_claim()]
+    bundle["claim_analysis"]["claims"] = [wire_supported_claim()]
     for collection, field in (
         (conclusion["agreements"], "supporting_models"),
         (conclusion["strongest_evidence"], "supporting_models"),
@@ -762,7 +834,7 @@ def test_conclusion_is_generated_from_openai_and_mistral_when_gemini_failed():
     for excerpt in claim["support"]:
         if excerpt["provider"] == "gemini":
             excerpt["provider"] = "mistral"
-            excerpt["response_reference"]["provider_response_id"] = "mistral"
+            excerpt["provider_response_id"] = "mistral"
 
     synth, completions = synthesizer_with_outputs([json.dumps(bundle)])
     result = asyncio.run(
