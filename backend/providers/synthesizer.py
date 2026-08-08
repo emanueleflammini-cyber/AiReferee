@@ -475,9 +475,8 @@ class Synthesizer:
                     ],
                     "provider_responses": panel_payload,
                     "required_json_schema": schema,
-                    "validation_error": (
-                        f"{type(first_error).__name__}: "
-                        f"{str(first_error)[:1500]}"
+                    "validation_error": _safe_repair_validation_error(
+                        first_error
                     ),
                     "invalid_output": invalid_output,
                 },
@@ -727,7 +726,11 @@ def _system_prompt(
         "only the supplied provider responses. Do not use outside knowledge "
         "as evidence.\n\n"
         "Return one JSON object matching the supplied schema. Do not return "
-        "Markdown or prose outside JSON.\n\n"
+        "Markdown or prose outside JSON. Return exactly two top-level keys: "
+        "trusted_conclusion and claim_analysis. claim_analysis is NOT part "
+        "of trusted_conclusion. Never nest claim_analysis inside "
+        "trusted_conclusion. Structural skeleton: "
+        '{"trusted_conclusion": {...}, "claim_analysis": {...}}.\n\n'
         f"Write every human-readable field in {target_name}. Audience: "
         f"{audience}. Preferred answer format: {fmt}. This translation "
         "requirement does not apply to the numbered sentences supplied in "
@@ -2152,6 +2155,11 @@ def _classify_post_validation_error(error: Exception) -> tuple[str, str]:
 # reach this text. Deliberately narrow: only failure classes where a short,
 # unambiguous, non-content-bearing correction is possible.
 _REPAIR_DIAGNOSTIC_INSTRUCTIONS: dict[str, str] = {
+    "claim_analysis_nested_in_trusted_conclusion": (
+        "Move claim_analysis out of trusted_conclusion. It must be the "
+        "second top-level field, sibling to trusted_conclusion. Do not "
+        "change its content unless another validation error requires it."
+    ),
     "claim_excerpt_not_in_provider_response": (
         "One or more support/dispute excerpts are not exact substrings of "
         "the declared provider responses. Replace each invalid excerpt "
@@ -2191,12 +2199,40 @@ _REPAIR_DIAGNOSTIC_INSTRUCTIONS: dict[str, str] = {
 def _repair_diagnostic_instruction(error: Exception) -> str:
     """Return a targeted repair instruction for a known diagnostic_code.
 
-    Returns "" for any other code (including other_post_pydantic_
-    validation_error and ValidationError), leaving the repair system
-    prompt exactly as it was before this patch.
+    ValidationError is inspected only through its structured error locations
+    and types.  No rejected values or exception text influence the selected
+    instruction.  Returns "" for every unrecognised error pattern.
     """
+    if isinstance(error, ValidationError):
+        error_pairs = {
+            (tuple(item.get("loc") or ()), item.get("type"))
+            for item in error.errors()
+        }
+        nested_claim_analysis = (
+            (("trusted_conclusion", "claim_analysis"), "extra_forbidden")
+            in error_pairs
+        )
+        missing_top_level_claim_analysis = (
+            (("claim_analysis",), "missing") in error_pairs
+        )
+        if nested_claim_analysis and missing_top_level_claim_analysis:
+            return _REPAIR_DIAGNOSTIC_INSTRUCTIONS[
+                "claim_analysis_nested_in_trusted_conclusion"
+            ]
+        return ""
     diagnostic_code, _ = _classify_post_validation_error(error)
     return _REPAIR_DIAGNOSTIC_INSTRUCTIONS.get(diagnostic_code, "")
+
+
+def _safe_repair_validation_error(error: Exception) -> str:
+    """Return validation diagnostics without rejected input or prompt text."""
+    if isinstance(error, ValidationError):
+        return json.dumps(
+            _validation_error_summary(error),
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+    return f"{type(error).__name__}: {str(error)[:1500]}"
 
 
 def _log_parse_failure(
