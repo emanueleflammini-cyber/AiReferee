@@ -16,6 +16,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from providers.sentence_segmenter import split_sentences  # noqa: E402
+from providers.synthesizer import RESPONSE_EXCERPT_MAX_LENGTH  # noqa: E402
 
 
 def assert_contiguous_and_ordered(text: str, segments: list[str]) -> None:
@@ -196,3 +197,72 @@ def test_empty_and_none_like_input_returns_empty_list():
 
 def test_whitespace_only_input_returns_empty_list():
     assert split_sentences("   \n\n  \r\n  ") == []
+
+
+# --- D1.1: every model-selectable segment fits the public excerpt contract -
+
+
+def bounded(text: str) -> list[str]:
+    return split_sentences(text, max_length=RESPONSE_EXCERPT_MAX_LENGTH)
+
+
+def test_bounded_sentence_below_limit_is_unchanged():
+    text = "A short sentence."
+    assert bounded(text) == [text]
+
+
+def test_bounded_sentence_exactly_at_limit_is_unchanged():
+    text = "x" * (RESPONSE_EXCERPT_MAX_LENGTH - 1) + "."
+    assert len(text) == RESPONSE_EXCERPT_MAX_LENGTH
+    assert bounded(text) == [text]
+
+
+def test_overlong_sentence_is_split_and_every_chunk_is_bounded():
+    text = "word " * 150 + "done."
+    segments = bounded(text)
+    assert len(segments) > 1
+    assert all(0 < len(item) <= RESPONSE_EXCERPT_MAX_LENGTH for item in segments)
+    assert_contiguous_and_ordered(text, segments)
+
+
+def test_bounded_split_prefers_existing_punctuation():
+    text = "a" * 300 + "; " + "b" * 300 + "."
+    segments = bounded(text)
+    assert segments == ["a" * 300 + ";", "b" * 300 + "."]
+
+
+def test_bounded_split_uses_whitespace_without_punctuation():
+    text = "a" * 400 + " " + "b" * 200
+    assert bounded(text) == ["a" * 400, "b" * 200]
+
+
+def test_pathological_single_token_uses_deterministic_hard_split():
+    text = "z" * (RESPONSE_EXCERPT_MAX_LENGTH + 17)
+    assert bounded(text) == [
+        "z" * RESPONSE_EXCERPT_MAX_LENGTH,
+        "z" * 17,
+    ]
+
+
+def test_long_unicode_chunks_remain_exact_substrings():
+    text = "é界🙂" * 220
+    segments = bounded(text)
+    assert all(0 < len(item) <= RESPONSE_EXCERPT_MAX_LENGTH for item in segments)
+    assert_contiguous_and_ordered(text, segments)
+    assert "".join(segments) == text
+
+
+def test_long_markdown_list_remains_verbatim_inside_chunks():
+    text = "- **important item** " * 40 + "done"
+    segments = bounded(text)
+    assert all(0 < len(item) <= RESPONSE_EXCERPT_MAX_LENGTH for item in segments)
+    assert_contiguous_and_ordered(text, segments)
+    assert segments[0].startswith("- **important item**")
+    assert "**" in segments[0]
+
+
+def test_bounded_crlf_and_newline_behavior_is_unchanged():
+    text = ("a" * 510) + "\r\n" + ("b" * 510) + "\nTail."
+    segments = bounded(text)
+    assert [len(item) for item in segments] == [500, 10, 500, 10, 5]
+    assert_contiguous_and_ordered(text, segments)

@@ -35,25 +35,94 @@ _ABBREVIATIONS = {
     "sig", "dott", "sigg", "ecc", "u.s", "u.k", "vol", "pp", "cf",
 }
 
+# Lower-priority boundaries used only when a natural sentence exceeds the
+# public excerpt limit. The boundary character remains in the preceding
+# segment; only existing split points are selected.
+_CHUNK_PUNCTUATION = ",;:—–"
 
-def split_sentences(text: str) -> list[str]:
+
+def split_sentences(
+    text: str,
+    *,
+    max_length: int | None = None,
+) -> list[str]:
     """Split ``text`` deterministically into an ordered list of sentences.
 
     Each returned segment is a non-empty, contiguous substring of ``text``.
+    When ``max_length`` is supplied, overlong natural sentences are split at
+    existing punctuation, then whitespace, then a hard character boundary.
     Blank lines act only as separators between segments and never produce an
     empty segment themselves.
     """
     if not text:
         return []
+    if max_length is not None and max_length < 1:
+        raise ValueError("max_length must be a positive integer")
     segments: list[str] = []
     for line, _line_start in _iter_lines(text):
         if not line.strip():
             continue
         for start, end in _split_line_sentences(line):
-            segment = line[start:end]
-            if segment:
-                segments.append(segment)
+            for chunk_start, chunk_end in _bound_span(
+                line, start, end, max_length
+            ):
+                segment = line[chunk_start:chunk_end]
+                if segment:
+                    segments.append(segment)
     return segments
+
+
+def _bound_span(
+    line: str,
+    start: int,
+    end: int,
+    max_length: int | None,
+) -> list[tuple[int, int]]:
+    """Split one sentence span without rewriting or overlapping its text."""
+    if max_length is None or end - start <= max_length:
+        return [(start, end)]
+
+    spans: list[tuple[int, int]] = []
+    cursor = start
+    while end - cursor > max_length:
+        window_end = cursor + max_length
+        split_at = _last_punctuation_boundary(line, cursor, window_end)
+        if split_at is None:
+            split_at = _last_whitespace_boundary(line, cursor, window_end)
+        if split_at is None:
+            split_at = window_end
+
+        chunk_end = _last_non_space(line, cursor, split_at)
+        if chunk_end <= cursor:
+            chunk_end = window_end
+        spans.append((cursor, chunk_end))
+        cursor = _first_non_space(line, split_at)
+
+    if cursor < end:
+        spans.append((cursor, end))
+    return spans
+
+
+def _last_punctuation_boundary(
+    line: str,
+    start: int,
+    window_end: int,
+) -> int | None:
+    for pos in range(window_end - 1, start, -1):
+        if line[pos] in _CHUNK_PUNCTUATION:
+            return pos + 1
+    return None
+
+
+def _last_whitespace_boundary(
+    line: str,
+    start: int,
+    window_end: int,
+) -> int | None:
+    for pos in range(window_end - 1, start, -1):
+        if line[pos].isspace():
+            return pos
+    return None
 
 
 def _iter_lines(text: str) -> list[tuple[str, int]]:

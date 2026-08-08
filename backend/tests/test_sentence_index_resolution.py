@@ -26,13 +26,17 @@ if str(BACKEND_DIR) not in sys.path:
 from providers.synthesizer import (  # noqa: E402
     ClaimAnalysisWireV1,
     ClaimSupportWire,
+    RESPONSE_EXCERPT_MAX_LENGTH,
     Synthesizer,
     SynthesisWireBundleV1,
     _repair_diagnostic_instruction,
     _resolve_claim_analysis_wire,
     _safe_repair_validation_error,
 )
-from providers.traceability_schema import validate_claim_analysis  # noqa: E402
+from providers.traceability_schema import (  # noqa: E402
+    ClaimSupport,
+    validate_claim_analysis,
+)
 
 
 def _wire_claim(claim_id, provider, sentence_index, response_id=None, status="supported"):
@@ -475,6 +479,129 @@ def test_repair_validation_diagnostics_do_not_include_rejected_values():
     assert "input" not in diagnostic
     assert "extra_forbidden" in diagnostic
     assert "missing" in diagnostic
+
+
+# --- D1.1: bounded sentence segments survive public validation ------------
+
+
+def _long_provider_text():
+    return "a" * 300 + "; " + "b" * 300 + "."
+
+
+def _long_answers_for_synth():
+    return [
+        _answer("openai", _long_provider_text()),
+        _answer("gemini", GEMINI_TEXT),
+    ]
+
+
+def _run_with_answers(synth, answers, *, query_id):
+    return asyncio.run(
+        synth.synthesize(
+            "Does caching help?",
+            answers,
+            "en",
+            correlation_id=query_id,
+        )
+    )
+
+
+def test_long_sentence_chunk_resolves_exact_bounded_support_excerpt():
+    text = _long_provider_text()
+    sentences = ["a" * 300 + ";", "b" * 300 + "."]
+    wire = _wire_analysis([_wire_claim("claim_1", "openai", 1)])
+    parsed = _resolve_and_validate(
+        wire,
+        {"openai": sentences},
+        [_answer("openai", text)],
+    )
+
+    excerpt = parsed.claims[0].support[0].response_excerpt
+    assert excerpt == sentences[1]
+    assert excerpt in text
+    assert len(excerpt) <= RESPONSE_EXCERPT_MAX_LENGTH
+
+
+def test_long_sentence_chunk_resolves_exact_bounded_dispute_excerpt():
+    claim = _wire_claim("claim_1", "openai", 1, status="disputed")
+    claim["supporting_models"] = []
+    claim["disputing_models"] = ["openai"]
+    claim["support"] = []
+    claim["dispute"] = [
+        {
+            "provider": "openai",
+            "sentence_index": 1,
+            "provider_response_id": "openai",
+        }
+    ]
+    wire = _wire_analysis([claim])
+    text = _long_provider_text()
+    parsed = _resolve_and_validate(
+        wire,
+        {"openai": ["a" * 300 + ";", "b" * 300 + "."]},
+        [_answer("openai", text)],
+    )
+
+    excerpt = parsed.claims[0].dispute[0].response_excerpt
+    assert excerpt == "b" * 300 + "."
+    assert len(excerpt) <= RESPONSE_EXCERPT_MAX_LENGTH
+
+
+def test_initial_long_sentence_produces_no_string_too_long():
+    synth, completions = _synthesizer([json.dumps(_bundle(1))])
+    result = _run_with_answers(
+        synth,
+        _long_answers_for_synth(),
+        query_id="bounded-initial",
+    )
+
+    assert completions.calls == 1
+    assert result["repair_attempted"] is False
+    excerpt = result["claims"][0]["support"][0]["response_excerpt"]
+    assert excerpt == "b" * 300 + "."
+    assert len(excerpt) <= RESPONSE_EXCERPT_MAX_LENGTH
+
+
+def test_repair_reuses_identical_bounded_sentence_map():
+    synth, completions = _synthesizer(
+        [json.dumps(_bundle(9)), json.dumps(_bundle(1))]
+    )
+    result = _run_with_answers(
+        synth,
+        _long_answers_for_synth(),
+        query_id="bounded-repair",
+    )
+
+    initial_payload = json.loads(
+        completions.requests[0]["messages"][1]["content"]
+    )
+    repair_payload = json.loads(
+        completions.requests[1]["messages"][1]["content"]
+    )
+    assert repair_payload["provider_responses"] == initial_payload[
+        "provider_responses"
+    ]
+    exposed = initial_payload["provider_responses"][0]["sentences"]
+    assert max(len(item["text"]) for item in exposed) <= (
+        RESPONSE_EXCERPT_MAX_LENGTH
+    )
+    assert result["claim_analysis_status"] == "SUCCESS"
+
+
+def test_public_response_excerpt_max_length_validator_remains_active():
+    with pytest.raises(ValidationError) as caught:
+        ClaimSupport.model_validate(
+            {
+                "provider": "openai",
+                "response_excerpt": "x" * (RESPONSE_EXCERPT_MAX_LENGTH + 1),
+                "response_reference": {"provider_response_id": "openai"},
+            }
+        )
+    assert any(
+        item["loc"] == ("response_excerpt",)
+        and item["type"] == "string_too_long"
+        for item in caught.value.errors()
+    )
 
 
 # --- X: the public excerpt-in-response validator stays active -------------

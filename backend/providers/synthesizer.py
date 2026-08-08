@@ -37,6 +37,7 @@ from .sentence_segmenter import split_sentences
 from .traceability_schema import (
     ClaimAnalysisV3,
     ClaimAssessment,
+    ClaimSupport,
     ClaimType,
     ExecutionMode,
     ProviderKey,
@@ -62,6 +63,24 @@ _PROVIDER_ALIASES = {
     "mistral": "mistral",
     "mistral ai": "mistral",
 }
+
+
+def _public_response_excerpt_max_length() -> int:
+    """Read ClaimSupport.response_excerpt's upper bound from its contract."""
+    field = ClaimSupport.model_fields["response_excerpt"]
+    limits = [
+        value
+        for metadata in field.metadata
+        if isinstance((value := getattr(metadata, "max_length", None)), int)
+    ]
+    if not limits:
+        raise RuntimeError(
+            "ClaimSupport.response_excerpt must declare a maximum length"
+        )
+    return min(limits)
+
+
+RESPONSE_EXCERPT_MAX_LENGTH = _public_response_excerpt_max_length()
 
 
 class SynthesisFailure(RuntimeError):
@@ -300,7 +319,10 @@ class Synthesizer:
         # repair call below -- never recomputed, so a sentence_index means
         # the same sentence in both passes.
         sentences_by_provider = {
-            str(answer.get("provider_key")): split_sentences(answer["text"].strip())
+            str(answer.get("provider_key")): split_sentences(
+                answer["text"].strip(),
+                max_length=RESPONSE_EXCERPT_MAX_LENGTH,
+            )
             for answer in clean
         }
         panel_payload = [
@@ -1045,9 +1067,14 @@ def _resolve_claim_support(
         raise ValueError(
             "claim sentence index is out of range for the provider response"
         )
+    excerpt = sentences[item.sentence_index]
+    if len(excerpt) > RESPONSE_EXCERPT_MAX_LENGTH:
+        raise ValueError(
+            "resolved claim excerpt exceeds the public response excerpt limit"
+        )
     return {
         "provider": item.provider,
-        "response_excerpt": sentences[item.sentence_index],
+        "response_excerpt": excerpt,
         "response_reference": {
             "provider_response_id": item.provider_response_id,
         },
@@ -2111,6 +2138,11 @@ _POST_VALIDATION_ERROR_PATTERNS: tuple[tuple[str, str, str], ...] = (
         "resolve_claim_analysis_wire",
         "sentence_resolution_failed",
         "claim sentence resolution failed unexpectedly",
+    ),
+    (
+        "resolve_claim_analysis_wire",
+        "resolved_excerpt_too_long",
+        "resolved claim excerpt exceeds the public response excerpt limit",
     ),
     (
         "validate_conclusion_claim_references",
