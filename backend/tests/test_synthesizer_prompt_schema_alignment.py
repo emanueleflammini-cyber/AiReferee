@@ -182,20 +182,25 @@ def test_disputed_claim_without_disputing_models_is_rejected():
 
 
 def test_prompt_separates_disagreement_structures_by_field_name():
+    # perf/synthesizer-hybrid-phaseb-wire: claim_disagreements[] is no
+    # longer an LLM-authored structure at all -- only the minimal
+    # claim_disagreements_semantic override is -- so disagreements[]
+    # (legacy, free-text) is the only structured disagreement list the
+    # prompt still asks the LLM to author field-by-field.
     prompt = behavior_prompt()
     assert (
-        "trusted_conclusion.disagreements[] and trusted_conclusion."
-        "claim_disagreements[] are two different structures"
+        "trusted_conclusion.disagreements[] is the only free-text "
+        "structured disagreement list you author directly"
     ) in prompt
+    assert "there is no claim_disagreements[] inside trusted_conclusion" in prompt
     assert "positions[] uses the field 'model' (never 'provider')" in prompt
-    assert "positions[] uses the field 'provider' (never 'model')" in prompt
     assert (
         "Never put disagreement_type, impact_on_verdict or "
         "referee_resolution anywhere in trusted_conclusion.disagreements[]"
     ) in prompt
     assert (
-        "never put referee_assessment anywhere in trusted_conclusion."
-        "claim_disagreements[]"
+        "those fields belong only to "
+        "claim_analysis.claim_disagreements_semantic"
     ) in prompt
 
 

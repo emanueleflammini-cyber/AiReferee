@@ -20,17 +20,17 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from .base import estimate_cost
 from .conclusion_schema import (
     Agreement,
-    ClaimAgreement,
-    ClaimDisagreement,
-    ClaimMatrixItem,
     ConclusionConfidence,
     Disagreement,
+    DisagreementType,
     EvidenceItem,
+    Impact,
     RemainingUncertainty,
     StrictContractModel,
     TrustedConclusionV2,
     TrustedConclusionV21,
     UnsupportedClaim,
+    VerdictImpact,
     parse_structured_conclusion,
 )
 from .sentence_segmenter import split_sentences
@@ -120,11 +120,19 @@ class TrustedConclusionWireV2(StrictContractModel):
     # keep that docstring free of any field name this model intentionally
     # omits): this is the LLM-facing wire contract for trusted_conclusion,
     # narrower than the full TrustedConclusionV2 shape used elsewhere. It
-    # reuses the exact same nested models (Agreement, ClaimMatrixItem,
-    # etc.), so every field-level and cross-field validator that already
-    # applies to those types still applies unchanged here.
+    # reuses the exact same nested models (Agreement, EvidenceItem, etc.),
+    # so every field-level and cross-field validator that already applies
+    # to those types still applies unchanged here. claim_matrix,
+    # claim_agreements and claim_disagreements are intentionally absent
+    # (perf/synthesizer-hybrid-phaseb-wire, "LLM judges; backend
+    # structures"): they are no longer LLM-authored full structures --
+    # _build_hybrid_phase_b_sections derives them deterministically from
+    # claim_analysis plus the minimal judgment carried there. Same pattern
+    # already used for exclusive_contributions/decisive_factors (Wire
+    # Phase B Step 1), now extended to these three.
     """The referee's structured verdict for this comparison: the narrative
-    conclusion plus the per-claim provider agreement/disagreement matrix.
+    conclusion. The per-claim provider agreement/disagreement matrix is
+    derived by the backend from claim_analysis, not authored here.
     """
 
     schema_version: Literal["2.0"] = "2.0"
@@ -139,9 +147,6 @@ class TrustedConclusionWireV2(StrictContractModel):
     confidence: ConclusionConfidence
     referee_reasoning: str = ""
     what_could_change_the_verdict: list[str] = Field(default_factory=list)
-    claim_matrix: list[ClaimMatrixItem] = Field(default_factory=list)
-    claim_agreements: list[ClaimAgreement] = Field(default_factory=list)
-    claim_disagreements: list[ClaimDisagreement] = Field(default_factory=list)
 
 
 class ClaimSupportWire(StrictContractModel):
@@ -160,12 +165,59 @@ class ClaimSupportWire(StrictContractModel):
     provider_response_id: str = Field(min_length=1, max_length=100)
 
 
+class ProviderJudgmentWire(StrictContractModel):
+    # Implementation note (kept out of the docstring below, which Pydantic
+    # embeds verbatim into the JSON schema shown to the LLM -- see the
+    # TrustedConclusionWireV2 note above for why): this is the only piece
+    # of the public per-claim provider-position breakdown the backend
+    # cannot derive on its own; everything else there (provider,
+    # display_name, position for 4 of 5 states, evidence_refs) is computed
+    # deterministically by _build_hybrid_phase_b_sections.
+    """A short, provider-specific narrative for one claim: what this
+    provider specifically said about the claim.
+    """
+
+    provider: ProviderKey
+    summary: str = Field(min_length=1, max_length=1000)
+
+
+class ClaimJudgmentWire(StrictContractModel):
+    # Implementation note (kept out of the docstring below): the backend
+    # combines this with the claim's own supporting_models/
+    # disputing_models/originating_models (already validated) to build the
+    # full public per-claim structured entry -- see
+    # _build_hybrid_phase_b_sections.
+    """The only genuinely non-derivable judgment for one claim_analysis
+    claim.
+    """
+
+    importance: Impact
+    referee_assessment: str = Field(min_length=1, max_length=1200)
+    evidence_limitations: list[str] = Field(default_factory=list)
+    partially_supported_by: list[ProviderKey] = Field(default_factory=list)
+    provider_judgments: list[ProviderJudgmentWire] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_no_duplicate_providers(self) -> "ClaimJudgmentWire":
+        judgment_providers = [item.provider for item in self.provider_judgments]
+        if len(judgment_providers) != len(set(judgment_providers)):
+            raise ValueError("provider judgments must not repeat a provider")
+        if len(self.partially_supported_by) != len(set(self.partially_supported_by)):
+            raise ValueError("partially_supported_by must not repeat a provider")
+        return self
+
+
 class TraceableClaimWire(StrictContractModel):
+    # Implementation note (kept out of the docstring below): judgment
+    # carries the minimal semantic input the backend needs to reconstruct
+    # the full public per-claim structured entry (perf/synthesizer-hybrid-
+    # phaseb-wire). The cross-field invariants below mirror
+    # TraceableClaim.validate_relationships exactly for support/dispute/
+    # assessment -- attribution checks are unaffected by how evidence is
+    # located within a response or by the new judgment field.
     """LLM-facing claim shape: identical to the public TraceableClaim except
     support[]/dispute[] use ClaimSupportWire (sentence_index) instead of
-    ClaimSupport (response_excerpt). The cross-field invariants below mirror
-    TraceableClaim.validate_relationships exactly -- attribution checks are
-    unaffected by how evidence is located within a response.
+    ClaimSupport (response_excerpt), plus a required judgment field.
     """
 
     id: str = Field(pattern=r"^claim_[A-Za-z0-9_-]{1,80}$")
@@ -178,6 +230,7 @@ class TraceableClaimWire(StrictContractModel):
     dispute: list[ClaimSupportWire] = Field(default_factory=list)
     citation_ids: list[str] = Field(default_factory=list)
     assessment: ClaimAssessment
+    judgment: ClaimJudgmentWire
 
     @model_validator(mode="after")
     def validate_relationships(self) -> "TraceableClaimWire":
@@ -195,18 +248,71 @@ class TraceableClaimWire(StrictContractModel):
             raise ValueError("supported claim requires at least one real excerpt")
         if self.assessment.status == "disputed" and not disputers:
             raise ValueError("disputed claim requires at least one disputing provider")
+        if not set(self.judgment.partially_supported_by).issubset(supporters):
+            raise ValueError("partially_supported_by requires a supporting provider")
+        judgment_providers = {
+            item.provider for item in self.judgment.provider_judgments
+        }
+        if judgment_providers != set(self.originating_models):
+            raise ValueError(
+                "provider judgments must exactly cover originating_models"
+            )
+        return self
+
+
+class ClaimAgreementSemanticWire(StrictContractModel):
+    """Minimal LLM-authored judgment for a structured agreement: only the
+    grouping (claim_ids) and the strength that genuinely requires referee
+    judgment. topic/providers/explanation are backend-derived from
+    claim_analysis and the claim's own judgment.referee_assessment.
+    """
+
+    claim_ids: list[str] = Field(min_length=1)
+    strength: Impact
+
+    @model_validator(mode="after")
+    def validate_unique_claim_ids(self) -> "ClaimAgreementSemanticWire":
+        if len(self.claim_ids) != len(set(self.claim_ids)):
+            raise ValueError("claim semantic override claim IDs must be unique")
+        return self
+
+
+class ClaimDisagreementSemanticWire(StrictContractModel):
+    """Minimal LLM-authored judgment for a structured disagreement: only
+    the grouping (claim_ids) and the three fields that genuinely require
+    referee judgment. topic/positions are backend-derived from
+    claim_analysis and the per-claim provider judgments.
+    """
+
+    claim_ids: list[str] = Field(min_length=1)
+    disagreement_type: DisagreementType
+    impact_on_verdict: VerdictImpact
+    referee_resolution: str = Field(min_length=1, max_length=1200)
+
+    @model_validator(mode="after")
+    def validate_unique_claim_ids(self) -> "ClaimDisagreementSemanticWire":
+        if len(self.claim_ids) != len(set(self.claim_ids)):
+            raise ValueError("claim semantic override claim IDs must be unique")
         return self
 
 
 class ClaimAnalysisWireV1(StrictContractModel):
     """LLM-facing claim_analysis shape: identical to the public
-    ClaimAnalysisV3 except claims[] is TraceableClaimWire (sentence_index)
-    instead of TraceableClaim (response_excerpt).
+    ClaimAnalysisV3 except claims[] is TraceableClaimWire (sentence_index +
+    judgment) instead of TraceableClaim (response_excerpt), plus the two
+    minimal semantic override lists used to reconstruct claim_agreements/
+    claim_disagreements (perf/synthesizer-hybrid-phaseb-wire).
     """
 
     schema_version: Literal["3.0"] = "3.0"
     execution_mode: ExecutionMode
     claims: list[TraceableClaimWire] = Field(default_factory=list)
+    claim_agreements_semantic: list[ClaimAgreementSemanticWire] = Field(
+        default_factory=list
+    )
+    claim_disagreements_semantic: list[ClaimDisagreementSemanticWire] = Field(
+        default_factory=list
+    )
 
     @model_validator(mode="after")
     def unique_claim_ids(self) -> "ClaimAnalysisWireV1":
@@ -802,25 +908,50 @@ def _system_prompt(
         f"- This execution contains exactly {len(allowed_providers)} usable "
         "provider response(s). Never claim that more providers participated "
         "or agreed than are present in allowed_provider_keys.\n"
-        "- Extract only the claims that materially decide the verdict. "
-        "Merge semantically equivalent claims into one; never split a "
-        "single point into trivial sub-claims just to raise the count.\n"
-        "- Build claim_matrix from those decisive claims: target 3 to 5 "
-        "items, prioritizing coverage of what actually changes the "
-        "verdict over exhaustiveness. Use 3 for a simple, narrowly-scoped "
-        "question with few genuinely distinct decisive points. Go to 4 or "
-        "5 only when the question has that many materially distinct "
-        "decisive points. Exceed 5 only if the supplied evidence "
-        "genuinely contains more decisive points than that -- do not pad "
-        "claim_matrix to reach a target count.\n"
-        "- Every claim_matrix claim_id must exist in claim_analysis.claims. "
-        "For every participating provider, distinguish supports, "
-        "partially_supports, contradicts, uncertain, and not_mentioned. "
-        "Omission is not contradiction.\n"
-        "- claim_agreements may reference only IDs from claim_matrix.\n"
-        "- evidence_refs may use only provider_response_id values and "
-        "citation IDs supplied in the request. Never create an evidence "
-        "reference.\n"
+        "- Extract only the claims that materially decide the verdict: "
+        "target 3 to 5 claims, prioritizing coverage of what actually "
+        "changes the verdict over exhaustiveness. Use 3 for a simple, "
+        "narrowly-scoped question with few genuinely distinct decisive "
+        "points. Go to 4 or 5 only when the question has that many "
+        "materially distinct decisive points. Exceed 5 only if the "
+        "supplied evidence genuinely contains more decisive points than "
+        "that. Merge semantically equivalent claims into one; never "
+        "split a single point into trivial sub-claims just to raise the "
+        "count or pad toward a target.\n"
+        "- Every claim in claim_analysis.claims requires a judgment "
+        "object. judgment.importance is how much that claim materially "
+        "affects the final verdict (high, medium or low).\n"
+        "- judgment.referee_assessment is a short, claim-level statement "
+        "of your assessment of that specific claim -- do not restate "
+        "assessment.reason.\n"
+        "- judgment.evidence_limitations lists, as short strings, what is "
+        "missing or uncertain about the evidence for that claim. Use an "
+        "empty list only when nothing is missing.\n"
+        "- judgment.provider_judgments must contain exactly one entry for "
+        "every provider in that claim's originating_models -- no more, no "
+        "fewer -- each with a short summary of that specific provider's "
+        "position on the claim. Never repeat assessment.reason or another "
+        "provider's wording.\n"
+        "- By default, every provider in a claim's supporting_models is "
+        "treated as fully supporting it. Add a provider to "
+        "judgment.partially_supported_by only when its support is "
+        "genuinely partial or qualified, not full agreement. "
+        "partially_supported_by may only contain providers already in "
+        "that claim's supporting_models.\n"
+        "- claim_analysis.claim_agreements_semantic: for each claim where "
+        "participating providers genuinely agree, add one entry with that "
+        "claim's ID in claim_ids and a strength (high, medium or low). "
+        "claim_analysis.claim_disagreements_semantic: for each claim where "
+        "providers genuinely and incompatibly disagree, add one entry "
+        "with that claim's ID in claim_ids, a disagreement_type (factual, "
+        "interpretation, degree, timeframe, uncertainty or emphasis), an "
+        "impact_on_verdict (high, medium, low or none), and a "
+        "referee_resolution explaining how the verdict handles the "
+        "disagreement -- referee_resolution must add something beyond "
+        "that claim's judgment.referee_assessment, never repeat it "
+        "verbatim. Only group multiple claim_ids into one entry when they "
+        "genuinely share the same agreement or disagreement; otherwise "
+        "give each claim its own entry.\n"
         "- When agreements or strongest_evidence is non-empty, "
         "claim_analysis.claims must contain at least one corresponding claim. "
         "Do not return an empty claims array in that case.\n"
@@ -850,28 +981,20 @@ def _system_prompt(
         "- Agreements describe shared interpretations or conclusions; do not "
         "repeat a shared factual claim as an agreement.\n"
         "- Do not manufacture disagreements.\n"
-        "- trusted_conclusion.disagreements[] and trusted_conclusion."
-        "claim_disagreements[] are two different structures with different "
-        "fields. Never mix fields between them.\n"
-        "- In trusted_conclusion.disagreements[]: each entry in positions[] "
+        "- trusted_conclusion.disagreements[] is the only free-text "
+        "structured disagreement list you author directly; there is no "
+        "claim_disagreements[] inside trusted_conclusion. In "
+        "trusted_conclusion.disagreements[]: each entry in positions[] "
         "uses the field 'model' (never 'provider'); evidence_claim_ids "
         "belongs inside each position; referee_assessment is required on "
         "the disagreement itself and must state each provider's specific "
-        "position and the missing_information that could resolve it. Never "
-        "put disagreement_type, impact_on_verdict or referee_resolution "
-        "anywhere in trusted_conclusion.disagreements[] — those fields "
-        "belong only to claim_disagreements.\n"
-        "- In trusted_conclusion.claim_disagreements[]: each entry in "
-        "positions[] uses the field 'provider' (never 'model'); claim_ids "
-        "must reference claim_matrix, never evidence_claim_ids; the "
-        "disagreement itself carries disagreement_type, impact_on_verdict "
-        "and referee_resolution. Never put evidence_claim_ids inside "
-        "claim_disagreements[].positions[] and never put "
-        "referee_assessment anywhere in trusted_conclusion."
-        "claim_disagreements[] — those fields belong only to "
-        "disagreements. Use claim_disagreements only for genuinely "
-        "incompatible positions, never for style, additional examples, "
-        "omission, or cautious wording alone.\n"
+        "position and the missing_information that could resolve it. "
+        "Never put disagreement_type, impact_on_verdict or "
+        "referee_resolution anywhere in trusted_conclusion."
+        "disagreements[] — those fields belong only to "
+        "claim_analysis.claim_disagreements_semantic, and only for "
+        "genuinely incompatible positions, never for style, additional "
+        "examples, omission, or cautious wording alone.\n"
         "- For every support[]/dispute[] item, set sentence_index to the "
         "index (from that provider's provider_responses[].sentences) of "
         "the single sentence that best serves as evidence for that "
@@ -895,24 +1018,25 @@ def _system_prompt(
         "contain no usable source references.\n"
         "- FAILED providers are absent and cannot support or dispute claims.\n"
         "- supporting_claim_ids, disputing_claim_ids, position "
-        "evidence_claim_ids, evidence_claim_ids and unsupported_claim_ids "
-        "must reference claim IDs in claim_analysis.\n"
+        "evidence_claim_ids, evidence_claim_ids, unsupported_claim_ids, "
+        "and claim_agreements_semantic/claim_disagreements_semantic "
+        "claim_ids must reference claim IDs in claim_analysis.\n"
         "- strongest_evidence must add evidentiary context, not repeat the "
         "same wording already used in agreements.\n"
         "- Be concise and non-redundant across the whole response. Do not "
         "restate information already encoded in structured fields (provider "
         "positions, statuses, models) unless needed to make the final "
         "answer or a specific assessment understandable on its own.\n"
-        "- claim_matrix[].referee_assessment and Disagreement."
-        "referee_assessment must be concise: a short, direct statement, "
-        "not a restated narrative.\n"
-        "- claim_matrix[].provider_positions[].summary must not repeat the "
-        "wording of that same claim's claim_analysis.claims[].assessment."
-        "reason; state only what is specific to that provider's position.\n"
+        "- judgment.referee_assessment and Disagreement.referee_assessment "
+        "must be concise: a short, direct statement, not a restated "
+        "narrative.\n"
+        "- judgment.provider_judgments[].summary must not repeat the "
+        "wording of that same claim's assessment.reason; state only what "
+        "is specific to that provider's position.\n"
         "- agreements and disagreements must not restate each other, and "
         "must not repeat claim-level detail already captured in "
-        "claim_matrix; keep each to the minimum needed to convey the "
-        "point.\n"
+        "judgment.referee_assessment; keep each to the minimum needed to "
+        "convey the point.\n"
         "- This conciseness requirement never applies to final_answer: "
         "final_answer must stay complete, specific and readable -- never "
         "shorten it into a telegraphic or incomplete answer.\n"
@@ -963,7 +1087,7 @@ def _parse_bundle(
         bundle.trusted_conclusion.model_dump(),
         allowed_providers,
     )
-    resolved_claim_analysis = _resolve_claim_analysis_wire(
+    resolved_claim_analysis, judgments_by_claim_id = _resolve_claim_analysis_wire(
         bundle.claim_analysis,
         sentences_by_provider,
     )
@@ -986,6 +1110,9 @@ def _parse_bundle(
             analysis,
             associated_citations,
             answers,
+            judgments_by_claim_id,
+            bundle.claim_analysis.claim_agreements_semantic,
+            bundle.claim_analysis.claim_disagreements_semantic,
         )
     except Exception as enrichment_error:
         # Diagnostic-only provenance tag (perf/synthesizer-next-bottleneck-
@@ -1007,7 +1134,7 @@ def _parse_bundle(
 def _resolve_claim_analysis_wire(
     wire: ClaimAnalysisWireV1,
     sentences_by_provider: dict[str, list[str]],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, ClaimJudgmentWire]]:
     """Deterministically resolve sentence_index -> response_excerpt.
 
     Direct lookup only (feature/deterministic-excerpt-sentence-index): each
@@ -1018,6 +1145,15 @@ def _resolve_claim_analysis_wire(
     validate_claim_analysis unchanged -- its exact-substring check still
     runs and now passes by construction, since every excerpt is copied
     verbatim from the same response text the sentences were split from.
+
+    Also returns a claim_id -> ClaimJudgmentWire map (perf/synthesizer-
+    hybrid-phaseb-wire, purely additive): judgment carries no sentence_index
+    and needs no resolution, but it cannot travel inside the same dict
+    handed to validate_claim_analysis (ClaimAnalysisV3 is extra="forbid" and
+    has no judgment field), so it is threaded through separately for
+    _build_hybrid_phase_b_sections to consume later. Claim IDs are stable
+    across validate_claim_analysis (only support/dispute items are ever
+    deduplicated there), so keying by claim.id here remains valid downstream.
     """
     try:
         claims = [
@@ -1047,11 +1183,15 @@ def _resolve_claim_analysis_wire(
         raise ValueError(
             "claim sentence resolution failed unexpectedly"
         ) from exc
-    return {
-        "schema_version": wire.schema_version,
-        "execution_mode": wire.execution_mode,
-        "claims": claims,
-    }
+    judgments_by_claim_id = {claim.id: claim.judgment for claim in wire.claims}
+    return (
+        {
+            "schema_version": wire.schema_version,
+            "execution_mode": wire.execution_mode,
+            "claims": claims,
+        },
+        judgments_by_claim_id,
+    )
 
 
 def _resolve_claim_support(
@@ -1202,12 +1342,25 @@ def _enrich_conclusion(
     analysis: ClaimAnalysisV3,
     citations: list[dict[str, Any]],
     answers: list[dict[str, Any]],
+    judgments_by_claim_id: Optional[dict[str, "ClaimJudgmentWire"]] = None,
+    agreements_semantic: Optional[list["ClaimAgreementSemanticWire"]] = None,
+    disagreements_semantic: Optional[list["ClaimDisagreementSemanticWire"]] = None,
 ) -> TrustedConclusionV21:
     """Build the 2.1 evidence view only from already validated local data.
 
     The synthesizer does not get to create source-summary records, provider
     scores or excerpts. Those values are derived here from exact provider
     responses, validated claims and deterministic citation extraction.
+
+    claim_matrix/claim_agreements/claim_disagreements (perf/synthesizer-
+    hybrid-phaseb-wire): when judgments_by_claim_id is supplied (the real
+    wire path, always populated because TraceableClaimWire.judgment is
+    required), _build_hybrid_phase_b_sections is the primary source --
+    "LLM judges; backend structures." When it is absent (direct/legacy
+    callers, e.g. tests exercising the pre-existing fallback), behavior is
+    byte-identical to before this patch: _phase_b_fields_from_analysis is
+    used, unchanged. Neither path is ever a fallback for the other within
+    one call -- callers pick one by whether they pass judgments.
     """
     source_summary = [_source_summary_item(item) for item in citations]
     known_source_ids = {item["id"] for item in source_summary}
@@ -1271,11 +1424,21 @@ def _enrich_conclusion(
         None,
     )
     payload = conclusion.model_dump()
-    phase_b = _phase_b_fields_from_analysis(
-        conclusion,
-        analysis,
-        answers,
-    )
+    if judgments_by_claim_id:
+        phase_b = _build_hybrid_phase_b_sections(
+            conclusion,
+            analysis,
+            answers,
+            judgments_by_claim_id,
+            agreements_semantic or [],
+            disagreements_semantic or [],
+        )
+    else:
+        phase_b = _phase_b_fields_from_analysis(
+            conclusion,
+            analysis,
+            answers,
+        )
     for field, value in phase_b.items():
         if not payload.get(field):
             payload[field] = value
@@ -1359,6 +1522,201 @@ def _enrich_conclusion_without_claim_analysis(
         }
     )
     return TrustedConclusionV21.model_validate(payload)
+
+
+def _build_hybrid_phase_b_sections(
+    conclusion: TrustedConclusionV2,
+    analysis: ClaimAnalysisV3,
+    answers: list[dict[str, Any]],
+    judgments_by_claim_id: dict[str, "ClaimJudgmentWire"],
+    agreements_semantic: list["ClaimAgreementSemanticWire"],
+    disagreements_semantic: list["ClaimDisagreementSemanticWire"],
+) -> dict[str, list[dict[str, Any]]]:
+    """Primary Phase B path (perf/synthesizer-hybrid-phaseb-wire):
+    "LLM judges; backend structures."
+
+    claim_matrix/claim_agreements/claim_disagreements are built entirely
+    from already-validated claim_analysis plus the minimal per-claim/
+    per-group judgments carried on the wire -- never from an LLM-authored
+    copy of these three public structures. Reuses _phase_b_participants/
+    _phase_b_agreement_level as the single source of truth for participant
+    listing and agreement-level classification (never duplicated
+    divergently), and _phase_b_sections for exclusive_contributions/
+    decisive_factors, which depend only on the matrix built here and on
+    conclusion.strongest_evidence -- both untouched by this patch (Wire
+    Phase B Step 1 stays exactly as it is).
+    """
+    participants = _phase_b_participants(answers)
+    participating_providers = {provider for provider, _ in participants}
+    known_claim_ids = {claim.id for claim in analysis.claims}
+
+    matrix: list[dict[str, Any]] = []
+    for claim in analysis.claims:
+        judgment = judgments_by_claim_id.get(claim.id)
+        if judgment is None:
+            # Defensive only: TraceableClaimWire.judgment is a required
+            # field, so every resolved claim already has one by the time
+            # Pydantic validation succeeded.
+            raise ValueError("claim judgment is missing for a resolved claim")
+
+        judgment_providers = {
+            item.provider for item in judgment.provider_judgments
+        } | set(judgment.partially_supported_by)
+        if not judgment_providers.issubset(participating_providers):
+            raise ValueError(
+                "claim judgment provider is not participating in this "
+                "execution"
+            )
+
+        excerpts_by_provider: dict[str, list[Any]] = {}
+        for excerpt in list(claim.support) + list(claim.dispute):
+            excerpts_by_provider.setdefault(excerpt.provider, []).append(excerpt)
+        summary_by_provider = {
+            item.provider: item.summary for item in judgment.provider_judgments
+        }
+
+        positions = []
+        for provider, display_name in participants:
+            if provider in claim.supporting_models:
+                position = (
+                    "partially_supports"
+                    if provider in judgment.partially_supported_by
+                    else "supports"
+                )
+            elif provider in claim.disputing_models:
+                position = "contradicts"
+            elif provider in claim.originating_models:
+                position = "uncertain"
+            else:
+                position = "not_mentioned"
+            excerpts = excerpts_by_provider.get(provider, [])
+            evidence_refs = list(
+                dict.fromkeys(
+                    excerpt.response_reference.provider_response_id
+                    for excerpt in excerpts
+                )
+            )
+            positions.append(
+                {
+                    "provider": provider,
+                    "display_name": display_name,
+                    "position": position,
+                    "summary": summary_by_provider.get(provider, ""),
+                    "evidence_refs": evidence_refs,
+                    "confidence": (
+                        "high"
+                        if excerpts and position == "supports"
+                        else "medium"
+                        if excerpts
+                        else "low"
+                    ),
+                }
+            )
+        matrix.append(
+            {
+                "claim_id": claim.id,
+                "claim": claim.text,
+                "importance": judgment.importance,
+                "provider_positions": positions,
+                "agreement_level": _phase_b_agreement_level(positions),
+                "referee_assessment": judgment.referee_assessment,
+                "evidence_limitations": list(judgment.evidence_limitations),
+            }
+        )
+
+    matrix_by_id = {item["claim_id"]: item for item in matrix}
+
+    agreements: list[dict[str, Any]] = []
+    for entry in agreements_semantic:
+        unknown = set(entry.claim_ids) - known_claim_ids
+        if unknown:
+            raise ValueError(
+                "claim semantic override references unknown claim IDs"
+            )
+        eligible_items = [
+            matrix_by_id[claim_id]
+            for claim_id in entry.claim_ids
+            if matrix_by_id[claim_id]["agreement_level"]
+            in ("unanimous", "strong_consensus")
+        ]
+        if not eligible_items:
+            # Grouping references only claims the matrix does not classify
+            # as agreement-worthy: skipped, not fabricated -- a smaller
+            # but still fully valid claim_agreements list, exactly as an
+            # honest referee would produce by simply not recording it.
+            continue
+        providers = list(
+            dict.fromkeys(
+                position["provider"]
+                for item in eligible_items
+                for position in item["provider_positions"]
+                if position["position"] in ("supports", "partially_supports")
+            )
+        )
+        if len(providers) < 2:
+            continue
+        agreements.append(
+            {
+                "topic": eligible_items[0]["claim"],
+                "claim_ids": [item["claim_id"] for item in eligible_items],
+                "providers": providers,
+                "strength": entry.strength,
+                "explanation": eligible_items[0]["referee_assessment"],
+            }
+        )
+
+    disagreements: list[dict[str, Any]] = []
+    for entry in disagreements_semantic:
+        unknown = set(entry.claim_ids) - known_claim_ids
+        if unknown:
+            raise ValueError(
+                "claim semantic override references unknown claim IDs"
+            )
+        eligible_items = [
+            matrix_by_id[claim_id]
+            for claim_id in entry.claim_ids
+            if matrix_by_id[claim_id]["agreement_level"] == "disputed"
+        ]
+        if not eligible_items:
+            continue
+        # Last claim_id wins per provider, mirroring exactly the same
+        # tie-break TrustedConclusionV2.validate_conclusion_contract uses
+        # when it later cross-checks these positions against the matrix.
+        provider_position_by_provider: dict[str, dict[str, Any]] = {}
+        for item in eligible_items:
+            for position in item["provider_positions"]:
+                provider_position_by_provider[position["provider"]] = position
+        positions = [
+            {
+                "provider": position["provider"],
+                "position": position["summary"],
+            }
+            for position in provider_position_by_provider.values()
+            if position["position"]
+            in ("supports", "partially_supports", "contradicts")
+            and position["summary"]
+        ]
+        if len(positions) < 2:
+            continue
+        disagreements.append(
+            {
+                "topic": eligible_items[0]["claim"],
+                "claim_ids": [item["claim_id"] for item in eligible_items],
+                "positions": positions,
+                "disagreement_type": entry.disagreement_type,
+                "impact_on_verdict": entry.impact_on_verdict,
+                "referee_resolution": entry.referee_resolution,
+            }
+        )
+
+    legacy_sections = _phase_b_sections(conclusion, matrix)
+    return {
+        "claim_matrix": matrix,
+        "claim_agreements": agreements,
+        "claim_disagreements": disagreements,
+        "exclusive_contributions": legacy_sections["exclusive_contributions"],
+        "decisive_factors": legacy_sections["decisive_factors"],
+    }
 
 
 def _phase_b_fields_from_analysis(
@@ -1893,6 +2251,11 @@ def _normalize_bundle_provider_aliases(
                 + list(claim.get("dispute") or [])
             ):
                 _normalize_provider_value(excerpt, "provider")
+            judgment = claim.get("judgment")
+            if isinstance(judgment, dict):
+                _normalize_provider_list(judgment, "partially_supported_by")
+                for provider_judgment in judgment.get("provider_judgments") or []:
+                    _normalize_provider_value(provider_judgment, "provider")
     return normalized
 
 
@@ -2159,6 +2522,21 @@ _POST_VALIDATION_ERROR_PATTERNS: tuple[tuple[str, str, str], ...] = (
         "disagreement_evidence_provider_mismatch",
         "Disagreement position references evidence from another provider",
     ),
+    (
+        "build_hybrid_phase_b",
+        "claim_judgment_missing",
+        "claim judgment is missing for a resolved claim",
+    ),
+    (
+        "build_hybrid_phase_b",
+        "judgment_provider_not_participating",
+        "claim judgment provider is not participating in this execution",
+    ),
+    (
+        "build_hybrid_phase_b",
+        "semantic_override_unknown_claim_reference",
+        "claim semantic override references unknown claim IDs",
+    ),
 )
 
 
@@ -2225,20 +2603,104 @@ _REPAIR_DIAGNOSTIC_INSTRUCTIONS: dict[str, str] = {
         "sentences list in provider_responses for this execution. Use "
         "only sentence_index values for providers actually listed there."
     ),
+    "partially_supported_by_invalid_provider": (
+        "One or more judgment.partially_supported_by entries are not in "
+        "that same claim's supporting_models. Only a provider already "
+        "listed in supporting_models may be downgraded to "
+        "partially_supports."
+    ),
+    "provider_judgments_coverage_mismatch": (
+        "judgment.provider_judgments must contain exactly one entry for "
+        "every provider in that claim's originating_models -- no more, "
+        "no fewer. Add missing entries or remove extra ones so the two "
+        "provider sets match exactly."
+    ),
+    "semantic_wire_duplicate_values": (
+        "One or more semantic judgment lists (provider_judgments, "
+        "partially_supported_by, or a claim_agreements_semantic/"
+        "claim_disagreements_semantic entry's claim_ids) repeat the same "
+        "value. Remove the duplicate."
+    ),
+    "invalid_importance_enum": (
+        "judgment.importance must be exactly one of: high, medium, low."
+    ),
+    "invalid_disagreement_type_enum": (
+        "claim_disagreements_semantic[].disagreement_type must be exactly "
+        "one of: factual, interpretation, degree, timeframe, uncertainty, "
+        "emphasis."
+    ),
+    "invalid_impact_on_verdict_enum": (
+        "claim_disagreements_semantic[].impact_on_verdict must be exactly "
+        "one of: high, medium, low, none."
+    ),
+    "invalid_strength_enum": (
+        "claim_agreements_semantic[].strength must be exactly one of: "
+        "high, medium, low."
+    ),
+    "judgment_provider_not_participating": (
+        "One or more judgment.provider_judgments or "
+        "partially_supported_by entries name a provider that is not in "
+        "allowed_provider_keys for this execution. Use only participating "
+        "providers."
+    ),
+    "semantic_override_unknown_claim_reference": (
+        "One or more claim_agreements_semantic/claim_disagreements_"
+        "semantic entries reference a claim_ids value that does not "
+        "exist in claim_analysis.claims. Use only IDs of claims you "
+        "actually returned."
+    ),
+}
+
+# Pydantic ValidationError patterns that select a targeted repair
+# instruction (perf/synthesizer-hybrid-phaseb-wire, purely additive):
+# each raised business-rule ValueError inside a wire model_validator is
+# matched only by its exact, stable "Value error, <message>" text -- never
+# by exception content that could embed LLM-generated text. Enum errors
+# are matched only by the last segment of their structured loc path --
+# never by the (LLM-supplied) rejected value itself.
+_VALIDATION_ERROR_MESSAGE_INSTRUCTIONS: tuple[tuple[str, str], ...] = (
+    (
+        "Value error, partially_supported_by requires a supporting provider",
+        "partially_supported_by_invalid_provider",
+    ),
+    (
+        "Value error, provider judgments must exactly cover originating_models",
+        "provider_judgments_coverage_mismatch",
+    ),
+    (
+        "Value error, provider judgments must not repeat a provider",
+        "semantic_wire_duplicate_values",
+    ),
+    (
+        "Value error, partially_supported_by must not repeat a provider",
+        "semantic_wire_duplicate_values",
+    ),
+    (
+        "Value error, claim semantic override claim IDs must be unique",
+        "semantic_wire_duplicate_values",
+    ),
+)
+_VALIDATION_ERROR_LOC_INSTRUCTIONS: dict[str, str] = {
+    "importance": "invalid_importance_enum",
+    "disagreement_type": "invalid_disagreement_type_enum",
+    "impact_on_verdict": "invalid_impact_on_verdict_enum",
+    "strength": "invalid_strength_enum",
 }
 
 
 def _repair_diagnostic_instruction(error: Exception) -> str:
     """Return a targeted repair instruction for a known diagnostic_code.
 
-    ValidationError is inspected only through its structured error locations
-    and types.  No rejected values or exception text influence the selected
-    instruction.  Returns "" for every unrecognised error pattern.
+    ValidationError is inspected only through its structured error
+    locations, types and stable known messages -- never through
+    LLM-supplied values (rejected input, prompt or excerpt text). Returns
+    "" for every unrecognised error pattern.
     """
     if isinstance(error, ValidationError):
+        errors = error.errors()
         error_pairs = {
             (tuple(item.get("loc") or ()), item.get("type"))
-            for item in error.errors()
+            for item in errors
         }
         nested_claim_analysis = (
             (("trusted_conclusion", "claim_analysis"), "extra_forbidden")
@@ -2251,6 +2713,19 @@ def _repair_diagnostic_instruction(error: Exception) -> str:
             return _REPAIR_DIAGNOSTIC_INSTRUCTIONS[
                 "claim_analysis_nested_in_trusted_conclusion"
             ]
+
+        messages = {str(item.get("msg") or "") for item in errors}
+        for known_message, code in _VALIDATION_ERROR_MESSAGE_INSTRUCTIONS:
+            if known_message in messages:
+                return _REPAIR_DIAGNOSTIC_INSTRUCTIONS[code]
+
+        loc_tails = {
+            tuple(item.get("loc") or ())[-1] if item.get("loc") else None
+            for item in errors
+        }
+        for field_name, code in _VALIDATION_ERROR_LOC_INSTRUCTIONS.items():
+            if field_name in loc_tails:
+                return _REPAIR_DIAGNOSTIC_INSTRUCTIONS[code]
         return ""
     diagnostic_code, _ = _classify_post_validation_error(error)
     return _REPAIR_DIAGNOSTIC_INSTRUCTIONS.get(diagnostic_code, "")

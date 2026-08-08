@@ -30,6 +30,21 @@ def support(provider: str, text: str, excerpt: str) -> dict:
     }
 
 
+def judgment(providers, **overrides) -> dict:
+    payload = {
+        "importance": "medium",
+        "referee_assessment": "Assessment for testing.",
+        "evidence_limitations": [],
+        "partially_supported_by": [],
+        "provider_judgments": [
+            {"provider": provider, "summary": f"{provider} summary for testing."}
+            for provider in providers
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
 def answer(provider: str, text: str, citations: list[dict]) -> dict:
     details = {
         "openai": ("model-a", "ChatGPT", "OpenAI"),
@@ -149,6 +164,7 @@ def test_two_providers_share_one_source_without_external_verification():
             "status": "supported",
             "reason": "Both supplied responses state the same claim.",
         },
+        "judgment": judgment(["openai", "gemini"]),
     }
     agreement = {
         "id": "agreement_cache",
@@ -218,6 +234,7 @@ def test_disagreement_keeps_each_provider_source_and_exact_excerpt():
             "status": "disputed",
             "reason": "The provider responses state different limits.",
         },
+        "judgment": judgment(["openai", "gemini"]),
     }
     disagreement = {
         "id": "disagreement_limit",
@@ -285,6 +302,7 @@ def test_no_provider_sources_produces_empty_source_summary():
             "status": "supported",
             "reason": "Both supplied responses contain this interpretation.",
         },
+        "judgment": judgment(["openai", "gemini"]),
     }
     payload = conclusion(
         "The panel agrees on the mechanism, but supplies no source references."
