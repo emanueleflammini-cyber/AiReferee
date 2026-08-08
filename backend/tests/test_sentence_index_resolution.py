@@ -27,7 +27,10 @@ from providers.synthesizer import (  # noqa: E402
     ClaimAnalysisWireV1,
     ClaimSupportWire,
     Synthesizer,
+    SynthesisWireBundleV1,
+    _repair_diagnostic_instruction,
     _resolve_claim_analysis_wire,
+    _safe_repair_validation_error,
 )
 from providers.traceability_schema import validate_claim_analysis  # noqa: E402
 
@@ -373,6 +376,105 @@ def test_w_initial_and_repair_both_invalid_falls_back_to_salvage():
     assert result["claim_analysis_status"] == "FAILED"
     assert result["claims"] == []
     assert result["text"] == "A validated combined answer."
+
+
+# --- D1 hotfix: claim_analysis remains a top-level wire sibling ----------
+
+
+def _bundle_with_nested_claim_analysis(sentence_index=0):
+    payload = _bundle(sentence_index)
+    payload["trusted_conclusion"]["claim_analysis"] = payload.pop(
+        "claim_analysis"
+    )
+    return payload
+
+
+def _nested_claim_analysis_validation_error():
+    with pytest.raises(ValidationError) as caught:
+        SynthesisWireBundleV1.model_validate(
+            _bundle_with_nested_claim_analysis()
+        )
+    return caught.value
+
+
+def test_claim_analysis_top_level_wire_bundle_passes():
+    bundle = SynthesisWireBundleV1.model_validate(_bundle(0))
+    assert bundle.claim_analysis.claims[0].support[0].sentence_index == 0
+
+
+def test_nested_claim_analysis_reproduces_production_validation_errors():
+    errors = _nested_claim_analysis_validation_error().errors()
+    pairs = {(tuple(item["loc"]), item["type"]) for item in errors}
+    assert (
+        ("trusted_conclusion", "claim_analysis"),
+        "extra_forbidden",
+    ) in pairs
+    assert (("claim_analysis",), "missing") in pairs
+
+
+def test_initial_prompt_requires_exactly_two_top_level_keys():
+    synth, completions = _synthesizer([json.dumps(_bundle(0))])
+    _run(synth, query_id="claim-analysis-prompt")
+
+    system = completions.requests[0]["messages"][0]["content"]
+    assert (
+        "Return exactly two top-level keys: trusted_conclusion and "
+        "claim_analysis"
+    ) in system
+    assert "claim_analysis is NOT part of trusted_conclusion" in system
+    assert "Never nest claim_analysis inside trusted_conclusion" in system
+
+
+def test_repair_classifier_recognizes_production_nesting_pattern():
+    instruction = _repair_diagnostic_instruction(
+        _nested_claim_analysis_validation_error()
+    )
+    assert "Move claim_analysis out of trusted_conclusion" in instruction
+    assert "sibling to trusted_conclusion" in instruction
+    assert "Do not change its content" in instruction
+
+
+def test_nested_initial_repairs_top_level_and_resolves_sentence_index():
+    synth, completions = _synthesizer(
+        [
+            json.dumps(_bundle_with_nested_claim_analysis()),
+            json.dumps(_bundle(0)),
+        ]
+    )
+    result = _run(synth, query_id="claim-analysis-repair")
+
+    assert completions.calls == 2
+    repair_system = completions.requests[1]["messages"][0]["content"]
+    assert "Move claim_analysis out of trusted_conclusion" in repair_system
+    assert result["repair_attempted"] is True
+    assert result["claim_analysis_status"] == "SUCCESS"
+    assert result["claims"][0]["support"][0]["response_excerpt"] == (
+        "Caching reduces repeated network calls."
+    )
+
+
+def test_unrelated_validation_error_gets_no_top_level_instruction():
+    invalid = _bundle(0)
+    invalid["unexpected"] = "not user content"
+    with pytest.raises(ValidationError) as caught:
+        SynthesisWireBundleV1.model_validate(invalid)
+
+    assert _repair_diagnostic_instruction(caught.value) == ""
+
+
+def test_repair_validation_diagnostics_do_not_include_rejected_values():
+    secret = "SECRET_PROVIDER_OUTPUT_MUST_NOT_LEAK"
+    invalid = _bundle(0)
+    invalid["trusted_conclusion"]["claim_analysis"] = {"text": secret}
+    invalid.pop("claim_analysis")
+    with pytest.raises(ValidationError) as caught:
+        SynthesisWireBundleV1.model_validate(invalid)
+
+    diagnostic = _safe_repair_validation_error(caught.value)
+    assert secret not in diagnostic
+    assert "input" not in diagnostic
+    assert "extra_forbidden" in diagnostic
+    assert "missing" in diagnostic
 
 
 # --- X: the public excerpt-in-response validator stays active -------------
