@@ -198,45 +198,47 @@ def behavior_prompt(target_name="English"):
     )
 
 
-def test_8_translation_rule_explicitly_excludes_excerpts():
+def test_8_translation_rule_explicitly_excludes_the_numbered_sentences():
     prompt = behavior_prompt(target_name="Italian")
     assert "Write every human-readable field in Italian" in prompt
     assert (
-        "This translation requirement does NOT apply to "
-        "support[].response_excerpt, dispute[].response_excerpt, or "
-        "response_reference start_hint/end_hint"
+        "This translation requirement does not apply to the numbered "
+        "sentences supplied in provider_responses[].sentences"
     ) in prompt
-    assert "must stay in whatever language the original provider response used" in prompt
+    assert "reference material to select from, not output you write" in prompt
 
 
-def test_9_prompt_states_contiguous_character_for_character_no_translation():
+def test_9_prompt_states_sentence_index_selection_rule():
     prompt = behavior_prompt()
-    assert "CONTIGUOUS, character-for-character substring" in prompt
-    assert "Never: translate it" in prompt
-    assert "add an ellipsis or otherwise skip words from the middle" in prompt
-    assert "join two separate spans of the response into one excerpt" in prompt
-    assert "fix grammar, spelling or capitalization" in prompt
-    assert "change any punctuation, quotation mark, or dash character" in prompt
+    assert "set sentence_index to the index" in prompt
+    assert "provider_responses[].sentences" in prompt
+    assert "Choose exactly one existing sentence per item" in prompt
+    assert (
+        "never invent, estimate, or reuse an index from a different "
+        "provider's sentence list"
+    ) in prompt
 
 
 # --- diagnostic-aware repair instruction: unit-level ----------------------
 
 
-def test_repair_instruction_selected_for_excerpt_diagnostic_code():
-    instruction = _repair_diagnostic_instruction(
-        ValueError("claim excerpt is not present in provider response")
-    )
-    assert "Replace each invalid excerpt" in instruction
-    assert "Do not translate, paraphrase, merge, shorten with ellipses" in instruction
-
-
-def test_repair_instruction_selected_for_dispute_excerpt_diagnostic_code():
+def test_repair_instruction_selected_for_sentence_index_diagnostic_code():
     instruction = _repair_diagnostic_instruction(
         ValueError(
-            "claim dispute excerpt is not present in provider response"
+            "claim sentence index is out of range for the provider response"
         )
     )
-    assert "Replace each invalid excerpt" in instruction
+    assert "Replace each invalid sentence_index" in instruction
+    assert "existing sentence for that provider" in instruction
+
+
+def test_repair_instruction_selected_for_sentence_provider_diagnostic_code():
+    instruction = _repair_diagnostic_instruction(
+        ValueError(
+            "claim sentence provider is not available in this execution"
+        )
+    )
+    assert "no sentences list in provider_responses" in instruction
 
 
 def test_repair_instruction_empty_for_unrelated_diagnostic_code():
@@ -291,21 +293,46 @@ def _valid_bundle():
     }
 
 
-def _bundle_bad_excerpt():
+def wire_support(provider, sentence_index, response_id=None):
     return {
-        "trusted_conclusion": _base_trusted_conclusion(),
-        "claim_analysis": claim_analysis(
-            [supported_claim("Repeated network calls are reduced through caching.")]
-        ),
+        "provider": provider,
+        "sentence_index": sentence_index,
+        "provider_response_id": response_id or provider,
     }
 
 
-def _bundle_good_excerpt():
+def wire_supported_claim(sentence_index, provider="openai"):
+    return {
+        "id": "claim_1",
+        "text": "Caching reduces repeated network calls.",
+        "claim_type": "fact",
+        "originating_models": [provider],
+        "supporting_models": [provider],
+        "disputing_models": [],
+        "support": [wire_support(provider, sentence_index)],
+        "dispute": [],
+        "citation_ids": [],
+        "assessment": {
+            "status": "supported",
+            "reason": f"{provider} directly states this.",
+        },
+    }
+
+
+def _bundle_bad_sentence_index():
+    # OPENAI_TEXT only has sentences 0 and 1 -- 5 is out of range.
     return {
         "trusted_conclusion": _base_trusted_conclusion(),
-        "claim_analysis": claim_analysis(
-            [supported_claim("Caching reduces repeated network calls.")]
-        ),
+        "claim_analysis": claim_analysis([wire_supported_claim(5)]),
+    }
+
+
+def _bundle_good_sentence_index():
+    # Sentence 0 of OPENAI_TEXT is exactly "Caching reduces repeated
+    # network calls."
+    return {
+        "trusted_conclusion": _base_trusted_conclusion(),
+        "claim_analysis": claim_analysis([wire_supported_claim(0)]),
     }
 
 
@@ -410,11 +437,11 @@ def _repair_system_content(completions):
     return completions.requests[1]["messages"][0]["content"]
 
 
-def test_10_initial_invalid_excerpt_repair_receives_specific_instruction():
+def test_10_initial_invalid_sentence_index_repair_receives_specific_instruction():
     synth, completions = _synthesizer(
         [
-            json.dumps(_bundle_bad_excerpt()),
-            json.dumps(_bundle_good_excerpt()),
+            json.dumps(_bundle_bad_sentence_index()),
+            json.dumps(_bundle_good_sentence_index()),
         ]
     )
 
@@ -422,16 +449,16 @@ def test_10_initial_invalid_excerpt_repair_receives_specific_instruction():
 
     assert completions.calls == 2
     repair_system = _repair_system_content(completions)
-    assert "Replace each invalid excerpt" in repair_system
-    assert "Do not translate, paraphrase, merge, shorten with ellipses" in repair_system
+    assert "Replace each invalid sentence_index" in repair_system
+    assert "existing sentence for that provider" in repair_system
     assert result["claim_analysis_status"] == "SUCCESS"
 
 
-def test_11_repair_with_real_substring_succeeds():
+def test_11_repair_with_valid_sentence_index_succeeds():
     synth, completions = _synthesizer(
         [
-            json.dumps(_bundle_bad_excerpt()),
-            json.dumps(_bundle_good_excerpt()),
+            json.dumps(_bundle_bad_sentence_index()),
+            json.dumps(_bundle_good_sentence_index()),
         ]
     )
 
@@ -447,8 +474,8 @@ def test_11_repair_with_real_substring_succeeds():
 def test_12_repair_still_invalid_falls_back_to_salvage_unchanged():
     synth, completions = _synthesizer(
         [
-            json.dumps(_bundle_bad_excerpt()),
-            json.dumps(_bundle_bad_excerpt()),
+            json.dumps(_bundle_bad_sentence_index()),
+            json.dumps(_bundle_bad_sentence_index()),
         ]
     )
 
@@ -460,7 +487,7 @@ def test_12_repair_still_invalid_falls_back_to_salvage_unchanged():
     assert result["text"] == "A validated combined answer."
 
 
-def test_13_unrelated_diagnostic_code_gets_no_excerpt_instruction():
+def test_13_unrelated_diagnostic_code_gets_no_sentence_index_instruction():
     synth, completions = _synthesizer(
         [
             json.dumps(_bundle_missing_provider_position()),
@@ -472,11 +499,12 @@ def test_13_unrelated_diagnostic_code_gets_no_excerpt_instruction():
 
     assert completions.calls == 2
     repair_system = _repair_system_content(completions)
-    assert "Replace each invalid excerpt" not in repair_system
+    assert "Replace each invalid sentence_index" not in repair_system
     assert repair_system == (
         "Repair the JSON so it exactly matches the supplied schema. Do "
         "not add facts, source names, citation IDs or URLs. Every "
-        "response_excerpt must be copied from the matching provider "
-        "response. Return JSON only."
+        "support/dispute sentence_index must be the index of an "
+        "existing sentence for the matching provider in "
+        "provider_responses. Return JSON only."
     )
     assert result["claim_analysis_status"] == "SUCCESS"

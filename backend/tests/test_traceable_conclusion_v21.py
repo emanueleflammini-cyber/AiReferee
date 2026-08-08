@@ -13,19 +13,20 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from providers.conclusion_schema import normalize_stored_conclusion  # noqa: E402
+from providers.sentence_segmenter import split_sentences  # noqa: E402
 from providers.synthesizer import Synthesizer  # noqa: E402
 from providers.traceability_schema import extract_citations  # noqa: E402
 
 
-def support(provider: str, excerpt: str) -> dict:
+def support(provider: str, text: str, excerpt: str) -> dict:
+    """Wire-shape (sentence_index) support/dispute item: excerpt must equal
+    one whole sentence of text exactly -- resolution never returns a
+    sub-sentence span.
+    """
     return {
         "provider": provider,
-        "response_excerpt": excerpt,
-        "response_reference": {
-            "provider_response_id": provider,
-            "start_hint": excerpt[:20],
-            "end_hint": excerpt[-20:],
-        },
+        "sentence_index": split_sentences(text).index(excerpt),
+        "provider_response_id": provider,
     }
 
 
@@ -139,8 +140,8 @@ def test_two_providers_share_one_source_without_external_verification():
         "supporting_models": ["openai", "gemini"],
         "disputing_models": [],
         "support": [
-            support("openai", excerpt),
-            support("gemini", excerpt),
+            support("openai", openai_text, excerpt),
+            support("gemini", gemini_text, excerpt),
         ],
         "dispute": [],
         "citation_ids": [citation_id],
@@ -207,8 +208,8 @@ def test_disagreement_keeps_each_provider_source_and_exact_excerpt():
         "originating_models": ["openai", "gemini"],
         "supporting_models": ["openai"],
         "disputing_models": ["gemini"],
-        "support": [support("openai", openai_excerpt)],
-        "dispute": [support("gemini", gemini_excerpt)],
+        "support": [support("openai", openai_text, openai_excerpt)],
+        "dispute": [support("gemini", gemini_text, gemini_excerpt)],
         "citation_ids": [
             openai_citations[0]["id"],
             gemini_citations[0]["id"],
@@ -275,8 +276,8 @@ def test_no_provider_sources_produces_empty_source_summary():
         "supporting_models": ["openai", "gemini"],
         "disputing_models": [],
         "support": [
-            support("openai", excerpt),
-            support("gemini", excerpt),
+            support("openai", openai_text, excerpt),
+            support("gemini", gemini_text, excerpt),
         ],
         "dispute": [],
         "citation_ids": [],
