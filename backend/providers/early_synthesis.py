@@ -77,6 +77,13 @@ class QuorumRunResult:
     early_synthesis: bool
     quorum_reached_at_ms: Optional[int]
     grace_window_seconds: float
+    # fix/early-synthesis-disagreement-bounded-wait: milliseconds actually
+    # spent in the bounded disagreement wait (raw quorum satisfied, gate
+    # failed, waiting for a still-pending provider). 0 whenever that wait
+    # never started (gate passed immediately, raw quorum never reached, or
+    # no similarity_fn supplied). Purely observational — never read back
+    # into any decision.
+    disagreement_wait_actual_ms: int = 0
 
 
 async def run_providers_with_quorum(
@@ -140,11 +147,25 @@ async def run_providers_with_quorum(
     quorum_reached_at_ms: Optional[int] = None
     grace_window_started_at: Optional[float] = None
     first_provider_logged = False
+    raw_quorum_logged = False
+    # fix/early-synthesis-disagreement-bounded-wait: separate, bounded
+    # deadline for "raw quorum satisfied but the disagreement gate failed"
+    # — distinct from quorum_deadline (the grace window after a full
+    # SEMANTIC quorum, i.e. raw quorum AND gate passed). The two are never
+    # both active at once: reaching semantic quorum always clears this one
+    # first. See _raw_quorum_satisfied / _disagreement_gate_result below
+    # for the raw-vs-semantic distinction itself.
+    disagreement_deadline: Optional[float] = None
+    disagreement_wait_started_at: Optional[float] = None
+    disagreement_wait_actual_ms = 0
+    last_gate_score: Optional[float] = None
+    last_gate_live_ids: Optional[tuple[str, str]] = None
 
     while pending:
         wait_timeout: Optional[float] = None
-        if quorum_deadline is not None:
-            wait_timeout = max(0.0, quorum_deadline - time.perf_counter())
+        active_deadline = quorum_deadline if quorum_deadline is not None else disagreement_deadline
+        if active_deadline is not None:
+            wait_timeout = max(0.0, active_deadline - time.perf_counter())
 
         done, pending = await asyncio.wait(
             pending, timeout=wait_timeout, return_when=asyncio.FIRST_COMPLETED,
@@ -161,6 +182,10 @@ async def run_providers_with_quorum(
                     cid, provider_id,
                 )
                 result = ProviderResult(text="", provider_status="FAILED", error=str(exc)[:200])
+            # A finished task (LIVE or FAILED) is removed from `pending`
+            # right here, by asyncio.wait itself, before this loop body
+            # runs — a FAILED provider can therefore never be mistaken for
+            # "still pending" anywhere below (item 2's requirement).
             finalized[provider_id] = result
             if not first_provider_logged:
                 first_provider_logged = True
@@ -176,27 +201,110 @@ async def run_providers_with_quorum(
                 quorum_deadline is None,
             )
 
-        if quorum_deadline is None and _quorum_satisfied(
-            finalized, provider_policy_lookup, quorum_policy, similarity_fn, cid,
-        ):
-            quorum_reached_at_ms = int((time.perf_counter() - started_at) * 1000)
-            live_count = sum(
-                1 for r in finalized.values() if r.provider_status == PROVIDER_STATUS_LIVE
-            )
-            log.info(
-                "early_synthesis_quorum_reached query_id=%s elapsed_ms=%d live_count=%d",
-                cid, quorum_reached_at_ms, live_count,
-            )
-            if quorum_policy.grace_window_seconds > 0:
-                grace_window_started_at = time.perf_counter()
+        if quorum_deadline is None:
+            raw_ok = _raw_quorum_satisfied(finalized, provider_policy_lookup, quorum_policy)
+            if raw_ok and not raw_quorum_logged:
+                raw_quorum_logged = True
                 log.info(
-                    "early_synthesis_grace_window_started query_id=%s "
-                    "grace_window_seconds=%g",
-                    cid, quorum_policy.grace_window_seconds,
+                    "early_synthesis_raw_quorum_reached query_id=%s elapsed_ms=%d "
+                    "live_count=%d",
+                    cid, int((time.perf_counter() - started_at) * 1000),
+                    len(_live_quorum_eligible_ids(finalized, provider_policy_lookup)),
                 )
-            quorum_deadline = time.perf_counter() + quorum_policy.grace_window_seconds
+
+            if raw_ok:
+                gate_passed, gate_score, gate_live_ids = _disagreement_gate_result(
+                    finalized, provider_policy_lookup, quorum_policy, similarity_fn, cid,
+                )
+                if gate_score is not None:
+                    last_gate_score = gate_score
+                    last_gate_live_ids = gate_live_ids
+
+                if gate_passed:
+                    # SEMANTIC quorum reached (raw quorum + gate passed, or
+                    # the gate does not apply — e.g. 3+ LIVE already).
+                    if disagreement_deadline is not None:
+                        disagreement_wait_actual_ms = int(
+                            (time.perf_counter() - disagreement_wait_started_at) * 1000
+                        )
+                        log.info(
+                            "early_synthesis_disagreement_wait_completed query_id=%s "
+                            "reason=third_provider_arrived wait_actual_ms=%d",
+                            cid, disagreement_wait_actual_ms,
+                        )
+                        disagreement_deadline = None
+                    quorum_reached_at_ms = int((time.perf_counter() - started_at) * 1000)
+                    live_count = sum(
+                        1 for r in finalized.values() if r.provider_status == PROVIDER_STATUS_LIVE
+                    )
+                    log.info(
+                        "early_synthesis_quorum_reached query_id=%s elapsed_ms=%d live_count=%d",
+                        cid, quorum_reached_at_ms, live_count,
+                    )
+                    if quorum_policy.grace_window_seconds > 0:
+                        grace_window_started_at = time.perf_counter()
+                        log.info(
+                            "early_synthesis_grace_window_started query_id=%s "
+                            "grace_window_seconds=%g",
+                            cid, quorum_policy.grace_window_seconds,
+                        )
+                    quorum_deadline = time.perf_counter() + quorum_policy.grace_window_seconds
+                elif pending:
+                    # Raw quorum met, gate failed, and at least one provider
+                    # is still pending: give it a bounded chance (item 1/2)
+                    # to arrive and help resolve the disagreement.
+                    if disagreement_deadline is None:
+                        disagreement_wait_started_at = time.perf_counter()
+                        disagreement_deadline = (
+                            disagreement_wait_started_at
+                            + quorum_policy.disagreement_wait_seconds
+                        )
+                        log.info(
+                            "early_synthesis_disagreement_wait_started query_id=%s "
+                            "wait_seconds=%g live_count=%d pending_count=%d",
+                            cid, quorum_policy.disagreement_wait_seconds,
+                            len(_live_quorum_eligible_ids(finalized, provider_policy_lookup)),
+                            len(pending),
+                        )
+                else:
+                    # Raw quorum met, gate failed, and nothing is left
+                    # pending (it just finished FAILED) — fast path (item
+                    # 5): there is no one left who could still resolve the
+                    # disagreement, so proceed immediately instead of
+                    # waiting out the rest of any bounded window.
+                    if disagreement_deadline is not None:
+                        disagreement_wait_actual_ms = int(
+                            (time.perf_counter() - disagreement_wait_started_at) * 1000
+                        )
+                        log.info(
+                            "early_synthesis_disagreement_wait_completed query_id=%s "
+                            "reason=pending_provider_failed wait_actual_ms=%d",
+                            cid, disagreement_wait_actual_ms,
+                        )
+                        disagreement_deadline = None
+                    _log_disagreement_forced_proceed(
+                        cid, finalized, provider_policy_lookup, quorum_policy,
+                        last_gate_score, last_gate_live_ids,
+                    )
+                    break
 
         if quorum_deadline is not None and time.perf_counter() >= quorum_deadline:
+            break
+
+        if disagreement_deadline is not None and time.perf_counter() >= disagreement_deadline:
+            disagreement_wait_actual_ms = int(
+                (time.perf_counter() - disagreement_wait_started_at) * 1000
+            )
+            log.info(
+                "early_synthesis_disagreement_wait_completed query_id=%s "
+                "reason=deadline_expired wait_actual_ms=%d",
+                cid, disagreement_wait_actual_ms,
+            )
+            disagreement_deadline = None
+            _log_disagreement_forced_proceed(
+                cid, finalized, provider_policy_lookup, quorum_policy,
+                last_gate_score, last_gate_live_ids,
+            )
             break
 
     early_synthesis = bool(pending)
@@ -227,53 +335,108 @@ async def run_providers_with_quorum(
         early_synthesis=early_synthesis,
         quorum_reached_at_ms=quorum_reached_at_ms,
         grace_window_seconds=quorum_policy.grace_window_seconds,
+        disagreement_wait_actual_ms=disagreement_wait_actual_ms,
     )
 
 
-def _quorum_satisfied(
+def _live_quorum_eligible_ids(
     finalized: dict[str, ProviderResult],
     provider_policy_lookup: Callable[[str], ProviderPolicy],
-    quorum_policy: QuorumPolicy,
-    similarity_fn: Optional[Callable[[str, str], float]],
-    correlation_id: str,
-) -> bool:
-    live_ids = [
+) -> list[str]:
+    return [
         provider_id
         for provider_id, result in finalized.items()
         if result.provider_status == PROVIDER_STATUS_LIVE
         and provider_policy_lookup(provider_id).eligible_for_quorum
     ]
+
+
+def _raw_quorum_satisfied(
+    finalized: dict[str, ProviderResult],
+    provider_policy_lookup: Callable[[str], ProviderPolicy],
+    quorum_policy: QuorumPolicy,
+) -> bool:
+    """RAW quorum: minimum_live_responses (+ core provider, if required).
+
+    Deliberately excludes the disagreement gate — see
+    _disagreement_gate_result. SEMANTIC quorum (the concept the rest of
+    this module cared about before this patch) = raw quorum AND the gate
+    passing.
+    """
+    live_ids = _live_quorum_eligible_ids(finalized, provider_policy_lookup)
     if len(live_ids) < quorum_policy.minimum_live_responses:
         return False
     if quorum_policy.require_core_provider and not any(
         provider_policy_lookup(provider_id).core_provider for provider_id in live_ids
     ):
         return False
-    # Conservative disagreement gate (Patch 2 scope): only evaluated when
-    # exactly two LIVE responses are the basis for the decision — matching
-    # "i due primi LIVE" from the design brief. A general N-way disagreement
-    # gate is deferred to Patch 3 (see module docstring / patch report).
-    # Unchanged by this observability patch: same threshold comparison,
-    # same similarity_fn contract — only a log line was added below.
-    if (
-        similarity_fn is not None
-        and len(live_ids) == 2
-        and quorum_policy.disagreement_threshold > 0.0
-    ):
-        text_a = finalized[live_ids[0]].text
-        text_b = finalized[live_ids[1]].text
-        score = similarity_fn(text_a, text_b)
-        gate_passed = score >= quorum_policy.disagreement_threshold
-        # Numeric score/threshold/ids only — never the response text itself.
-        log.info(
-            "early_synthesis_disagreement_gate_result query_id=%s "
-            "provider_ids=%s similarity_score=%.4f threshold=%.4f gate_passed=%s",
-            correlation_id, sorted([live_ids[0], live_ids[1]]), score,
-            quorum_policy.disagreement_threshold, gate_passed,
-        )
-        if not gate_passed:
-            return False
     return True
+
+
+def _disagreement_gate_result(
+    finalized: dict[str, ProviderResult],
+    provider_policy_lookup: Callable[[str], ProviderPolicy],
+    quorum_policy: QuorumPolicy,
+    similarity_fn: Optional[Callable[[str, str], float]],
+    correlation_id: str,
+) -> tuple[bool, Optional[float], Optional[tuple[str, str]]]:
+    """Evaluate the conservative disagreement gate. Returns (passed, score,
+    live_id_pair); score/live_id_pair are None whenever the gate was not
+    actually evaluated (treated as passed in that case).
+
+    Conservative disagreement gate (Patch 2 scope, unchanged by this
+    patch): only evaluated when exactly two LIVE responses are the basis
+    for the decision — matching "i due primi LIVE" from the original
+    design brief. A general N-way disagreement gate is deferred (see
+    module docstring). In particular: once a third provider is LIVE,
+    len(live_ids) != 2 and the gate is skipped entirely (treated as
+    passed) — this is what lets all three be used once the third arrives,
+    without re-applying or extending any wait (item 6).
+    """
+    live_ids = _live_quorum_eligible_ids(finalized, provider_policy_lookup)
+    if (
+        similarity_fn is None
+        or len(live_ids) != 2
+        or quorum_policy.disagreement_threshold <= 0.0
+    ):
+        return True, None, None
+    text_a = finalized[live_ids[0]].text
+    text_b = finalized[live_ids[1]].text
+    score = similarity_fn(text_a, text_b)
+    gate_passed = score >= quorum_policy.disagreement_threshold
+    pair = tuple(sorted([live_ids[0], live_ids[1]]))
+    # Numeric score/threshold/ids only — never the response text itself.
+    log.info(
+        "early_synthesis_disagreement_gate_result query_id=%s "
+        "provider_ids=%s similarity_score=%.4f threshold=%.4f gate_passed=%s",
+        correlation_id, list(pair), score,
+        quorum_policy.disagreement_threshold, gate_passed,
+    )
+    return gate_passed, score, pair
+
+
+def _log_disagreement_forced_proceed(
+    correlation_id: str,
+    finalized: dict[str, ProviderResult],
+    provider_policy_lookup: Callable[[str], ProviderPolicy],
+    quorum_policy: QuorumPolicy,
+    score: Optional[float],
+    live_ids: Optional[tuple[str, str]],
+) -> None:
+    """Log that early synthesis is proceeding on raw quorum alone, with the
+    disagreement gate still failed — never invalidates or relabels the
+    LIVE responses involved; the Synthesizer receives both and may
+    represent their disagreement explicitly (item 3). Numeric score/
+    threshold/ids only, same safety contract as the gate-result log line.
+    """
+    live_provider_ids = sorted(_live_quorum_eligible_ids(finalized, provider_policy_lookup))
+    log.info(
+        "early_synthesis_disagreement_forced_proceed query_id=%s "
+        "live_provider_ids=%s similarity_score=%s threshold=%.4f",
+        correlation_id, live_provider_ids,
+        f"{score:.4f}" if score is not None else "unavailable",
+        quorum_policy.disagreement_threshold,
+    )
 
 
 def _handle_late_completion(

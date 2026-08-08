@@ -127,6 +127,18 @@ LATE_ARRIVING_BEHAVIORS = frozenset({
 })
 
 
+#: Upper bound for disagreement_wait_seconds (fix/early-synthesis-
+#: disagreement-bounded-wait). The whole point of this policy is to put a
+#: ceiling well below a slow provider's own timeout (production: Gemini's
+#: two attempts took ~50.9s) on how long the disagreement gate may hold up
+#: an already-numerically-satisfied quorum — an unbounded or very large
+#: value would silently recreate the original problem this policy exists
+#: to fix. 30s is comfortably below any observed provider timeout while
+#: still generous enough to let a genuinely slow-but-useful third provider
+#: help resolve the disagreement.
+MAX_DISAGREEMENT_WAIT_SECONDS = 30.0
+
+
 @dataclass(frozen=True)
 class QuorumPolicy:
     """Future early-synthesis decision policy. Schema + defaults only.
@@ -138,6 +150,21 @@ class QuorumPolicy:
     panel. This module does not call that heuristic and does not duplicate
     it — it only reserves the threshold value it would eventually be
     compared against.
+
+    disagreement_wait_seconds (fix/early-synthesis-disagreement-bounded-
+    wait) is distinct from grace_window_seconds: grace_window_seconds is
+    the extra wait applied AFTER a full (raw + disagreement-gate-passed)
+    semantic quorum is already reached, to let a close-behind provider join
+    in. disagreement_wait_seconds is the separate, bounded wait applied
+    when the RAW quorum (minimum_live_responses + core requirement) is
+    already satisfied but the disagreement gate blocks it — giving the
+    still-pending provider(s) a capped chance to arrive and help resolve
+    the disagreement before proceeding with the LIVE responses already in
+    hand. Default 6.0s is sized directly off the production incident this
+    policy fixes (query_id 0f07deb2-...): OpenAI LIVE at 3.9s, Mistral LIVE
+    at 11.25s, disagreement gate failed, Gemini did not finish until ~50.9s
+    later — a 6s disagreement wait would have let synthesis start at
+    roughly 11.25 + 6 ≈ 17s instead of waiting the full ~50.9s.
     """
 
     minimum_live_responses: int = 2
@@ -145,6 +172,7 @@ class QuorumPolicy:
     grace_window_seconds: float = 4.0
     disagreement_threshold: float = 0.35
     late_arriving_behavior: str = "cache_and_notify"
+    disagreement_wait_seconds: float = 6.0
 
     def __post_init__(self) -> None:
         if self.minimum_live_responses < 1:
@@ -159,6 +187,11 @@ class QuorumPolicy:
             raise ValueError(
                 f"Unsupported late_arriving_behavior '{self.late_arriving_behavior}'. "
                 f"Supported values: {sorted(LATE_ARRIVING_BEHAVIORS)}."
+            )
+        if not (0.0 <= self.disagreement_wait_seconds <= MAX_DISAGREEMENT_WAIT_SECONDS):
+            raise ValueError(
+                "QuorumPolicy.disagreement_wait_seconds must be within "
+                f"[0.0, {MAX_DISAGREEMENT_WAIT_SECONDS}]"
             )
 
 
@@ -215,6 +248,9 @@ def build_quorum_policy_from_env() -> QuorumPolicy:
         late_arriving_behavior=(
             os.environ.get("QUORUM_LATE_ARRIVING_BEHAVIOR", "").strip()
             or QuorumPolicy.late_arriving_behavior
+        ),
+        disagreement_wait_seconds=_env_float(
+            "QUORUM_DISAGREEMENT_WAIT_SECONDS", QuorumPolicy.disagreement_wait_seconds
         ),
     )
 

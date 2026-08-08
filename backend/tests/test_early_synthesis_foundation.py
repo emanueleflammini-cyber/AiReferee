@@ -49,6 +49,7 @@ from providers.policy import (  # noqa: E402
     DEFAULT_PROVIDER_POLICY,
     DEFAULT_QUORUM_POLICY,
     LATE_ARRIVING_BEHAVIORS,
+    MAX_DISAGREEMENT_WAIT_SECONDS,
     ProviderPolicy,
     QuorumPolicy,
     build_quorum_policy_from_env,
@@ -143,6 +144,7 @@ class TestQuorumPolicy:
         assert policy.minimum_live_responses == 2
         assert policy.require_core_provider is True
         assert policy.grace_window_seconds == 4.0
+        assert policy.disagreement_wait_seconds == 6.0
 
     def test_default_quorum_policy_singleton_is_valid(self):
         # Whatever the ambient environment happened to be at import time,
@@ -157,6 +159,7 @@ class TestQuorumPolicy:
         monkeypatch.setenv("QUORUM_GRACE_WINDOW_SECONDS", "7.5")
         monkeypatch.setenv("QUORUM_DISAGREEMENT_THRESHOLD", "0.6")
         monkeypatch.setenv("QUORUM_LATE_ARRIVING_BEHAVIOR", "telemetry_only")
+        monkeypatch.setenv("QUORUM_DISAGREEMENT_WAIT_SECONDS", "9")
 
         policy = build_quorum_policy_from_env()
 
@@ -165,6 +168,7 @@ class TestQuorumPolicy:
         assert policy.grace_window_seconds == 7.5
         assert policy.disagreement_threshold == 0.6
         assert policy.late_arriving_behavior == "telemetry_only"
+        assert policy.disagreement_wait_seconds == 9.0
 
     def test_missing_env_falls_back_to_defaults(self, monkeypatch):
         for name in (
@@ -173,6 +177,7 @@ class TestQuorumPolicy:
             "QUORUM_GRACE_WINDOW_SECONDS",
             "QUORUM_DISAGREEMENT_THRESHOLD",
             "QUORUM_LATE_ARRIVING_BEHAVIOR",
+            "QUORUM_DISAGREEMENT_WAIT_SECONDS",
         ):
             monkeypatch.delenv(name, raising=False)
 
@@ -206,6 +211,41 @@ class TestQuorumPolicy:
         monkeypatch.setenv("QUORUM_DISAGREEMENT_THRESHOLD", "5.0")
         with pytest.raises(ValueError):
             build_quorum_policy_from_env()
+
+    def test_disagreement_wait_seconds_zero_is_valid(self):
+        policy = QuorumPolicy(disagreement_wait_seconds=0.0)
+        assert policy.disagreement_wait_seconds == 0.0
+
+    def test_disagreement_wait_seconds_negative_rejected(self):
+        with pytest.raises(ValueError):
+            QuorumPolicy(disagreement_wait_seconds=-0.1)
+
+    def test_disagreement_wait_seconds_above_bound_rejected(self):
+        with pytest.raises(ValueError):
+            QuorumPolicy(
+                disagreement_wait_seconds=MAX_DISAGREEMENT_WAIT_SECONDS + 0.1
+            )
+
+    def test_disagreement_wait_seconds_at_bound_is_valid(self):
+        policy = QuorumPolicy(
+            disagreement_wait_seconds=MAX_DISAGREEMENT_WAIT_SECONDS
+        )
+        assert policy.disagreement_wait_seconds == MAX_DISAGREEMENT_WAIT_SECONDS
+
+    def test_env_override_above_bound_still_raises(self, monkeypatch):
+        monkeypatch.setenv(
+            "QUORUM_DISAGREEMENT_WAIT_SECONDS",
+            str(MAX_DISAGREEMENT_WAIT_SECONDS + 1),
+        )
+        with pytest.raises(ValueError):
+            build_quorum_policy_from_env()
+
+    def test_disagreement_wait_seconds_is_separate_from_grace_window(self):
+        # Distinct concepts, distinct fields -- setting one must never
+        # implicitly change the other.
+        policy = QuorumPolicy(disagreement_wait_seconds=1.0, grace_window_seconds=4.0)
+        assert policy.disagreement_wait_seconds == 1.0
+        assert policy.grace_window_seconds == 4.0
 
 
 class TestProviderPolicyValidation:
