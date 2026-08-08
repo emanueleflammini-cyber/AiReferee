@@ -275,8 +275,6 @@ def _base_trusted_conclusion(**overrides):
         "claim_matrix": [],
         "claim_agreements": [],
         "claim_disagreements": [],
-        "exclusive_contributions": [],
-        "decisive_factors": [],
     }
     payload.update(overrides)
     return payload
