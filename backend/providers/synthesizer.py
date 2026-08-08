@@ -763,12 +763,21 @@ def _parse_bundle(
         citations,
     )
     associated_citations = associate_citations_with_claims(citations, analysis)
-    conclusion = _enrich_conclusion(
-        conclusion,
-        analysis,
-        associated_citations,
-        answers,
-    )
+    try:
+        conclusion = _enrich_conclusion(
+            conclusion,
+            analysis,
+            associated_citations,
+            answers,
+        )
+    except Exception as enrichment_error:
+        # Diagnostic-only provenance tag (perf/synthesizer-next-bottleneck-
+        # diagnostics): identifies failures from this specific, local
+        # TrustedConclusionV21 re-validation step, which is otherwise
+        # indistinguishable from a bundle/conclusion schema failure in
+        # _log_parse_failure. Never changes the exception itself.
+        enrichment_error._diagnostic_stage = "enrich_conclusion"  # noqa: SLF001
+        raise
     return {
         "conclusion": conclusion,
         "claim_analysis": analysis,
@@ -1733,6 +1742,124 @@ def _validation_error_summary(error: ValidationError) -> dict[str, Any]:
     return {"error_count": len(raw_errors), "errors": errors}
 
 
+# Diagnostic-only classification for post-Pydantic ValueError raises (perf/
+# synthesizer-next-bottleneck-diagnostics, purely additive): every raw
+# ValueError below this point in the parsing pipeline is raised *after* the
+# corresponding model_validate() already succeeded, so Pydantic's own
+# location/type diagnostics (see _validation_error_summary above) do not
+# apply to them. Each tuple matches a stable, hard-coded message prefix from
+# a known raise site -- never the exception content itself, which may embed
+# LLM-generated claim/evidence IDs that carry no schema pattern constraint
+# and could otherwise leak fragments of provider or user content into logs.
+# (stage_name, diagnostic_code, message_prefix)
+_POST_VALIDATION_ERROR_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    (
+        "parse_structured_conclusion",
+        "provider_not_participating",
+        "Conclusion references providers outside the current execution",
+    ),
+    (
+        "parse_structured_conclusion",
+        "claim_matrix_missing_participating_provider",
+        "claim matrix must contain one position for every "
+        "participating provider",
+    ),
+    (
+        "parse_structured_conclusion",
+        "single_provider_agreement_not_low",
+        "a single-provider conclusion must report low model agreement",
+    ),
+    (
+        "validate_claim_analysis",
+        "execution_mode_mismatch",
+        "claim analysis execution mode does not match comparison",
+    ),
+    (
+        "validate_claim_analysis",
+        "execution_mode_mismatch",
+        "claim evidence crosses LIVE and DEMO execution modes",
+    ),
+    (
+        "validate_claim_analysis",
+        "provider_failed",
+        "claim references a FAILED or absent provider",
+    ),
+    (
+        "validate_claim_analysis",
+        "claim_excerpt_not_in_provider_response",
+        "claim dispute excerpt is not present in provider response",
+    ),
+    (
+        "validate_claim_analysis",
+        "claim_excerpt_not_in_provider_response",
+        "claim excerpt is not present in provider response",
+    ),
+    (
+        "validate_claim_analysis",
+        "provider_response_id_mismatch",
+        "claim dispute response reference does not match provider",
+    ),
+    (
+        "validate_claim_analysis",
+        "provider_response_id_mismatch",
+        "claim response reference does not match provider",
+    ),
+    (
+        "validate_claim_analysis",
+        "hint_not_in_provider_response",
+        "claim dispute response hint is not present in response",
+    ),
+    (
+        "validate_claim_analysis",
+        "hint_not_in_provider_response",
+        "claim response hint is not present in response",
+    ),
+    (
+        "validate_claim_analysis",
+        "unknown_citation_reference",
+        "claim references an unknown citation",
+    ),
+    (
+        "validate_claim_analysis",
+        "citation_provenance_mismatch",
+        "citation provenance does not match claim providers",
+    ),
+    (
+        "validate_conclusion_claim_references",
+        "unknown_claim_reference",
+        "Trusted Conclusion references unknown claim IDs",
+    ),
+    (
+        "validate_conclusion_claim_references",
+        "unknown_evidence_reference",
+        "Claim matrix references unknown evidence IDs",
+    ),
+    (
+        "validate_conclusion_claim_references",
+        "disagreement_evidence_provider_mismatch",
+        "Disagreement position references evidence from another provider",
+    ),
+)
+
+
+def _classify_post_validation_error(error: Exception) -> tuple[str, str]:
+    """Classify a post-Pydantic parse failure into a stable, safe code.
+
+    Matches only against the hard-coded message prefixes above -- never
+    against the exception message itself. A ValidationError never reaches
+    here (see _log_parse_failure); it is always a raw ValueError raised by
+    one of the business-rule checks in conclusion_schema.py,
+    traceability_schema.py or _validate_conclusion_claim_references, or an
+    unrelated exception (e.g. malformed JSON) that this classifier cannot
+    attribute to a specific check.
+    """
+    message = str(error) if isinstance(error, ValueError) else ""
+    for stage, code, prefix in _POST_VALIDATION_ERROR_PATTERNS:
+        if message.startswith(prefix):
+            return code, stage
+    return "other_post_pydantic_validation_error", "unknown"
+
+
 def _log_parse_failure(
     query_id: str,
     stage: str,
@@ -1752,6 +1879,16 @@ def _log_parse_failure(
             safe_model,
             json.dumps(summary["errors"], separators=(",", ":")),
         )
+        if getattr(error, "_diagnostic_stage", None) == "enrich_conclusion":
+            log.warning(
+                "synthesis_post_validation_error query_id=%s stage=%s "
+                "validation_stage=%s diagnostic_code=%s error_type=%s",
+                safe_query_id,
+                stage,
+                "enrich_conclusion",
+                "conclusion_enrichment_validation_failed",
+                _safe_diagnostic_value(type(error).__name__) or "Exception",
+            )
         return
     log.warning(
         "synthesis_parse_failed query_id=%s stage=%s error_type=%s model=%s",
@@ -1759,6 +1896,16 @@ def _log_parse_failure(
         stage,
         _safe_diagnostic_value(type(error).__name__) or "Exception",
         safe_model,
+    )
+    diagnostic_code, validation_stage = _classify_post_validation_error(error)
+    log.warning(
+        "synthesis_post_validation_error query_id=%s stage=%s "
+        "validation_stage=%s diagnostic_code=%s error_type=%s",
+        safe_query_id,
+        stage,
+        validation_stage,
+        diagnostic_code,
+        _safe_diagnostic_value(type(error).__name__) or "Exception",
     )
 
 
