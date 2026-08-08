@@ -232,12 +232,22 @@ def _base_trusted_conclusion(**overrides):
         },
         "referee_reasoning": "The panel provides partial coverage.",
         "what_could_change_the_verdict": [],
-        "claim_matrix": [],
-        "claim_agreements": [],
-        "claim_disagreements": [],
     }
     payload.update(overrides)
     return payload
+
+
+def _judgment(providers):
+    return {
+        "importance": "medium",
+        "referee_assessment": "Assessment for testing.",
+        "evidence_limitations": [],
+        "partially_supported_by": [],
+        "provider_judgments": [
+            {"provider": provider, "summary": f"{provider} summary for testing."}
+            for provider in providers
+        ],
+    }
 
 
 def _valid_bundle():
@@ -251,7 +261,11 @@ def _valid_bundle():
     }
 
 
-def _bundle_missing_provider_position():
+def _bundle_with_wire_claim_matrix_field():
+    # claim_matrix is no longer part of the LLM-facing wire contract
+    # (perf/synthesizer-hybrid-phaseb-wire): supplying it must be rejected
+    # structurally (extra_forbidden), never reach the old semantic
+    # "one position per participating provider" check.
     conclusion = _base_trusted_conclusion(
         claim_matrix=[
             {
@@ -317,6 +331,7 @@ def _bundle_unknown_claim_reference():
                         "status": "weak",
                         "reason": "Not independently corroborated.",
                     },
+                    "judgment": _judgment(["openai"]),
                 }
             ],
         },
@@ -352,6 +367,7 @@ def _bundle_sentence_index_out_of_range():
                         "status": "supported",
                         "reason": "OpenAI directly supports this.",
                     },
+                    "judgment": _judgment(["openai"]),
                 }
             ],
         },
@@ -429,10 +445,16 @@ _FORBIDDEN_CONTENT = (
 )
 
 
-def test_a_claim_matrix_missing_provider_position_is_diagnosed(caplog):
+def test_a_claim_matrix_wire_field_is_structurally_rejected(caplog):
+    # perf/synthesizer-hybrid-phaseb-wire: claim_matrix is no longer part
+    # of the wire contract, so a wire payload that includes it can never
+    # reach the old semantic "one position per participating provider"
+    # check (diagnostic_code=claim_matrix_missing_participating_provider,
+    # stage=parse_structured_conclusion) -- it is rejected structurally
+    # (extra_forbidden) before that stage even runs.
     synth, completions = _synthesizer(
         [
-            json.dumps(_bundle_missing_provider_position()),
+            json.dumps(_bundle_with_wire_claim_matrix_field()),
             json.dumps(_valid_bundle()),
         ]
     )
@@ -447,13 +469,14 @@ def test_a_claim_matrix_missing_provider_position_is_diagnosed(caplog):
     event = next(
         line
         for line in caplog.text.splitlines()
-        if "synthesis_post_validation_error" in line
+        if "synthesis_validation_error" in line
     )
     assert "query_id=diag-a" in event
     assert "stage=initial" in event
-    assert "validation_stage=parse_structured_conclusion" in event
-    assert "diagnostic_code=claim_matrix_missing_participating_provider" in event
-    assert "error_type=ValueError" in event
+    assert '"code":"pydantic.extra_forbidden"' in event
+    assert (
+        "synthesis_post_validation_error" not in caplog.text
+    )
     for forbidden in _FORBIDDEN_CONTENT:
         assert forbidden not in caplog.text
 
@@ -517,8 +540,8 @@ def test_c_sentence_index_out_of_range_is_diagnosed(caplog):
 def test_repair_stage_is_diagnosed_independently_of_initial(caplog):
     synth, completions = _synthesizer(
         [
-            json.dumps(_bundle_missing_provider_position()),
-            json.dumps(_bundle_missing_provider_position()),
+            json.dumps(_bundle_sentence_index_out_of_range()),
+            json.dumps(_bundle_sentence_index_out_of_range()),
         ]
     )
 
@@ -540,6 +563,6 @@ def test_repair_stage_is_diagnosed_independently_of_initial(caplog):
     }
     for stage_name, event in stages.items():
         assert f"query_id=diag-repair" in event
-        assert "diagnostic_code=claim_matrix_missing_participating_provider" in event
+        assert "diagnostic_code=sentence_index_out_of_range" in event
     for forbidden in _FORBIDDEN_CONTENT:
         assert forbidden not in caplog.text

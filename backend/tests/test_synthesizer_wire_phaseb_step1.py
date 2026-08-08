@@ -1,13 +1,23 @@
-"""Tests for PATCH 1 of the wire-schema audit: exclusive_contributions and
-decisive_factors are removed from what the LLM is asked to produce and are
-always derived deterministically by the backend afterward, reusing the
-existing _phase_b_sections/_phase_b_fields_from_analysis logic.
+"""Tests for the wire-schema audit's Phase B derivation.
 
-claim_matrix, claim_agreements and claim_disagreements remain LLM-generated,
-unchanged. The public TrustedConclusionV2/V21 models, CompareResponse shape,
-and Mongo persistence format are untouched -- only the JSON schema/contract
-enforced on the live OpenAI call (SynthesisWireBundleV1, replacing
-SynthesisBundleV3 for that one purpose) got narrower.
+PATCH 1 (perf/synthesizer-wire-phaseb-step1) removed exclusive_contributions
+and decisive_factors from what the LLM is asked to produce; they are always
+derived deterministically by the backend.
+
+PATCH 2 (perf/synthesizer-hybrid-phaseb-wire, "LLM judges; backend
+structures") extends the same idea to claim_matrix, claim_agreements and
+claim_disagreements: the LLM no longer authors these three public
+structures directly. It supplies only a minimal per-claim judgment
+(judgment.importance/referee_assessment/evidence_limitations/
+partially_supported_by/provider_judgments) plus optional grouping/strength/
+disagreement_type/impact_on_verdict/referee_resolution overrides
+(claim_agreements_semantic/claim_disagreements_semantic), and
+_build_hybrid_phase_b_sections reconstructs all five derived sections from
+claim_analysis + that judgment.
+
+The public TrustedConclusionV2/V21 models, CompareResponse shape, and Mongo
+persistence format are untouched -- only the JSON schema/contract enforced
+on the live OpenAI call (SynthesisWireBundleV1) got narrower.
 """
 from __future__ import annotations
 
@@ -55,32 +65,57 @@ def test_a_wire_schema_omits_exclusive_contributions_and_decisive_factors():
     assert "decisive_factors" not in schema_text
 
 
-def test_b_wire_schema_still_requires_claim_matrix_agreements_disagreements():
+def test_b_wire_schema_also_omits_claim_matrix_agreements_disagreements():
+    # perf/synthesizer-hybrid-phaseb-wire: these three are no longer
+    # LLM-authored full structures either -- only the minimal semantic
+    # judgment travels on the wire.
     schema_text = json.dumps(SynthesisWireBundleV1.model_json_schema())
-    assert "claim_matrix" in schema_text
-    assert "claim_agreements" in schema_text
-    assert "claim_disagreements" in schema_text
+    assert "claim_matrix" not in schema_text
+    assert '"claim_agreements"' not in schema_text
+    assert '"claim_disagreements"' not in schema_text
+    assert "claim_agreements_semantic" in schema_text
+    assert "claim_disagreements_semantic" in schema_text
+    assert "provider_judgments" in schema_text
+    assert "partially_supported_by" in schema_text
 
 
-def test_c_defs_exclusive_to_removed_fields_are_gone_but_shared_defs_remain():
+def test_c_wire_defs_never_include_the_five_public_only_structures():
     wire_defs = SynthesisWireBundleV1.model_json_schema()["$defs"]
-    assert "ExclusiveContribution" not in wire_defs
-    assert "DecisiveFactor" not in wire_defs
-    # Shared/still-needed defs are untouched, byte-identical to the full
-    # (SynthesisBundleV3) schema -- proves claim_matrix/claim_agreements/
-    # claim_disagreements were not altered in any way by this patch.
-    old_defs = SynthesisBundleV3.model_json_schema()["$defs"]
     for name in (
+        "ExclusiveContribution",
+        "DecisiveFactor",
         "ClaimMatrixItem",
         "ClaimProviderPosition",
         "ClaimAgreement",
         "ClaimDisagreement",
         "ClaimDisagreementPosition",
     ):
-        assert wire_defs[name] == old_defs[name]
+        assert name not in wire_defs
+    # The new minimal semantic wire types are present instead.
+    for name in (
+        "ClaimJudgmentWire",
+        "ProviderJudgmentWire",
+        "ClaimAgreementSemanticWire",
+        "ClaimDisagreementSemanticWire",
+    ):
+        assert name in wire_defs
+    # The public (SynthesisBundleV3) schema is untouched and still defines
+    # all five structures -- proves nothing was removed from the public
+    # contract, only from what the live OpenAI call requires.
+    public_defs = SynthesisBundleV3.model_json_schema()["$defs"]
+    for name in (
+        "ExclusiveContribution",
+        "DecisiveFactor",
+        "ClaimMatrixItem",
+        "ClaimProviderPosition",
+        "ClaimAgreement",
+        "ClaimDisagreement",
+        "ClaimDisagreementPosition",
+    ):
+        assert name in public_defs
 
 
-def test_d_wire_payload_without_the_two_fields_is_accepted():
+def test_d_wire_payload_without_the_five_fields_is_accepted():
     payload = {
         "trusted_conclusion": {
             "schema_version": "2.0",
@@ -101,9 +136,6 @@ def test_d_wire_payload_without_the_two_fields_is_accepted():
             },
             "referee_reasoning": "",
             "what_could_change_the_verdict": [],
-            "claim_matrix": [],
-            "claim_agreements": [],
-            "claim_disagreements": [],
         },
         "claim_analysis": {
             "schema_version": "3.0",
@@ -115,8 +147,8 @@ def test_d_wire_payload_without_the_two_fields_is_accepted():
     assert bundle.trusted_conclusion.final_answer == "A validated answer."
 
 
-def test_wire_model_strictly_rejects_the_two_removed_fields_if_present():
-    payload = {
+def test_wire_model_strictly_rejects_the_five_removed_fields_if_present():
+    base = {
         "schema_version": "2.0",
         "final_answer": "A validated answer.",
         "agreements": [],
@@ -135,14 +167,17 @@ def test_wire_model_strictly_rejects_the_two_removed_fields_if_present():
         },
         "referee_reasoning": "",
         "what_could_change_the_verdict": [],
-        "claim_matrix": [],
-        "claim_agreements": [],
-        "claim_disagreements": [],
-        "exclusive_contributions": [],
-        "decisive_factors": [],
     }
-    with pytest.raises(ValidationError, match="extra_forbidden|Extra inputs"):
-        TrustedConclusionWireV2.model_validate(payload)
+    for field in (
+        "exclusive_contributions",
+        "decisive_factors",
+        "claim_matrix",
+        "claim_agreements",
+        "claim_disagreements",
+    ):
+        payload = {**base, field: []}
+        with pytest.raises(ValidationError, match="extra_forbidden|Extra inputs"):
+            TrustedConclusionWireV2.model_validate(payload)
 
 
 # --- shared realistic fixtures for the end-to-end tests --------------------
@@ -182,11 +217,37 @@ def wire_support(provider: str, sentence_index: int = 0, response_id=None) -> di
     }
 
 
+def wire_judgment(
+    providers,
+    *,
+    importance="medium",
+    referee_assessment="Assessment for testing.",
+    partially_supported_by=None,
+    evidence_limitations=None,
+    summaries=None,
+) -> dict:
+    summaries = summaries or {}
+    return {
+        "importance": importance,
+        "referee_assessment": referee_assessment,
+        "evidence_limitations": evidence_limitations or [],
+        "partially_supported_by": partially_supported_by or [],
+        "provider_judgments": [
+            {
+                "provider": provider,
+                "summary": summaries.get(provider, f"{provider} summary for testing."),
+            }
+            for provider in providers
+        ],
+    }
+
+
 def _claim_analysis_claims() -> list[dict]:
-    """Wire-shape claims (sentence_index) sent through the full synth()
-    pipeline. See _public_claim_analysis_claims() for the public-shape
-    (response_excerpt) equivalent used where a test constructs a
-    ClaimAnalysisV3 directly, bypassing the wire model entirely.
+    """Wire-shape claims (sentence_index + judgment) sent through the full
+    synth() pipeline. See _public_claim_analysis_claims() for the
+    public-shape (response_excerpt) equivalent used where a test
+    constructs a ClaimAnalysisV3 directly, bypassing the wire model
+    entirely.
     """
     return [
         {
@@ -205,6 +266,12 @@ def _claim_analysis_claims() -> list[dict]:
                 "status": "supported",
                 "reason": "OpenAI states this directly.",
             },
+            "judgment": wire_judgment(
+                ["openai"],
+                importance="medium",
+                referee_assessment="Only OpenAI raised this secondary point.",
+                summaries={"openai": "OpenAI raises this point alone."},
+            ),
         },
         {
             # Both providers support this -> feeds strongest_evidence ->
@@ -225,8 +292,21 @@ def _claim_analysis_claims() -> list[dict]:
                 "status": "supported",
                 "reason": "Both providers state this identically.",
             },
+            "judgment": wire_judgment(
+                ["openai", "gemini"],
+                importance="high",
+                referee_assessment="Both providers agree on this point.",
+                summaries={
+                    "openai": "OpenAI states this directly.",
+                    "gemini": "Gemini states this directly.",
+                },
+            ),
         },
     ]
+
+
+def _claim_agreements_semantic() -> list[dict]:
+    return [{"claim_ids": ["claim_decisive"], "strength": "high"}]
 
 
 def _claim_analysis() -> dict:
@@ -234,6 +314,8 @@ def _claim_analysis() -> dict:
         "schema_version": "3.0",
         "execution_mode": "LIVE",
         "claims": _claim_analysis_claims(),
+        "claim_agreements_semantic": _claim_agreements_semantic(),
+        "claim_disagreements_semantic": [],
     }
 
 
@@ -293,75 +375,6 @@ def _public_claim_analysis_claims() -> list[dict]:
     ]
 
 
-def _llm_claim_matrix() -> list[dict]:
-    return [
-        {
-            "claim_id": "claim_exclusive",
-            "claim": "OpenAI notes a secondary caching benefit.",
-            "importance": "medium",
-            "provider_positions": [
-                {
-                    "provider": "openai",
-                    "display_name": "ChatGPT",
-                    "position": "supports",
-                    "summary": "OpenAI raises this point alone.",
-                    "evidence_refs": ["openai"],
-                    "confidence": "medium",
-                },
-                {
-                    "provider": "gemini",
-                    "display_name": "Gemini",
-                    "position": "not_mentioned",
-                    "summary": "",
-                    "evidence_refs": [],
-                    "confidence": "low",
-                },
-            ],
-            "agreement_level": "unresolved",
-            "referee_assessment": "Only OpenAI raised this secondary point.",
-            "evidence_limitations": [],
-        },
-        {
-            "claim_id": "claim_decisive",
-            "claim": "Caching reduces repeated network calls.",
-            "importance": "high",
-            "provider_positions": [
-                {
-                    "provider": "openai",
-                    "display_name": "ChatGPT",
-                    "position": "supports",
-                    "summary": "OpenAI states this directly.",
-                    "evidence_refs": ["openai"],
-                    "confidence": "high",
-                },
-                {
-                    "provider": "gemini",
-                    "display_name": "Gemini",
-                    "position": "supports",
-                    "summary": "Gemini states this directly.",
-                    "evidence_refs": ["gemini"],
-                    "confidence": "high",
-                },
-            ],
-            "agreement_level": "unanimous",
-            "referee_assessment": "Both providers agree on this point.",
-            "evidence_limitations": [],
-        },
-    ]
-
-
-def _llm_claim_agreements() -> list[dict]:
-    return [
-        {
-            "topic": "Caching reduces repeated network calls",
-            "claim_ids": ["claim_decisive"],
-            "providers": ["openai", "gemini"],
-            "strength": "high",
-            "explanation": "Both providers explicitly agree.",
-        }
-    ]
-
-
 def _wire_trusted_conclusion() -> dict:
     return {
         "schema_version": "2.0",
@@ -391,9 +404,6 @@ def _wire_trusted_conclusion() -> dict:
         },
         "referee_reasoning": "The shared claim is well supported.",
         "what_could_change_the_verdict": [],
-        "claim_matrix": _llm_claim_matrix(),
-        "claim_agreements": _llm_claim_agreements(),
-        "claim_disagreements": [],
     }
 
 
@@ -481,7 +491,7 @@ def test_h_exclusive_contributions_derives_from_claim_analysis():
     assert contributions[0]["related_claim_ids"] == ["claim_exclusive"]
 
 
-# --- F: deterministic / idempotent -----------------------------------------
+# --- F: deterministic / idempotent (legacy fallback path, no judgments) ---
 
 
 def test_f_derivation_is_deterministic_given_same_inputs():
@@ -501,76 +511,108 @@ def test_f_derivation_is_deterministic_given_same_inputs():
 
     assert first.exclusive_contributions == second.exclusive_contributions
     assert first.decisive_factors == second.decisive_factors
+    assert first.claim_matrix == second.claim_matrix
 
 
-# --- I/J/K: claim_matrix / claim_agreements / claim_disagreements unchanged
+# --- I/J/K: claim_matrix / claim_agreements / claim_disagreements are now
+# entirely backend-derived from claim_analysis + the minimal judgment ------
 
 
-def test_i_llm_claim_matrix_passes_through_unmodified():
+def test_i_claim_matrix_is_derived_from_claim_analysis_and_judgment():
     synth, completions = _synthesizer([json.dumps(_wire_bundle())])
     result = _run(synth)
 
     structured = result["structured_conclusion"]
-    assert len(structured["claim_matrix"]) == 2
-    ids = {item["claim_id"] for item in structured["claim_matrix"]}
-    assert ids == {"claim_exclusive", "claim_decisive"}
+    matrix = structured["claim_matrix"]
+    assert len(matrix) == 2
+    by_id = {item["claim_id"]: item for item in matrix}
+    assert set(by_id) == {"claim_exclusive", "claim_decisive"}
+    # importance/referee_assessment come straight from judgment; claim/
+    # claim_id are derived from claim_analysis, never LLM-authored again.
+    assert by_id["claim_decisive"]["importance"] == "high"
+    assert by_id["claim_decisive"]["claim"] == "Caching reduces repeated network calls."
+    assert by_id["claim_decisive"]["agreement_level"] == "unanimous"
+    positions = {
+        position["provider"]: position
+        for position in by_id["claim_decisive"]["provider_positions"]
+    }
+    assert positions["openai"]["position"] == "supports"
+    assert positions["openai"]["summary"] == "OpenAI states this directly."
+    assert positions["openai"]["evidence_refs"] == ["openai"]
 
 
-def test_j_llm_claim_agreements_passes_through_unmodified():
+def test_j_claim_agreements_derived_from_semantic_override():
     synth, completions = _synthesizer([json.dumps(_wire_bundle())])
     result = _run(synth)
 
     agreements = result["structured_conclusion"]["claim_agreements"]
-    assert agreements == _llm_claim_agreements()
+    assert len(agreements) == 1
+    assert agreements[0]["claim_ids"] == ["claim_decisive"]
+    assert set(agreements[0]["providers"]) == {"openai", "gemini"}
+    assert agreements[0]["strength"] == "high"
+    assert agreements[0]["topic"] == "Caching reduces repeated network calls."
+    assert agreements[0]["explanation"] == "Both providers agree on this point."
 
 
-def test_k_llm_claim_disagreements_passes_through_unmodified():
+def test_k_claim_disagreements_derived_from_semantic_override():
     bundle = _wire_bundle()
-    # claim_decisive moves from "unanimous" to "disputed" in this test, so
-    # it can no longer also be claimed as an agreement -- and, for the
-    # LLM-supplied claim_matrix/claim_disagreements to stay internally
-    # consistent with claim_analysis (which the backend's own derivation
-    # also reads), gemini must genuinely dispute it there too.
-    bundle["trusted_conclusion"]["claim_agreements"] = []
-    # No longer an undisputed shared fact once gemini disputes it below.
+    # claim_decisive moves from "unanimous" to "disputed": gemini now
+    # disputes it instead of supporting it, and the agreement override is
+    # replaced with a disagreement override supplying the judgment fields
+    # that genuinely require the LLM (disagreement_type/impact_on_verdict/
+    # referee_resolution) -- everything else (topic, positions, providers)
+    # is derived from claim_analysis + the per-provider judgment.
+    bundle["claim_analysis"]["claim_agreements_semantic"] = []
     bundle["trusted_conclusion"]["strongest_evidence"] = []
-    bundle["trusted_conclusion"]["claim_disagreements"] = [
+    bundle["claim_analysis"]["claim_disagreements_semantic"] = [
         {
-            "topic": "Whether the benefit is secondary or primary",
             "claim_ids": ["claim_decisive"],
-            "positions": [
-                {"provider": "openai", "position": "It is the primary benefit."},
-                {"provider": "gemini", "position": "It is a secondary benefit."},
-            ],
             "disagreement_type": "emphasis",
             "impact_on_verdict": "low",
-            "referee_resolution": "Both agree caching helps; only emphasis differs.",
+            "referee_resolution": (
+                "Both agree caching helps; only emphasis differs."
+            ),
         }
     ]
-    bundle["trusted_conclusion"]["claim_matrix"][1]["agreement_level"] = "disputed"
-    bundle["trusted_conclusion"]["claim_matrix"][1]["provider_positions"][1][
-        "position"
-    ] = "contradicts"
-    bundle["claim_analysis"]["claims"][1]["supporting_models"] = ["openai"]
-    bundle["claim_analysis"]["claims"][1]["disputing_models"] = ["gemini"]
-    bundle["claim_analysis"]["claims"][1]["support"] = [
-        item
-        for item in bundle["claim_analysis"]["claims"][1]["support"]
-        if item["provider"] == "openai"
+    claim = bundle["claim_analysis"]["claims"][1]
+    claim["supporting_models"] = ["openai"]
+    claim["disputing_models"] = ["gemini"]
+    claim["support"] = [
+        item for item in claim["support"] if item["provider"] == "openai"
     ]
-    bundle["claim_analysis"]["claims"][1]["dispute"] = [
-        wire_support("gemini"),
-    ]
-    bundle["claim_analysis"]["claims"][1]["assessment"] = {
+    claim["dispute"] = [wire_support("gemini")]
+    claim["assessment"] = {
         "status": "disputed",
         "reason": "Gemini frames this as a secondary benefit.",
     }
+    claim["judgment"] = wire_judgment(
+        ["openai", "gemini"],
+        importance="high",
+        referee_assessment="The two providers frame this point differently.",
+        summaries={
+            "openai": "It is the primary benefit.",
+            "gemini": "It is a secondary benefit.",
+        },
+    )
+
     synth, completions = _synthesizer([json.dumps(bundle)])
     result = _run(synth)
 
-    assert result["structured_conclusion"]["claim_disagreements"] == (
-        bundle["trusted_conclusion"]["claim_disagreements"]
+    disagreements = result["structured_conclusion"]["claim_disagreements"]
+    assert len(disagreements) == 1
+    entry = disagreements[0]
+    assert entry["claim_ids"] == ["claim_decisive"]
+    assert entry["disagreement_type"] == "emphasis"
+    assert entry["impact_on_verdict"] == "low"
+    assert entry["referee_resolution"] == (
+        "Both agree caching helps; only emphasis differs."
     )
+    assert entry["topic"] == "Caching reduces repeated network calls."
+    positions = {item["provider"]: item["position"] for item in entry["positions"]}
+    assert positions == {
+        "openai": "It is the primary benefit.",
+        "gemini": "It is a secondary benefit.",
+    }
 
 
 # --- L: traceability / excerpts / citations unaffected ---------------------
@@ -609,7 +651,9 @@ def test_l_out_of_range_sentence_index_is_still_rejected():
 def test_m_failed_provider_never_enters_derived_sections():
     # gemini is FAILED and therefore not part of the panel at all: it must
     # never appear in either derived section, even though it exists in the
-    # broader answers list passed elsewhere in the app.
+    # broader answers list passed elsewhere in the app. This exercises the
+    # legacy fallback path directly (_enrich_conclusion with no judgments),
+    # which stays byte-identical to before this patch.
     single_provider_matrix = [
         {
             "claim_id": "claim_exclusive",
@@ -737,15 +781,26 @@ def test_o_repair_prompt_uses_the_new_wire_schema():
     repair_schema_text = json.dumps(repair_payload["required_json_schema"])
     assert "exclusive_contributions" not in repair_schema_text
     assert "decisive_factors" not in repair_schema_text
-    assert "claim_matrix" in repair_schema_text
+    assert "claim_matrix" not in repair_schema_text
+    assert "claim_agreements_semantic" in repair_schema_text
+    assert "claim_disagreements_semantic" in repair_schema_text
 
 
-def test_o_repair_still_rejects_the_two_fields_if_llm_emits_them_anyway():
+def test_o_repair_still_rejects_the_five_fields_if_llm_emits_them_anyway():
     bad_repair = _wire_bundle()
     bad_repair["trusted_conclusion"]["exclusive_contributions"] = []
     synth, completions = _synthesizer(
         [
-            json.dumps({**_wire_bundle(), "claim_analysis": {"schema_version": "3.0", "execution_mode": "LIVE", "claims": []}}),
+            json.dumps(
+                {
+                    **_wire_bundle(),
+                    "claim_analysis": {
+                        "schema_version": "3.0",
+                        "execution_mode": "LIVE",
+                        "claims": [],
+                    },
+                }
+            ),
             json.dumps(bad_repair),
         ]
     )
@@ -759,12 +814,13 @@ def test_o_repair_still_rejects_the_two_fields_if_llm_emits_them_anyway():
 # --- P: salvage unaffected ---------------------------------------------
 
 
-def test_p_salvage_still_discards_structured_sections_on_malformed_matrix():
-    invalid = _wire_trusted_conclusion()
-    invalid["claim_matrix"] = {"not": "a list"}
+def test_p_salvage_still_discards_structured_sections_on_malformed_initial():
+    # claim_matrix is no longer part of the wire contract at all, so
+    # supplying it is now rejected structurally (extra_forbidden) rather
+    # than by the old nested list-shape check -- still a legitimate way to
+    # force an invalid initial attempt and exercise the same salvage path.
+    invalid = {**_wire_trusted_conclusion(), "claim_matrix": {"not": "a list"}}
     repaired = _wire_trusted_conclusion()
-    repaired["claim_matrix"] = []
-    repaired["claim_agreements"] = []
     synth, completions = _synthesizer(
         [
             json.dumps(
@@ -784,13 +840,11 @@ def test_p_salvage_still_discards_structured_sections_on_malformed_matrix():
     result = _run(synth)
     assert result["repair_attempted"] is True
     assert completions.calls == 2
-    # Salvage behavior (discarding claim_matrix on a malformed initial
-    # attempt) is unchanged; exclusive_contributions/decisive_factors are
-    # still derived from claim_analysis regardless.
-    assert result["structured_conclusion"]["exclusive_contributions"] == [
-        item
-        for item in result["structured_conclusion"]["exclusive_contributions"]
-    ]
+    # exclusive_contributions/decisive_factors (and claim_matrix/
+    # claim_agreements/claim_disagreements) are still derived from
+    # claim_analysis regardless of the malformed initial attempt.
+    assert result["structured_conclusion"]["exclusive_contributions"] != []
+    assert result["structured_conclusion"]["claim_matrix"] != []
 
 
 # --- Q: persisted/API response still contains both fields ------------------

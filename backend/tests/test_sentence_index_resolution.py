@@ -39,6 +39,19 @@ from providers.traceability_schema import (  # noqa: E402
 )
 
 
+def _wire_judgment(providers):
+    return {
+        "importance": "medium",
+        "referee_assessment": "Assessment for testing.",
+        "evidence_limitations": [],
+        "partially_supported_by": [],
+        "provider_judgments": [
+            {"provider": provider, "summary": f"{provider} summary for testing."}
+            for provider in providers
+        ],
+    }
+
+
 def _wire_claim(claim_id, provider, sentence_index, response_id=None, status="supported"):
     return {
         "id": claim_id,
@@ -57,6 +70,7 @@ def _wire_claim(claim_id, provider, sentence_index, response_id=None, status="su
         "dispute": [],
         "citation_ids": [],
         "assessment": {"status": status, "reason": "Test fixture."},
+        "judgment": _wire_judgment([provider]),
     }
 
 
@@ -83,7 +97,7 @@ def _answer(provider, text, status="LIVE", response_id=None):
 
 
 def _resolve_and_validate(wire, sentences_by_provider, answers, execution_mode="LIVE"):
-    resolved = _resolve_claim_analysis_wire(wire, sentences_by_provider)
+    resolved, _judgments = _resolve_claim_analysis_wire(wire, sentences_by_provider)
     return validate_claim_analysis(resolved, answers, [], execution_mode)
 
 
@@ -93,7 +107,7 @@ def _resolve_and_validate(wire, sentences_by_provider, answers, execution_mode="
 def test_k_valid_index_resolves_exact_response_excerpt():
     wire = _wire_analysis([_wire_claim("claim_1", "openai", 1)])
     sentences_by_provider = {"openai": ["First sentence.", "Second sentence."]}
-    resolved = _resolve_claim_analysis_wire(wire, sentences_by_provider)
+    resolved, _judgments = _resolve_claim_analysis_wire(wire, sentences_by_provider)
     assert resolved["claims"][0]["support"][0]["response_excerpt"] == (
         "Second sentence."
     )
@@ -112,7 +126,7 @@ def test_l_duplicate_sentence_at_two_indices_both_valid_and_distinct():
             _wire_claim("claim_b", "openai", 2),
         ]
     )
-    resolved = _resolve_claim_analysis_wire(wire, sentences_by_provider)
+    resolved, _judgments = _resolve_claim_analysis_wire(wire, sentences_by_provider)
     assert resolved["claims"][0]["support"][0]["response_excerpt"] == (
         "Same sentence."
     )
@@ -215,6 +229,7 @@ def test_s_dispute_item_passes_full_validation():
         ],
         "citation_ids": [],
         "assessment": {"status": "disputed", "reason": "They disagree."},
+        "judgment": _wire_judgment(["openai", "gemini"]),
     }
     wire = _wire_analysis([claim])
     sentences_by_provider = {
@@ -237,8 +252,8 @@ def test_s_dispute_item_passes_full_validation():
 def test_t_same_input_and_index_always_resolve_to_the_same_excerpt():
     wire = _wire_analysis([_wire_claim("claim_1", "openai", 0)])
     sentences_by_provider = {"openai": ["Caching helps.", "It reduces load."]}
-    first = _resolve_claim_analysis_wire(wire, sentences_by_provider)
-    second = _resolve_claim_analysis_wire(wire, sentences_by_provider)
+    first, _judgments1 = _resolve_claim_analysis_wire(wire, sentences_by_provider)
+    second, _judgments2 = _resolve_claim_analysis_wire(wire, sentences_by_provider)
     assert (
         first["claims"][0]["support"][0]["response_excerpt"]
         == second["claims"][0]["support"][0]["response_excerpt"]
@@ -269,9 +284,6 @@ def _base_trusted_conclusion(**overrides):
         },
         "referee_reasoning": "The panel provides partial coverage.",
         "what_could_change_the_verdict": [],
-        "claim_matrix": [],
-        "claim_agreements": [],
-        "claim_disagreements": [],
     }
     payload.update(overrides)
     return payload

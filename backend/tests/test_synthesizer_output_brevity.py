@@ -46,8 +46,8 @@ def behavior_prompt(provider_labels: dict[str, str] | None = None) -> str:
 def test_prompt_targets_three_to_five_decisive_claims():
     prompt = behavior_prompt()
     assert (
-        "Build claim_matrix from those decisive claims: target 3 to 5 "
-        "items"
+        "Extract only the claims that materially decide the verdict: "
+        "target 3 to 5 claims"
     ) in prompt
     assert "materially decide the verdict" in prompt
     assert "never split a single point into trivial sub-claims" in prompt
@@ -71,7 +71,7 @@ def test_five_is_a_generation_target_not_a_hard_cap():
         "Exceed 5 only if the supplied evidence genuinely contains more "
         "decisive points than that"
     ) in prompt
-    assert "do not pad claim_matrix to reach a target count" in prompt
+    assert "just to raise the count or pad toward a target" in prompt
     # No structural schema limit was introduced: claim_matrix stays an
     # unbounded list (default_factory=list, no max_length) exactly as
     # before this patch.
@@ -101,7 +101,7 @@ def test_prompt_states_general_conciseness_and_non_redundancy():
 def test_referee_assessment_must_be_concise():
     prompt = behavior_prompt()
     assert (
-        "claim_matrix[].referee_assessment and Disagreement."
+        "judgment.referee_assessment and Disagreement."
         "referee_assessment must be concise"
     ) in prompt
     assert "not a restated narrative" in prompt
@@ -110,9 +110,8 @@ def test_referee_assessment_must_be_concise():
 def test_provider_position_summary_must_not_repeat_assessment_reason():
     prompt = behavior_prompt()
     assert (
-        "claim_matrix[].provider_positions[].summary must not repeat the "
-        "wording of that same claim's claim_analysis.claims[].assessment."
-        "reason"
+        "judgment.provider_judgments[].summary must not repeat the "
+        "wording of that same claim's assessment.reason"
     ) in prompt
 
 
@@ -121,7 +120,7 @@ def test_agreements_and_disagreements_must_not_duplicate_each_other():
     assert "agreements and disagreements must not restate each other" in prompt
     assert (
         "must not repeat claim-level detail already captured in "
-        "claim_matrix"
+        "judgment.referee_assessment"
     ) in prompt
 
 
@@ -176,13 +175,18 @@ def test_sentence_index_rules_from_this_patch_are_present():
 
 
 def test_disagreement_claim_disagreement_path_split_from_previous_patch_is_unchanged():
+    # perf/synthesizer-hybrid-phaseb-wire: claim_disagreements[] is no
+    # longer LLM-authored at all (only the minimal claim_disagreements_
+    # semantic override is), so the "two different structures" framing is
+    # gone; disagreements[] (legacy, free-text) keeps its own field rules
+    # unchanged.
     prompt = behavior_prompt()
     assert (
-        "trusted_conclusion.disagreements[] and trusted_conclusion."
-        "claim_disagreements[] are two different structures"
+        "trusted_conclusion.disagreements[] is the only free-text "
+        "structured disagreement list you author directly"
     ) in prompt
+    assert "there is no claim_disagreements[] inside trusted_conclusion" in prompt
     assert "positions[] uses the field 'model' (never 'provider')" in prompt
-    assert "positions[] uses the field 'provider' (never 'model')" in prompt
 
 
 def test_traceable_claim_invariants_from_previous_patch_are_unchanged():

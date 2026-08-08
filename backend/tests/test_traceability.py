@@ -258,6 +258,19 @@ def wire_support(provider, sentence_index, response_id=None):
     }
 
 
+def wire_judgment(providers, partially_supported_by=None):
+    return {
+        "importance": "medium",
+        "referee_assessment": "Assessment for testing.",
+        "evidence_limitations": [],
+        "partially_supported_by": partially_supported_by or [],
+        "provider_judgments": [
+            {"provider": provider, "summary": f"{provider} summary for testing."}
+            for provider in providers
+        ],
+    }
+
+
 def wire_supported_claim(citation_ids=None):
     excerpt = "Caching reduces repeated work."
     return {
@@ -276,6 +289,7 @@ def wire_supported_claim(citation_ids=None):
             "status": "supported",
             "reason": "Both provider responses contain the same statement.",
         },
+        "judgment": wire_judgment(["openai", "gemini"]),
     }
 
 
@@ -306,6 +320,7 @@ def wire_disputed_claim():
             "status": "disputed",
             "reason": "Gemini states a different current limit.",
         },
+        "judgment": wire_judgment(["openai", "gemini"]),
     }
 
 
@@ -328,6 +343,7 @@ def test_three_provider_bundle_generates_conclusion_and_traceability():
             _sentence_index_for(MISTRAL_TEXT, "Caching reduces repeated work."),
         )
     )
+    shared["judgment"] = wire_judgment(["openai", "gemini", "mistral"])
     bundle = valid_bundle()
     bundle["claim_analysis"]["claims"][0] = shared
     bundle["trusted_conclusion"]["agreements"][0]["supporting_models"] = [
@@ -835,6 +851,9 @@ def test_conclusion_is_generated_from_openai_and_mistral_when_gemini_failed():
         if excerpt["provider"] == "gemini":
             excerpt["provider"] = "mistral"
             excerpt["provider_response_id"] = "mistral"
+    for item in claim["judgment"]["provider_judgments"]:
+        if item["provider"] == "gemini":
+            item["provider"] = "mistral"
 
     synth, completions = synthesizer_with_outputs([json.dumps(bundle)])
     result = asyncio.run(

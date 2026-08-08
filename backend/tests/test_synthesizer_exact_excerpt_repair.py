@@ -274,9 +274,6 @@ def _base_trusted_conclusion(**overrides):
         },
         "referee_reasoning": "The panel provides partial coverage.",
         "what_could_change_the_verdict": [],
-        "claim_matrix": [],
-        "claim_agreements": [],
-        "claim_disagreements": [],
     }
     payload.update(overrides)
     return payload
@@ -316,6 +313,15 @@ def wire_supported_claim(sentence_index, provider="openai"):
             "status": "supported",
             "reason": f"{provider} directly states this.",
         },
+        "judgment": {
+            "importance": "medium",
+            "referee_assessment": "Assessment for testing.",
+            "evidence_limitations": [],
+            "partially_supported_by": [],
+            "provider_judgments": [
+                {"provider": provider, "summary": f"{provider} summary for testing."}
+            ],
+        },
     }
 
 
@@ -336,26 +342,20 @@ def _bundle_good_sentence_index():
     }
 
 
-def _bundle_missing_provider_position():
+def _bundle_unrelated_diagnostic():
+    # An agreement referencing a claim ID that does not exist in
+    # claim_analysis: a diagnostic_code (unknown_claim_reference) unrelated
+    # to sentence_index, so the excerpt-specific repair instruction must
+    # not appear in its repair prompt.
     conclusion = _base_trusted_conclusion(
-        claim_matrix=[
+        agreements=[
             {
-                "claim_id": "claim_1",
+                "id": "agreement_1",
                 "claim": "Caching reduces repeated network calls.",
-                "importance": "medium",
-                "provider_positions": [
-                    {
-                        "provider": "openai",
-                        "display_name": "ChatGPT",
-                        "position": "supports",
-                        "summary": "OpenAI supports this claim.",
-                        "evidence_refs": [],
-                        "confidence": "medium",
-                    }
-                ],
-                "agreement_level": "partial_consensus",
-                "referee_assessment": "Only OpenAI addressed this point.",
-                "evidence_limitations": [],
+                "supporting_models": ["openai", "gemini"],
+                "strength": "moderate",
+                "reason": "Both providers state this.",
+                "supporting_claim_ids": ["claim_ghost"],
             }
         ],
     )
@@ -490,7 +490,7 @@ def test_12_repair_still_invalid_falls_back_to_salvage_unchanged():
 def test_13_unrelated_diagnostic_code_gets_no_sentence_index_instruction():
     synth, completions = _synthesizer(
         [
-            json.dumps(_bundle_missing_provider_position()),
+            json.dumps(_bundle_unrelated_diagnostic()),
             json.dumps(_valid_bundle()),
         ]
     )
