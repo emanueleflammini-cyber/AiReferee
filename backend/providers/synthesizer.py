@@ -303,6 +303,9 @@ class Synthesizer:
                 "or URLs. Every response_excerpt must be copied from "
                 "the matching provider response. Return JSON only."
             )
+            diagnostic_instruction = _repair_diagnostic_instruction(first_error)
+            if diagnostic_instruction:
+                repair_system = f"{repair_system} {diagnostic_instruction}"
             invalid_output = raw[:20000]
             repair_user_message = json.dumps(
                 {
@@ -565,7 +568,11 @@ def _system_prompt(
         "Return one JSON object matching the supplied schema. Do not return "
         "Markdown or prose outside JSON.\n\n"
         f"Write every human-readable field in {target_name}. Audience: "
-        f"{audience}. Preferred answer format: {fmt}.\n\n"
+        f"{audience}. Preferred answer format: {fmt}. This translation "
+        "requirement does NOT apply to support[].response_excerpt, "
+        "dispute[].response_excerpt, or response_reference start_hint/"
+        "end_hint: those are verbatim evidence and must stay in whatever "
+        "language the original provider response used, unmodified.\n\n"
         "Rules:\n"
         "- final_answer must directly and fully answer the question.\n"
         "- final_answer must be specific to the supplied evidence. Avoid a "
@@ -682,8 +689,21 @@ def _system_prompt(
         "disagreements. Use claim_disagreements only for genuinely "
         "incompatible positions, never for style, additional examples, "
         "omission, or cautious wording alone.\n"
-        "- A response_excerpt must be a short exact excerpt copied from that "
-        "provider response; never paraphrase inside response_excerpt.\n"
+        "- support[].response_excerpt and dispute[].response_excerpt (and "
+        "response_reference start_hint/end_hint, when present) must each be "
+        "a short, CONTIGUOUS, character-for-character substring copied "
+        "directly from that provider's response field above. Before "
+        "writing one, locate the exact span in the response text and copy "
+        "it unchanged. Never: translate it (even though every other "
+        "field is written in the target language, excerpts stay in the "
+        "response's original language); paraphrase or summarize it; add "
+        "an ellipsis or otherwise skip words from the middle; join two "
+        "separate spans of the response into one excerpt; fix grammar, "
+        "spelling or capitalization; change any punctuation, quotation "
+        "mark, or dash character; strip Markdown if doing so would alter "
+        "the substring; or add or remove any word. If no single "
+        "contiguous span expresses the point cleanly, pick a shorter span "
+        "that IS an exact contiguous substring rather than editing one.\n"
         "- For a disputed claim, put exact excerpts supporting the claim in "
         "support and exact excerpts opposing it in dispute.\n"
         "- provider_response_id must exactly match the supplied ID.\n"
@@ -1858,6 +1878,48 @@ def _classify_post_validation_error(error: Exception) -> tuple[str, str]:
         if message.startswith(prefix):
             return code, stage
     return "other_post_pydantic_validation_error", "unknown"
+
+
+# Diagnostic-aware repair instructions (fix/synthesizer-exact-excerpts,
+# purely additive): keyed by the same stable diagnostic_code computed by
+# _classify_post_validation_error above. Selected only by that code -- never
+# by str(error) -- so no exception content, excerpt, or provider text can
+# reach this text. Deliberately narrow: only failure classes where a short,
+# unambiguous, non-content-bearing correction is possible.
+_REPAIR_DIAGNOSTIC_INSTRUCTIONS: dict[str, str] = {
+    "claim_excerpt_not_in_provider_response": (
+        "One or more support/dispute excerpts are not exact substrings of "
+        "the declared provider responses. Replace each invalid excerpt "
+        "with a short, contiguous, character-for-character substring "
+        "copied directly from the corresponding provider response. Do "
+        "not translate, paraphrase, merge, shorten with ellipses, "
+        "normalize punctuation, or rewrite it."
+    ),
+    "hint_not_in_provider_response": (
+        "One or more response_reference start_hint/end_hint values are "
+        "not exact substrings of the declared provider response. Replace "
+        "each invalid hint with a short, contiguous, character-for-"
+        "character substring copied directly from that provider "
+        "response, or omit the hint."
+    ),
+    "provider_response_id_mismatch": (
+        "One or more response_reference.provider_response_id values do "
+        "not match the provider_response_id supplied for that provider in "
+        "provider_responses. Set each provider_response_id to exactly the "
+        "value supplied for that provider."
+    ),
+}
+
+
+def _repair_diagnostic_instruction(error: Exception) -> str:
+    """Return a targeted repair instruction for a known diagnostic_code.
+
+    Returns "" for any other code (including other_post_pydantic_
+    validation_error and ValidationError), leaving the repair system
+    prompt exactly as it was before this patch.
+    """
+    diagnostic_code, _ = _classify_post_validation_error(error)
+    return _REPAIR_DIAGNOSTIC_INSTRUCTIONS.get(diagnostic_code, "")
 
 
 def _log_parse_failure(
