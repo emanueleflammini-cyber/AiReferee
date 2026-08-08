@@ -1115,10 +1115,11 @@ async def compare_query(query_id: str, identity: IdentityContext = Depends(get_i
     )
     logging.getLogger(__name__).info(
         "compare_provider_phase_completed query_id=%s provider_phase_ms=%d "
-        "early_synthesis=%s",
+        "early_synthesis=%s disagreement_wait_actual_ms=%d",
         query_id,
         int((time.perf_counter() - _provider_phase_started_at) * 1000),
         quorum_run.early_synthesis,
+        quorum_run.disagreement_wait_actual_ms,
     )
     generated_by_id = quorum_run.finalized
     if quorum_run.early_synthesis:
